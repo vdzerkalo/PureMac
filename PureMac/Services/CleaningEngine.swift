@@ -644,6 +644,15 @@ actor CleaningEngine {
             Logger.shared.log("Pruned missing worktree \(item.path) in \(repository)", level: .info)
             return (0, true, nil, nil)
         }
+        // Worse than what the user was shown (a new reason, or a more severe
+        // status) means the worktree changed since the scan: the choice was
+        // made on stale information, so nothing is removed.
+        if fresh.verdict.isWorse(than: report.verdict) {
+            let added = fresh.verdict.reasonsAdded(since: report.verdict)
+            let why = (added.isEmpty ? fresh.verdict.reasons : added).map(\.localizedDescription).joined(separator: ", ")
+            Logger.shared.log("Skipped worktree \(item.path): worse than at the scan (\(fresh.verdict.status.rawValue): \(why))", level: .warning)
+            return (0, false, "\(item.name): changed since the scan (\(fresh.verdict.status.label): \(why)); rescan first", nil)
+        }
         guard !fresh.verdict.status.blocksSelection else {
             let why = fresh.verdict.reasons.map(\.localizedDescription).joined(separator: ", ")
             Logger.shared.log("Skipped worktree \(item.path): \(fresh.verdict.status.rawValue) (\(why))", level: .warning)

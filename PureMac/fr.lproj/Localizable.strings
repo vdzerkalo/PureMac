@@ -995,3 +995,9 @@
 "Unused Docker volumes (may contain data such as databases, size not estimated)" = "Unused Docker volumes (may contain data such as databases, size not estimated)";
 "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back.";
 "Reviewed inside the category before removal" = "Reviewed inside the category before removal";
+
+/* Git Worktrees safety review */
+"ignored files outside build folders (%lld)" = "ignored files outside build folders (%lld)";
+"nested repository in ignored folder" = "nested repository in ignored folder";
+"ignored folders too large to check completely" = "ignored folders too large to check completely";
+"Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted." = "Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted.";

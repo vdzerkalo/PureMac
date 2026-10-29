@@ -999,3 +999,9 @@
 "Unused Docker volumes (may contain data such as databases, size not estimated)" = "Невикористані томи Docker (можуть містити дані, наприклад бази даних, розмір не оцінено)";
 "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "Томи, названі в команді, буде стерто разом з даними (бази даних, завантаження); жоден pull чи збірка їх не поверне.";
 "Reviewed inside the category before removal" = "Видаляється в самій категорії після перегляду";
+
+/* Git Worktrees safety review */
+"ignored files outside build folders (%lld)" = "ігноровані файли поза папками збірки (%lld)";
+"nested repository in ignored folder" = "вкладений репозиторій в ігнорованій папці";
+"ignored folders too large to check completely" = "ігноровані папки завеликі для повної перевірки";
+"Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted." = "Вкажіть назву гілки, наприклад main або origin/main. HEAD, теги та хеші комітів не приймаються.";
