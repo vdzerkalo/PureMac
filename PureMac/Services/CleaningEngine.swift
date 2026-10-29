@@ -813,6 +813,12 @@ actor CleaningEngine {
             Logger.shared.log("Skipped worktree \(item.path): \(fresh.verdict.status.rawValue) (\(why))", level: .warning)
             return (0, false, "\(fresh.verdict.status.label): \(why) — \(item.name)", nil)
         }
+        // Same rule as the generic route (issue #142): deleting inside iCloud
+        // Drive or a file provider deletes the synced copy on every device.
+        if ProviderPaths.isProviderOwned(item.path, homeDirectory: homeDirectory) {
+            Logger.shared.log("Refusing to remove worktree in cloud provider storage: \(item.path)", level: .warning)
+            return (0, false, "\(item.name) is in iCloud Drive or another cloud-synced folder; PureMac does not remove it", nil)
+        }
         if let error = await scanner.remove(path: item.path, repository: repository) {
             Logger.shared.log("git worktree remove \(item.path) refused: \(error)", level: .warning)
             return (0, false, "\(item.name): \(error)", nil)
@@ -903,6 +909,13 @@ actor CleaningEngine {
             }
             if isDockerDiskState(resolved) {
                 problems.append("\(relative): \(Self.dockerDiskStateRefusal(resolved))")
+                continue
+            }
+            // Same rule as the generic route (issue #142): never delete inside
+            // iCloud Drive or a file provider.
+            if ProviderPaths.isProviderOwned(resolved, homeDirectory: homeDirectory) {
+                Logger.shared.log("Left artifact folder \(resolved): cloud provider storage", level: .warning)
+                problems.append("\(relative): in iCloud Drive or another cloud-synced folder")
                 continue
             }
             let bytes = GitWorktreeScanner.allocatedBytes(under: URL(fileURLWithPath: resolved))

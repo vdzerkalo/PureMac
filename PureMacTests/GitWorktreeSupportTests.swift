@@ -631,6 +631,33 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: worktree))
     }
 
+    func testWorktreeInCloudProviderStorageIsNotRemoved() async throws {
+        // A `com~apple~` component marks iCloud state wherever it appears,
+        // which stands in for a repository under ~/Library/Mobile Documents.
+        let worktree = try addWorktree("com~apple~CloudDocs/synced", branch: "synced")
+        try commit(in: worktree, file: "s.txt")
+        try mergeIntoMain("synced")
+        try age(worktree)
+        let inspected = await scanner().reinspect(path: worktree, repository: repo)
+        let report = try XCTUnwrap(inspected)
+        XCTAssertEqual(report.verdict.status, .safeToDelete)
+        var item = CleanableItem(
+            name: report.displayName,
+            path: worktree,
+            size: 1_000,
+            category: .gitWorktrees,
+            isSelected: true,
+            lastModified: report.lastActivity
+        )
+        item.gitWorktree = report
+
+        let result = await CleaningEngine(homeDirectory: root).cleanItems([item]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(worktree)/s.txt"))
+        XCTAssertTrue(result.errors.contains { $0.contains("cloud-synced") }, "\(result.errors)")
+    }
+
     // MARK: Polish: symlinks, sizes, settings, branches, prune
 
     private func item(for report: GitWorktreeReport, size: Int64 = 1_000) -> CleanableItem {
@@ -1125,6 +1152,25 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertTrue(result.errors.joined().contains("dist: is not ignored by git"), "\(result.errors)")
         XCTAssertEqual(try String(contentsOfFile: "\(path)/build/out.txt", encoding: .utf8), "artifact\n")
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/dist/app.js"))
+    }
+
+    func testArtifactFoldersInCloudProviderStorageAreLeftAlone() async throws {
+        // A `com~apple~` component marks iCloud state wherever it appears.
+        let path = try addWorktree("com~apple~CloudDocs/artifacts", branch: "cloud-artifacts")
+        try commit(in: path, file: "c.txt")
+        try mergeIntoMain("cloud-artifacts")
+        try write("notes\n", to: "\(path)/notes.md")
+        try write("x\n", to: "\(path)/node_modules/pkg/index.js")
+        try age(path)
+        let report = try await inspect(path)
+        let artifacts = await scanner().artifactReport(for: report)
+        let row = artifactItem(path, folders: try XCTUnwrap(artifacts).folders.map(\.relativePath))
+
+        let result = await engine().cleanItems([row]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.errors.joined().contains("node_modules: in iCloud Drive"), "\(result.errors)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/node_modules/pkg/index.js"))
     }
 
     func testFolderBecomingTrackedAfterTheScanIsLeftAlone() async throws {
