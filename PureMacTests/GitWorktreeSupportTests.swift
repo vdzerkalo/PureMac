@@ -1154,6 +1154,25 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/dist/app.js"))
     }
 
+    func testArtifactFoldersInCloudProviderStorageAreLeftAlone() async throws {
+        // A `com~apple~` component marks iCloud state wherever it appears.
+        let path = try addWorktree("com~apple~CloudDocs/artifacts", branch: "cloud-artifacts")
+        try commit(in: path, file: "c.txt")
+        try mergeIntoMain("cloud-artifacts")
+        try write("notes\n", to: "\(path)/notes.md")
+        try write("x\n", to: "\(path)/node_modules/pkg/index.js")
+        try age(path)
+        let report = try await inspect(path)
+        let artifacts = await scanner().artifactReport(for: report)
+        let row = artifactItem(path, folders: try XCTUnwrap(artifacts).folders.map(\.relativePath))
+
+        let result = await engine().cleanItems([row]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.errors.joined().contains("node_modules: in iCloud Drive"), "\(result.errors)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/node_modules/pkg/index.js"))
+    }
+
     func testFolderBecomingTrackedAfterTheScanIsLeftAlone() async throws {
         let path = try makeNeedsReview("tracked-later")
         try write("x\n", to: "\(path)/node_modules/pkg/index.js")

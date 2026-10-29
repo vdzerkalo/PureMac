@@ -756,6 +756,13 @@ actor CleaningEngine {
                 problems.append("\(relative): changed while being checked")
                 continue
             }
+            // Same rule as the generic route (issue #142): never delete inside
+            // iCloud Drive or a file provider.
+            if ProviderPaths.isProviderOwned(resolved, homeDirectory: homeDirectory) {
+                Logger.shared.log("Left artifact folder \(resolved): cloud provider storage", level: .warning)
+                problems.append("\(relative): in iCloud Drive or another cloud-synced folder")
+                continue
+            }
             let bytes = GitWorktreeScanner.allocatedBytes(under: URL(fileURLWithPath: resolved))
             do {
                 try fileManager.removeItem(atPath: resolved)
