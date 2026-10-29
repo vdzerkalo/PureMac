@@ -82,7 +82,7 @@ Review UI (`CategoryDetailView`): each row shows its name, a one-line descriptio
 11. Small entries (under 1 MB) are not listed. Test: `testSmallItemsAreSkipped`.
 12. Bulk selection never selects a blocked row. `AppState.isBlockedByRunningApp`, `toggleItem`, `selectAllInCategory`, `isItemSelected`, `setRunningAIAgentOwners` (also drops existing selections of rows that become blocked); "Select visible" in `CategoryDetailView` works on the unblocked rows only. Test: `testBulkSelectionSkipsRowsBlockedByARunningApp`.
 13. The VM disk image and everything else outside the table is refused. Tests: `testVMDiskImagesAreNeverListedEvenWithTheirCompressedSource`, `testVMDiskImageIsRefusedEvenWithItsCompressedSource`.
-14. No test uses the real Trash. `makeEngine` in `AIAgentDataTests` always injects a fake `TrashOperation`.
+14. No test uses the real Trash. `CleaningEngine.trashOperation` serves both Move to Trash routes (AI agent data and XcodeBuildMCP DerivedData); `makeEngine` in `AIAgentDataTests` and `FakeTrash` (`PureMacTests/FakeTrash.swift`) inject a fake that moves into a temp folder. No test references `trashItem` or `~/.Trash`.
 
 ## Failure modes and logs
 
