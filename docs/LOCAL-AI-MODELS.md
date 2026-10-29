@@ -47,11 +47,11 @@ Category notes (shown above the list): Ollama not running or `ollama` missing; `
 | Remote `OLLAMA_HOST` | Host is not `localhost`, `127.x.x.x`, `::1` (`0.0.0.0` and empty mean `127.0.0.1`) | no rows | - |
 | Implausible hub root | Root resolves to `/`, the home folder or an ancestor, fewer than 3 path components, or a direct personal folder (`Documents`, `Desktop`, `Downloads`, `Library`, ...) | no rows | - |
 
-Smart Scan and scheduled scans never include the category: `CleaningCategory.smartScannable` excludes `userDataCategories`; `AppState.allResults` uses `smartScannable`, so Clean All, dashboard totals and scheduled cleaning cannot see it. `AppState.cleanAll` also drops `userDataCategories` items. The app's built-in `PureMac scan` command skips it unless `--category "Local AI Models"` is given (scan only; the command never removes).
+Smart Scan and scheduled scans never include the category: it is in `CleaningCategory.smartScanExcluded` (set a), so `smartScannable` omits it and `AppState.allResults`, the dashboard totals and scheduled cleaning cannot see it. It is also in `CleaningCategory.overviewExcluded` (set b): `AppState.cleanAll` drops its items and the Overview never counts or selects them. Its removal needs the risk sheet (`RemovalRisk.requiresAcknowledgement`, set c). The app's built-in `PureMac scan` command skips it unless `--category "Local AI Models"` is given (scan only; the command never removes).
 
 ## How it removes
 
-Only `CleaningEngine.cleanItems` -> `LocalAIModels.remove(_:)`. The review sheet states that removal is permanent and that shared Ollama files stay.
+Only `CleaningEngine.cleanItems` -> `LocalAIModels.remove(_:)`. The review sheet states that removal is permanent and that shared Ollama files stay, and lists risks that must each be ticked before Remove unlocks (`RemovalRisk.risks(for: .localAIModels, items:)`): nothing goes to the Trash; Ollama models go through Ollama, shared files stay, so less space may be freed (shown only with an Ollama row); Hugging Face repos and folders are deleted with all files and must be downloaded in full again; links from outside the cache are not detected (the last two only with a non-Ollama row). "Copy agent prompt" lists every row with its action (`ollama rm <name>` or the folder path).
 
 | Row | Action |
 |---|---|
@@ -75,7 +75,7 @@ Nothing goes to the Trash: a model in the Trash on the same volume would keep th
 10. The `hf` CLI is driven only after its help output documents the flags used. Test: `testAnHFCLIWithoutTheDocumentedFlagsIsNeverDrivenForRemoval`; fallback: `testRemovalFallsBackToTheValidatedFolderWhenTheHFCLIFailsOrDoesNothing`.
 11. Every external call has a timeout (`LocalAIModelsContext.listTimeout` 15 s, `removeTimeout` 120 s, API listing request 5 s) and a timed-out API call does not trigger a second wait on the CLI. Tests: `testOllamaScanGivesUpOnAHangingCLI`, `testOllamaScanDoesNotWaitTwiceWhenTheServerTimesOut`, `testOllamaRemovalReportsFailuresAndTimeouts`.
 12. A row that a symlink points into is never removed, and the link index is rebuilt right before removal. The index covers the hub root, all repo folders (also unlisted ones), non-standard hub folders and Application Support; links from elsewhere on disk cannot be found (see the limit under "What it finds"). `LocalAIModelsSupport.collectSymlinks`, `linkPointingInto`; `LocalAIModels.symlinkIndex`, `removalBlock`. Tests: `testRowsThatAreLinkTargetsAreBlockedAtScanAndRemovalAndNameTheLink`, `testALinkCreatedAfterTheScanBlocksRemovalAndLinksAtTheHubRootAndInApplicationSupportCount`, `testARepoThatLinksIntoAnotherRepoBlocksTheTargetEvenWhenTheLinkingRepoIsNotListed`, `testAProjectFolderInsideTheCacheThatLinksToCachedBlobsBlocksTheRepo`, `testCollectSymlinksIsBoundedAndDoesNotFollowLinks`.
-13. Bulk selection never selects a Local AI Models row. `CleanableItem.selectOnlyByHand`, honoured by `AppState.setSelection`, `AppState.selectAllInCategory` (and so `categoryBinding`) and the Select visible button in `CategoryDetailView`. Tests: `testBulkSelectionPathsNeverSelectLocalAIModelRowsButDeselectAndClickStillWork`, `testOllamaScanRecordsTheDigestInTheRowPathAndKeepsRowsOutOfBulkSelection`, and the `allSatisfy(\.selectOnlyByHand)` check in `testHuggingFaceScanListsReposWithBlobSizeAndApproximateLastUse`.
+13. Bulk selection never selects a Local AI Models row. `CleanableItem.selectOnlyByHand`, honoured through the single rule `CleanableItem.isExcludedFromBulkSelection` by `AppState.setSelection`, `AppState.selectAllInCategory` (and so `categoryBinding`) and the Select visible button in `CategoryDetailView`. Tests: `CategoryRulesTests.testSelectAllInCategorySkipsThemAndKeepsTheControls`, `testSelectVisibleAndSetSelectionSkipThem`, `testBulkSelectionPathsNeverSelectLocalAIModelRowsButDeselectAndClickStillWork`, `testOllamaScanRecordsTheDigestInTheRowPathAndKeepsRowsOutOfBulkSelection`, and the `allSatisfy(\.selectOnlyByHand)` check in `testHuggingFaceScanListsReposWithBlobSizeAndApproximateLastUse`.
 14. HTTP to the Ollama server never follows a redirect: `LocalAIModelsContext.liveFetch` uses a session delegate (`RefuseRedirects`) that answers every redirect with nil, so the 3xx is returned as the response and treated as a failure; the delete goes through this client whenever the API answered (invariant 3). Tests: `testLiveFetchDoesNotFollowRedirects`, `testRedirectDelegateRefusesEveryRedirect`.
 15. Ollama removal is by name, so the scanned digest must still match: `LocalAIModels.confirmOllamaDigest`. Tests: `testOllamaRemovalSkipsAModelWhoseDigestChangedSinceTheScan`, `testOllamaRemovalSkipsWhenTheDigestIsMissingTheModelIsGoneOrTheServerIsSilent`, `testOllamaRemovalConfirmsThroughTheListIDColumnWhenOnlyTheCLIAnswers`, `testOllamaDigestMatching`.
 16. Application Support entries are listed only if they contain a model-weight file (`.gguf`, `.safetensors`, `.npz`, `.mlpackage`, `.bin` of at least 50 000 000 bytes); `config.json` alone does not qualify. `LocalAIModelsSupport.looksLikeModelData`. Tests: `testApplicationSupportOffersOnlyRecognisableModelData`, `testModelDataRecognitionThresholds`.
@@ -83,7 +83,7 @@ Nothing goes to the Trash: a model in the Trash on the same volume would keep th
 
 ## Failure modes and logs
 
-Logger entries appear in the in-app log and in the unified log (`log stream --predicate 'subsystem == "com.puremac.app"'`).
+Logger entries go to the unified log (`log stream --predicate 'subsystem == "com.puremac.app"'`); the app keeps the last 1000 in memory but no screen shows them.
 
 | Symptom | Cause | Where to look |
 |---|---|---|
@@ -98,6 +98,7 @@ Logger entries appear in the in-app log and in the unified log (`log stream --pr
 | "Skipped <model>: ..." for an Ollama model | Scanned digest missing, tag re-pulled or removed since the scan, or Ollama did not answer | `Skipped <name>: no digest was recorded at scan time`, `Skipped <name>: Ollama no longer lists it`, `Skipped <name>: the model changed since the scan (different digest)`, `Skipped <name>: Ollama did not answer` |
 | Application Support item missing from the list | Not recognisable model data | the "not listed because they do not look like model data" note |
 | Repo removed but `hf` is not used | No `hf` found, or its help lacks `--cache-dir`/`--yes` | `hf cache rm --help failed`, `hf cache rm <target> did not remove the repo; deleting the validated folder instead` |
+| Error `Skipped Docker/OrbStack disk state: <path>` | A forged row points at Docker's VM disk or a parent of it; the shared deny list refuses before any model logic | `CleaningEngine.isDockerDiskState`; log `Refusing to delete Docker/OrbStack disk state: <path>` |
 | Freed space smaller than the listed Ollama size | Blobs shared with other models stay | review sheet text; `Removed Ollama model <name> (listed size N bytes)` |
 
 ## Testing
@@ -121,7 +122,7 @@ Put `.cache/huggingface/hub/models--org--name/{blobs,snapshots,refs}` and `Libra
 ## Related
 
 - [Apple controls and storage research](APPLE-FEATURES.md) (model storage that PureMac shows but does not promise to reclaim)
-- `PureMac/Models/Models.swift` (`CleaningCategory.localAIModels`, `smartScannable`, `userDataCategories`, `CleanableItem.ollamaModelPathPrefix`)
+- `PureMac/Models/Models.swift` (`CleaningCategory.localAIModels`, `smartScanExcluded`, `overviewExcluded`, `CleanableItem.ollamaModelPathPrefix`), `PureMac/Logic/Utilities/RemovalRisk.swift` (`acknowledgedCategories`, risks)
 - `PureMac/Services/ScanEngine.swift` (`scanLocalAIModels`), `PureMac/Services/CleaningEngine.swift` (`cleanItems`)
 - `PureMac/Views/CategoryDetailView.swift` (notes banner, review text)
 - `cli/Sources/puremac/Core/Safety.swift` (the standalone CLI keeps `~/.ollama` protected except `logs`; it does not remove models)

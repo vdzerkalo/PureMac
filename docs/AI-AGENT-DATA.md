@@ -69,7 +69,7 @@ Review UI (`CategoryDetailView`): each row shows its name, a one-line descriptio
 
 ## Safety invariants
 
-1. Review-only. `CleaningCategory.reviewOnly`, `smartScannable`; `AppState.allResults`, `startSmartScan`, `runScheduledScan`, `ScheduleConfig.categoriesToScan`, `AppState.junkTotalSize`. Tests: `testCategoryIsReviewOnlyAndOutsideSmartScanAndSchedules`, `testCleanAllAndTotalsIgnoreReviewOnlyResults`.
+1. Review-only. `CleaningCategory.smartScanExcluded` (set a) and `overviewExcluded` (set b), `smartScannable`; `AppState.allResults`, `startSmartScan`, `runScheduledScan`, `ScheduleConfig.categoriesToScan`, `AppState.smartScanTotalSize`. Tests: `testCategoryIsReviewOnlyAndOutsideSmartScanAndSchedules`, `CategoryRulesTests.testSetAIsSmartScanAndSchedules`, `testSetBIsOverviewAndCleanAll`, `testCleanAllAndTotalsIgnoreReviewOnlyResults`.
 2. Every row unselected. `ScanEngine.scanAIAgentData` sets `isSelected: false`. Test: `testScanListsOnlyAllowlistedShapesAndLeavesEveryRowUnselected`.
 3. Exact allowlist, no prefix matching. `AIAgentDataSupport.rules`, `validate`. A deeper or sibling path (`Cache/Cache_Data`, `sessiondata.img`, `auth.json`, `snapshots`) is refused. Tests: `testRuleShapesAreExact`, `testPathsOutsideTheAllowlistAreRefusedEvenInsideAnAllowlistedAppFolder`.
 4. `~/.claude` and `~/.claude.json` are never produced and never removable, even if a forged item names them. `AIAgentDataSupport.isProtectedAgentLocation`. Tests: `testScanNeverProducesClaudeCodeDataEvenWhenItIsHuge`, `testClaudeCodeDataIsNeverRemovedEvenWhenTheItemIsForged`.
@@ -163,7 +163,7 @@ Read-only inspection on 2026-10-29 (names, sizes, mtimes, file types; no file co
 ## Related
 
 - [Apple feature and storage research](APPLE-FEATURES.md)
-- `PureMac/Models/Models.swift` (`CleaningCategory.reviewOnly`, `smartScannable`)
+- `PureMac/Models/Models.swift` (`CleaningCategory.smartScanExcluded`, `overviewExcluded`, `smartScannable`)
 - `PureMac/Views/CategoryDetailView.swift` (`blockedOwner`, `removalMethod`)
 - `PureMac/Logic/Utilities/XcodeBuildMCPDerivedDataSupport.swift` (the Move to Trash pattern this follows)
 - `cli/Sources/puremac/Core/Catalog.swift` (`Cursor (cache)`)
