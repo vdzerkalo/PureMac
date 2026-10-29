@@ -980,6 +980,7 @@
 "Scanning only reads. Removal stays on the category screen." = "Scanning only reads. Removal stays on the category screen.";
 "Add to Smart Scan" = "Add to Smart Scan";
 "In Smart Scan from the next scan" = "In Smart Scan from the next scan";
+"In Smart Scan · scanned after the current category" = "In Smart Scan · scanned after the current category";
 "In Smart Scan · nothing found" = "In Smart Scan · nothing found";
 "In Smart Scan · %@ found, listed in the plan" = "In Smart Scan · %@ found, listed in the plan";
 "Remove from Smart Scan" = "Remove from Smart Scan";
