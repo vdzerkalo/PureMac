@@ -46,6 +46,7 @@ final class DockerSupportTests: XCTestCase {
 
         XCTAssertEqual(estimates.map { $0.action }, [.buildCache, .stoppedContainers, .unusedImages, .unusedVolumes])
         XCTAssertEqual(estimates.map { $0.bytes }, [11_290_000_000, 20_190_000, 10_680_000_000, 5_550_000_000])
+        XCTAssertTrue(estimates.allSatisfy { $0.sizeKnown })
     }
 
     func testPruneEstimatesSkipEmptyRows() {
@@ -64,6 +65,9 @@ final class DockerSupportTests: XCTestCase {
         XCTAssertEqual(DockerSupport.PruneAction.buildCache.arguments, ["builder", "prune", "-a", "-f"])
         XCTAssertEqual(DockerSupport.PruneAction.stoppedContainers.arguments, ["container", "prune", "-f"])
         XCTAssertEqual(DockerSupport.PruneAction.unusedImages.arguments, ["image", "prune", "-a", "-f"])
+        // Dangling-only is the narrower command: no -a, so tagged images stay.
+        XCTAssertEqual(DockerSupport.PruneAction.danglingImages.arguments, ["image", "prune", "-f"])
+        XCTAssertEqual(DockerSupport.PruneAction.danglingImages.commandLine, "docker image prune -f")
         XCTAssertEqual(DockerSupport.PruneAction.unusedVolumes.arguments, ["volume", "prune", "-a", "-f"])
         XCTAssertEqual(DockerSupport.PruneAction.unusedImages.commandLine, "docker image prune -a -f")
         for action in DockerSupport.PruneAction.allCases {
@@ -109,6 +113,172 @@ final class DockerSupportTests: XCTestCase {
         )
         XCTAssertNil(elsewhere.dockerPruneAction)
         XCTAssertFalse(elsewhere.requiresExplicitSelection)
+    }
+
+    // MARK: - dangling images
+
+    private let usageOutput = """
+    {"Images":[\
+    {"Containers":"0","ID":"sha256:aaaa","Repository":"<none>","Tag":"<none>","SharedSize":"0B","Size":"631MB","UniqueSize":"630.7MB"},\
+    {"Containers":"1","ID":"sha256:bbbb","Repository":"<none>","Tag":"<none>","SharedSize":"0B","Size":"100MB","UniqueSize":"100MB"},\
+    {"Containers":"0","ID":"sha256:dddd","Repository":"<none>","Tag":"<none>","SharedSize":"0B","Size":"631MB","UniqueSize":"631MB"},\
+    {"Containers":"0","ID":"sha256:eeee","Repository":"redis","Tag":"8","SharedSize":"32B","Size":"160MB","UniqueSize":"159.9MB"},\
+    {"ID":"sha256:ffff","Repository":"broken"}\
+    ],"Containers":[],"Volumes":[],"BuildCache":[]}
+    """
+
+    func testParseImageIDsKeepsOnePerLine() {
+        XCTAssertEqual(DockerSupport.parseImageIDs("sha256:aaaa\n\nsha256:bbbb\n"), ["sha256:aaaa", "sha256:bbbb"])
+        XCTAssertEqual(DockerSupport.parseImageIDs(""), [])
+        // A warning line printed on stdout is not an ID.
+        XCTAssertEqual(DockerSupport.parseImageIDs("WARNING: something odd\nsha256:aaaa"), ["sha256:aaaa"])
+    }
+
+    func testDanglingLookupArgumentsUseTheFilterPruneUses() {
+        XCTAssertEqual(DockerSupport.danglingImageIDsArguments,
+                       ["images", "--filter", "dangling=true", "--no-trunc", "--format", "{{.ID}}"])
+        XCTAssertEqual(DockerSupport.verboseSystemDFArguments, ["system", "df", "-v", "--format", "{{json .}}"])
+    }
+
+    func testParseImageUsageReadsIDsContainersAndUniqueSize() throws {
+        let usage = try XCTUnwrap(DockerSupport.parseImageUsage(usageOutput))
+
+        XCTAssertEqual(usage.first, .init(id: "sha256:aaaa", containers: 0, uniqueSize: 630_700_000))
+        XCTAssertEqual(usage.map(\.id), ["sha256:aaaa", "sha256:bbbb", "sha256:dddd", "sha256:eeee"], "the entry without sizes is skipped")
+        XCTAssertNil(DockerSupport.parseImageUsage("not json"))
+        XCTAssertNil(DockerSupport.parseImageUsage("{\"Containers\":[]}"))
+    }
+
+    func testDanglingEstimateCountsUniqueSizeOfUnusedDanglingImagesOnly() throws {
+        let usage = DockerSupport.parseImageUsage(usageOutput)
+        // aaaa: unused. bbbb: a container uses it, so prune keeps it. cccc: not in df.
+        // dddd is a digest-only <none>:<none> in df but NOT in the dangling list,
+        // and eeee is tagged: neither may be counted.
+        let estimate = try XCTUnwrap(DockerSupport.danglingEstimate(
+            danglingIDs: ["sha256:aaaa", "sha256:bbbb", "sha256:cccc"],
+            usage: usage
+        ))
+
+        XCTAssertEqual(estimate.count, 2)
+        XCTAssertEqual(estimate.bytes, 630_700_000)
+    }
+
+    func testDanglingEstimateIsNilWhenNothingCanBePruned() {
+        let usage = DockerSupport.parseImageUsage(usageOutput)
+        XCTAssertNil(DockerSupport.danglingEstimate(danglingIDs: [], usage: usage))
+        XCTAssertNil(DockerSupport.danglingEstimate(danglingIDs: nil, usage: usage), "unknown, so no row")
+        XCTAssertNil(DockerSupport.danglingEstimate(danglingIDs: ["sha256:bbbb"], usage: usage), "the only image is in use")
+    }
+
+    func testDanglingEstimateHasNoSizeWhenVerboseDFIsUnavailable() {
+        let estimate = DockerSupport.danglingEstimate(danglingIDs: ["sha256:aaaa", "sha256:bbbb"], usage: nil)
+        XCTAssertEqual(estimate, .init(count: 2, bytes: nil))
+    }
+
+    func testPruneEstimatesMakeTheTwoImageRowsDisjoint() throws {
+        let rows = DockerSupport.parseSystemDF(systemDFOutput)
+        let estimates = DockerSupport.pruneEstimates(rows, dangling: .init(count: 1, bytes: 630_700_000))
+
+        XCTAssertEqual(estimates.map { $0.action }, [.buildCache, .stoppedContainers, .danglingImages, .unusedImages, .unusedVolumes])
+        let dangling = try XCTUnwrap(estimates.first { $0.action == .danglingImages })
+        let all = try XCTUnwrap(estimates.first { $0.action == .unusedImages })
+        XCTAssertEqual(dangling.bytes, 630_700_000)
+        XCTAssertTrue(dangling.sizeKnown)
+        // Selecting both rows must not promise more than df's single figure.
+        XCTAssertEqual(dangling.bytes + all.bytes, 10_680_000_000)
+    }
+
+    func testDanglingRowWithoutAFigureIsLabelledUnknownAndKeepsTheImagesRow() throws {
+        let rows = DockerSupport.parseSystemDF(systemDFOutput)
+        for dangling in [DockerSupport.DanglingEstimate(count: 3, bytes: nil), .init(count: 3, bytes: 0)] {
+            let estimates = DockerSupport.pruneEstimates(rows, dangling: dangling)
+            let row = try XCTUnwrap(estimates.first { $0.action == .danglingImages })
+            XCTAssertEqual(row.bytes, 0)
+            XCTAssertFalse(row.sizeKnown)
+            XCTAssertEqual(estimates.first { $0.action == .unusedImages }?.bytes, 10_680_000_000)
+        }
+    }
+
+    func testImagesRowNeverGoesNegative() {
+        let rows: [DockerSupport.DiskUsageRow] = [.init(type: "Images", size: 5_000, reclaimable: 1_000)]
+        let estimates = DockerSupport.pruneEstimates(rows, dangling: .init(count: 1, bytes: 4_000))
+
+        XCTAssertEqual(estimates.map { $0.action }, [.danglingImages])
+    }
+
+    // MARK: - ordering and freed space
+
+    private func item(_ action: DockerSupport.PruneAction) -> CleanableItem {
+        CleanableItem(name: action.rawValue, path: DockerSupport.actionPath(for: action), size: 1, category: .dockerCache, isSelected: true, lastModified: nil)
+    }
+
+    func testCleanOrderRunsContainersThenDanglingThenAllImagesThenVolumesThenBuildCache() {
+        let sorted = DockerSupport.PruneAction.allCases.sorted { $0.cleanOrder < $1.cleanOrder }
+        XCTAssertEqual(sorted, [.stoppedContainers, .danglingImages, .unusedImages, .unusedVolumes, .buildCache])
+        XCTAssertEqual(Set(DockerSupport.PruneAction.allCases.map(\.cleanOrder)).count, DockerSupport.PruneAction.allCases.count)
+    }
+
+    func testOrderedForCleaningOnlyMovesDockerRowsWithinTheirOwnSlots() {
+        let other = CleanableItem(name: "Logs", path: "/tmp/logs", size: 1, category: .userCache, isSelected: true, lastModified: nil)
+        let items = [item(.buildCache), other, item(.unusedImages), item(.danglingImages)]
+
+        let ordered = DockerSupport.orderedForCleaning(items)
+
+        XCTAssertEqual(ordered.map(\.name), ["dangling-images", "Logs", "images", "build-cache"])
+    }
+
+    /// A shell script standing in for docker: it appends its arguments to a
+    /// log and prints what each real prune prints. No real docker is run.
+    private func makeFakeDocker() throws -> (dir: URL, binary: String, log: URL) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("PureMac-FakeDocker-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let log = dir.appendingPathComponent("calls.log")
+        let script = """
+        #!/bin/sh
+        echo "$*" >> "\(log.path)"
+        case "$*" in
+        "container prune -f") printf 'Deleted Containers:\\nabc\\n\\nTotal reclaimed space: 20.19MB\\n' ;;
+        "image prune -f") printf 'Deleted Images:\\ndeleted: sha256:aaaa\\n\\nTotal reclaimed space: 630MB\\n' ;;
+        "image prune -a -f") printf 'Deleted Images:\\ndeleted: sha256:eeee\\n\\nTotal reclaimed space: 9.4GB\\n' ;;
+        "volume prune -a -f") printf 'Total reclaimed space: 5.55GB\\n' ;;
+        "builder prune -a -f") printf 'ID\\tRECLAIMABLE\\tSIZE\\nTotal:\\t1.5GB\\n' ;;
+        *) echo "unexpected: $*" >&2; exit 1 ;;
+        esac
+        """
+        let binary = dir.appendingPathComponent("docker")
+        try script.write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        return (dir, binary.path, log)
+    }
+
+    func testCleanRunsSelectedPrunesInOrderAndSumsFreedSpaceWithoutOverlap() async throws {
+        let fake = try makeFakeDocker()
+        defer { try? FileManager.default.removeItem(at: fake.dir) }
+        let engine = CleaningEngine(homeDirectory: fake.dir, dockerBinaryPath: fake.binary)
+        // Selected in the "wrong" order on purpose.
+        let selected = [item(.buildCache), item(.unusedImages), item(.danglingImages), item(.stoppedContainers)]
+
+        let result = await engine.cleanItems(selected) { _ in }
+
+        let calls = try String(contentsOf: fake.log, encoding: .utf8).split(separator: "\n").map(String.init)
+        XCTAssertEqual(calls, ["container prune -f", "image prune -f", "image prune -a -f", "builder prune -a -f"])
+        // Each command reports only what it removed itself, so the sum is
+        // exact: 20.19MB + 630MB + 9.4GB + 1.5GB.
+        XCTAssertEqual(result.freedSpace, 20_190_000 + 630_000_000 + 9_400_000_000 + 1_500_000_000)
+        XCTAssertEqual(result.itemsCleaned, 4)
+        XCTAssertTrue(result.errors.isEmpty, "\(result.errors)")
+    }
+
+    func testCleanWithOnlyDanglingNeverRunsTheAllImagesPrune() async throws {
+        let fake = try makeFakeDocker()
+        defer { try? FileManager.default.removeItem(at: fake.dir) }
+        let engine = CleaningEngine(homeDirectory: fake.dir, dockerBinaryPath: fake.binary)
+
+        let result = await engine.cleanItems([item(.danglingImages)]) { _ in }
+
+        let calls = try String(contentsOf: fake.log, encoding: .utf8).split(separator: "\n").map(String.init)
+        XCTAssertEqual(calls, ["image prune -f"])
+        XCTAssertEqual(result.freedSpace, 630_000_000)
     }
 
     // MARK: - reclaimed space
@@ -222,13 +392,41 @@ final class RemovalRiskTests: XCTestCase {
         CleanableItem(name: action.diskUsageType, path: DockerSupport.actionPath(for: action), size: 4_096, category: .dockerCache, isSelected: selected, lastModified: nil)
     }
 
-    func testDockerNeedsThreeAcknowledgementsAndAFourthForVolumes() {
-        let cache = prune(.buildCache, selected: true)
-        let volumes = prune(.unusedVolumes, selected: false)
-        XCTAssertEqual(RemovalRisk.risks(for: .dockerCache, items: [cache]).count, 3)
-        XCTAssertEqual(RemovalRisk.risks(for: .dockerCache, items: [cache, volumes]).count, 4)
-        XCTAssertTrue(RemovalRisk.risks(for: .userCache, items: [cache]).isEmpty)
+    func testRisksMatchTheSelectedRowsExactly() {
+        func risks(_ actions: [DockerSupport.PruneAction]) -> [String] {
+            RemovalRisk.risks(for: .dockerCache, items: actions.map { prune($0, selected: true) })
+        }
+        // The Trash line is always there; every kind of row adds its own risk.
+        XCTAssertEqual(risks([.buildCache]).count, 2)
+        XCTAssertEqual(risks([.stoppedContainers]).count, 2)
+        XCTAssertEqual(risks([.danglingImages]).count, 2)
+        XCTAssertEqual(risks([.unusedImages]).count, 2)
+        XCTAssertEqual(risks([.buildCache, .stoppedContainers, .danglingImages]).count, 4)
+        // `image prune -a` already covers dangling images: one image risk, not two.
+        XCTAssertEqual(risks([.danglingImages, .unusedImages]).count, 2)
+        XCTAssertEqual(risks([.buildCache, .stoppedContainers, .unusedImages]).count, 4)
+        // The volumes risk appears only with the volumes row.
+        XCTAssertEqual(risks([.buildCache, .unusedVolumes]).count, 3)
+        XCTAssertEqual(risks(DockerSupport.PruneAction.allCases).count, 5)
+        XCTAssertTrue(RemovalRisk.risks(for: .userCache, items: [prune(.buildCache, selected: true)]).isEmpty)
         XCTAssertFalse(RemovalRisk.requiresAcknowledgement(.userCache))
+    }
+
+    func testRiskTextsNameWhatTheCommandRemoves() {
+        func joined(_ actions: [DockerSupport.PruneAction]) -> String {
+            RemovalRisk.risks(for: .dockerCache, items: actions.map { prune($0, selected: true) }).joined(separator: "\n")
+        }
+        let dangling = joined([.danglingImages])
+        XCTAssertTrue(dangling.contains("Dangling images (no tag)"))
+        XCTAssertFalse(dangling.contains("tagged or not"), "dangling-only must not warn about tagged images")
+
+        let all = joined([.unusedImages])
+        XCTAssertTrue(all.contains("tagged or not"))
+        XCTAssertTrue(all.contains("built locally and never pushed"))
+        XCTAssertFalse(all.contains("erased"), "no volumes risk without the volumes row")
+
+        XCTAssertTrue(joined([.unusedVolumes]).contains("erased with their data"))
+        XCTAssertFalse(joined([.buildCache]).contains("Stopped containers"))
     }
 
     func testAgentPromptListsEveryFoundItemAndMarksProposedOnes() {
@@ -243,5 +441,6 @@ final class RemovalRiskTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Read-only: do not delete"))
         XCTAssertTrue(prompt.contains("No sub-agents"))
         XCTAssertTrue(prompt.contains("Proposed: 1 of 2 items"))
+        XCTAssertTrue(prompt.contains("docker images --filter dangling=true"))
     }
 }
