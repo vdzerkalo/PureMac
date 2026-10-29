@@ -58,7 +58,7 @@ struct CLI {
             }
             categories = [cat]
         } else {
-            categories = CleaningCategory.scannable
+            categories = CleaningCategory.smartScannable
         }
 
         var allResults: [(String, Int, Int64)] = []

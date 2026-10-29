@@ -26,7 +26,8 @@ struct MainWindow: View {
         .nodeCache,
         .devToolCaches,
         .dockerCache,
-        .gitWorktrees
+        .gitWorktrees,
+        .localAIModels
     ].filter(CleaningCategory.scannable.contains)
 
     var body: some View {

@@ -226,7 +226,7 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Review cleanup")
                         .font(.system(size: 16, weight: .semibold))
-                    Text("Check \(CleaningCategory.scannable.count) categories for caches, logs, and other removable files. Review the results before deleting anything.")
+                    Text("Check \(CleaningCategory.smartScannable.count) categories for caches, logs, and other removable files. Review the results before deleting anything.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

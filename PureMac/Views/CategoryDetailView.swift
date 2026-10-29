@@ -41,6 +41,9 @@ struct CategoryDetailView: View {
                 .padding(.horizontal, 28)
                 .padding(.bottom, 16)
             }
+            if let result, !result.notes.isEmpty {
+                notesBanner(result.notes)
+            }
             if let result, !result.items.isEmpty {
                 filters
                 Divider()
@@ -73,6 +76,26 @@ struct CategoryDetailView: View {
         }
     }
 
+    private func notesBanner(_ notes: [String]) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(notes, id: \.self) { note in
+                    Text(note)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 28)
+        .padding(.bottom, 14)
+    }
+
     private var header: some View {
         HStack(alignment: .top, spacing: 16) {
             IconTile(systemName: category.icon, tint: Tint.teal, size: 48, corner: 12)
@@ -87,11 +110,6 @@ struct CategoryDetailView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
-                }
-                if let note = result?.note {
-                    Text(note)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
                 }
                 if category == .gitWorktrees {
                     ForEach(appState.lastCleanupNotes, id: \.self) { note in
@@ -152,15 +170,22 @@ struct CategoryDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                // Rows that need an explicit click (Docker volumes, Maven, models)
-                // or can't be removed at all (protected worktrees) are left out of
-                // the bulk selection, but "Deselect visible" clears everything visible.
-                let bulkItems = selectableVisibleItems
-                let allBulkSelected = bulkItems.allSatisfy(appState.isItemSelected)
-                Button(allBulkSelected ? "Deselect visible" : "Select visible") {
-                    appState.setSelection(!allBulkSelected, for: allBulkSelected ? visibleItems : bulkItems)
+                // Rows that need an explicit click (Docker volumes, Maven, models),
+                // can't be removed at all (protected worktrees) or are blocked by
+                // a running app are left out of "Select visible" (one rule:
+                // AppState.isExcludedFromBulkSelection), so only the rows it can
+                // select decide the label. "Deselect visible" clears everything.
+                let bulkSelectable = selectableVisibleItems
+                let canSelectMore = bulkSelectable.contains { !appState.isItemSelected($0) }
+                let canDeselect = visibleItems.contains(where: appState.isItemSelected)
+                Button(canSelectMore ? "Select visible" : "Deselect visible") {
+                    if canSelectMore {
+                        appState.setSelection(true, for: bulkSelectable)
+                    } else {
+                        appState.setSelection(false, for: visibleItems)
+                    }
                 }
-                .disabled(bulkItems.isEmpty || appState.scanState.isActive)
+                .disabled((!canSelectMore && !canDeselect) || appState.scanState.isActive)
                 .buttonStyle(.borderless)
             }
         }
@@ -225,6 +250,16 @@ struct CategoryDetailView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if items.contains(where: { $0.category == .localAIModels }) {
+                    Text("Ollama models are removed through Ollama itself. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Files linked from outside the cache are not detected.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Divider()
             ScrollView {
@@ -259,7 +294,7 @@ struct CategoryDetailView: View {
                                     }
                                     .foregroundStyle(.secondary)
                                 }
-                            } else if !item.path.isEmpty {
+                            } else if !item.path.isEmpty, item.ollamaModelName == nil {
                                 Text(item.path)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
@@ -388,6 +423,12 @@ struct CategoryDetailView: View {
             }
             return String(localized: "Permanent · git worktree remove (branch is kept)")
         }
+        if item.ollamaModelName != nil {
+            return String(localized: "Permanent · Remove through Ollama")
+        }
+        if item.category == .localAIModels {
+            return String(localized: "Permanent · Delete model files")
+        }
         if item.simctlRuntimeIdentifier != nil {
             return String(localized: "Permanent · Remove simulator runtime")
         }
@@ -422,14 +463,12 @@ private struct CleanupFileRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(item.dockerCommandLine
-                    ?? (item.worktreeArtifacts.map { ($0.worktreePath as NSString).abbreviatingWithTildeInPath }
-                        ?? (item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath)))
+                Text(secondaryLine)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .help(item.worktreeArtifacts?.worktreePath ?? item.path)
+                    .help(item.worktreeArtifacts?.worktreePath ?? (item.isActionItem ? secondaryLine : item.path))
                 if let artifacts = item.worktreeArtifacts {
                     Text(artifacts.folders.map {
                         "\($0.relativePath) \(ByteCountFormatter.string(fromByteCount: $0.bytes, countStyle: .file))"
@@ -521,6 +560,20 @@ private struct CleanupFileRow: View {
                 Button("Always exclude from cleanup") { appState.excludeFromCleanup(item) }
                     .disabled(appState.scanState.isActive)
             }
+        }
+    }
+
+    private var secondaryLine: String {
+        if let command = item.dockerCommandLine { return command }
+        if let artifacts = item.worktreeArtifacts {
+            return (artifacts.worktreePath as NSString).abbreviatingWithTildeInPath
+        }
+        let location = item.isActionItem ? nil : (item.path as NSString).abbreviatingWithTildeInPath
+        switch (item.detail, location) {
+        case let (detail?, location?): return "\(detail) · \(location)"
+        case let (detail?, nil): return detail
+        case let (nil, location?): return location
+        case (nil, nil): return String(localized: "Managed cleanup action")
         }
     }
 

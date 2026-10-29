@@ -17,6 +17,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case devToolCaches = "Dev Tool Caches"
     case dockerCache = "Docker Cache"
     case gitWorktrees = "Git Worktrees"
+    case localAIModels = "Local AI Models"
     case universalBinaries = "Universal Binaries"
     case languageFiles = "Language Files"
 
@@ -38,6 +39,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .devToolCaches: return "wrench.and.screwdriver.fill"
         case .dockerCache: return "shippingbox.fill"
         case .gitWorktrees: return "arrow.triangle.branch"
+        case .localAIModels: return "brain"
         case .universalBinaries: return "cpu"
         case .languageFiles: return "globe"
         }
@@ -59,6 +61,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .devToolCaches: return "Package, build, and download caches of developer tools"
         case .dockerCache: return "Docker images, containers, and build cache"
         case .gitWorktrees: return "Leftover git worktrees from AI agents and old branches"
+        case .localAIModels: return "Ollama models and Hugging Face downloads. Removed models must be downloaded again."
         case .universalBinaries: return "Unused CPU architecture slices in app binaries"
         case .languageFiles: return "Unused app localizations"
         }
@@ -80,6 +83,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .devToolCaches: return .green
         case .dockerCache: return .indigo
         case .gitWorktrees: return .orange
+        case .localAIModels: return .orange
         case .universalBinaries: return .brown
         case .languageFiles: return .gray
         }
@@ -102,16 +106,37 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    // Categories a Smart Scan or a scheduled scan covers. Git worktrees are
-    // left out of both: removing one runs `git worktree remove` on the user's
-    // own repositories, so it is scanned and cleaned only from its own
-    // category screen. Rows scanned there do stay in `categoryResults`, so
-    // the Overview also refuses them: `RemovalRisk.requiresAcknowledgement`
-    // keeps them out of its totals, its Clean button, its category checkbox
-    // and `cleanAll` (manual and scheduled alike).
-    static var smartScannable: [CleaningCategory] {
-        scannable.filter { $0 != .gitWorktrees }
+    // MARK: Category sets
+    //
+    // Three explicit sets answer three different questions. A category can be
+    // in any combination of them; `CategoryRulesTests` pins every category's
+    // membership, so a new case without a decision for all three fails a test.
+
+    // (a) Smart Scan, scheduled scans, scheduled cleaning and the headline
+    // "junk found" total cover every `scannable` category except these. They
+    // act on the user's own work (`git worktree remove`) or are user data
+    // (model downloads), so they are scanned and cleaned only from their own
+    // category screen.
+    static var smartScanExcluded: Set<CleaningCategory> {
+        [.gitWorktrees, .localAIModels]
     }
+
+    static var smartScannable: [CleaningCategory] {
+        scannable.filter { !smartScanExcluded.contains($0) }
+    }
+
+    // (b) Categories the Overview never counts, selects or cleans. They stay
+    // out of `AppState.totalSelectedSize`, the Clean button, the category
+    // checkbox and every `cleanAll` (manual, scheduled, Full Disk Access
+    // retry), even when their category screen was scanned. Always a superset
+    // of `smartScanExcluded`. Docker is scanned by Smart Scan (a) but its
+    // prune and volume rows run only from its own screen.
+    static var overviewExcluded: Set<CleaningCategory> {
+        [.dockerCache, .gitWorktrees, .localAIModels]
+    }
+
+    // (c) Categories whose removal needs the per-risk acknowledgement sheet:
+    // `RemovalRisk.requiresAcknowledgement`.
 
     // Categories that rewrite app bundles in place (binary thinning,
     // localization stripping) instead of deleting junk.
@@ -162,6 +187,10 @@ struct CleanableItem: Identifiable, Hashable {
     /// runtime disk-image identifier from `simctl runtime list`.
     static let simctlRuntimePathPrefix = "simctl-runtime:"
 
+    /// Path prefix for virtual Local AI Models rows removed with
+    /// `ollama rm <name>`. Never a filesystem path.
+    static let ollamaModelPathPrefix = "ollama-model:"
+
     let id = UUID()
     let name: String
     let path: String
@@ -169,21 +198,25 @@ struct CleanableItem: Identifiable, Hashable {
     let category: CleaningCategory
     var isSelected: Bool
     let lastModified: Date?
+    /// Optional second line shown under the name instead of the path
+    /// (Local AI Models: model kind and sharing caveats; AI Agent Data: what
+    /// the folder is).
+    var detail: String? = nil
     /// Rows that can hold data the user cannot re-download (Maven's `~/.m2`,
-    /// NuGet packages). They start unselected and only a per-row toggle
-    /// selects them: "Select all", the category checkbox and "Select visible"
-    /// skip them.
+    /// NuGet packages, every model row). They start unselected and only a
+    /// click on the row itself selects them: see `isExcludedFromBulkSelection`.
     var selectOnlyByHand: Bool = false
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
-    /// True for action-only items (Docker prune, simctl runtimes) that have
-    /// no real filesystem path to reveal in Finder.
+    /// True for action-only items (Docker prune, simctl runtimes, Ollama
+    /// models) that have no real filesystem path to reveal in Finder.
     var isActionItem: Bool {
         path.isEmpty
             || path.hasPrefix(Self.simctlRuntimePathPrefix)
+            || path.hasPrefix(Self.ollamaModelPathPrefix)
             || path.hasPrefix(DockerSupport.actionPathPrefix)
             || path.hasPrefix(WorktreeArtifactSupport.rowPathPrefix)
     }
@@ -203,6 +236,28 @@ struct CleanableItem: Identifiable, Hashable {
     /// worktree in use, locked or active as an agent worktree are blocked too.
     var isSelectionBlocked: Bool {
         (gitWorktree?.verdict.blocksSelection ?? false) || (worktreeArtifacts?.blocker != nil)
+    }
+
+    /// Ollama rows are `ollama-model:<name>#<digest>`. `#` cannot occur in a
+    /// valid model name, so the first one separates the digest recorded at
+    /// scan time (checked again right before `ollama rm`).
+    private var ollamaPathPayload: Substring? {
+        guard category == .localAIModels, path.hasPrefix(Self.ollamaModelPathPrefix) else { return nil }
+        return path.dropFirst(Self.ollamaModelPathPrefix.count)
+    }
+
+    var ollamaModelName: String? {
+        guard let payload = ollamaPathPayload else { return nil }
+        let name = String(payload.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+        return name.isEmpty ? nil : name
+    }
+
+    var ollamaModelDigest: String? {
+        guard let payload = ollamaPathPayload,
+              let hash = payload.firstIndex(of: "#")
+        else { return nil }
+        let digest = String(payload[payload.index(after: hash)...])
+        return digest.isEmpty ? nil : digest
     }
 
     var simctlRuntimeIdentifier: String? {
@@ -268,9 +323,10 @@ struct CategoryResult: Identifiable {
     let category: CleaningCategory
     var items: [CleanableItem]
     var totalSize: Int64
-    /// Context shown under the category header, e.g. how much Docker
-    /// Desktop's disk image really occupies. Not a cleanable item.
-    var note: String? = nil
+    /// Context shown above the list (for example "Ollama is not running", or
+    /// how much Docker Desktop's disk image really occupies). Already
+    /// localized; not part of the totals and not a cleanable item.
+    var notes: [String] = []
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
@@ -279,7 +335,7 @@ struct CategoryResult: Identifiable {
     var itemCount: Int { items.count }
 
     /// The result left after a clean removed `cleanedPaths`, keeping the
-    /// note; nil when nothing remains.
+    /// notes; nil when nothing remains.
     func removingItems(at cleanedPaths: Set<String>) -> CategoryResult? {
         let remaining = items.filter { !cleanedPaths.contains($0.path) }
         guard !remaining.isEmpty else { return nil }
@@ -287,7 +343,7 @@ struct CategoryResult: Identifiable {
             category: category,
             items: remaining,
             totalSize: remaining.reduce(0) { $0 + $1.sizeInCategoryTotal },
-            note: note
+            notes: notes
         )
     }
 }

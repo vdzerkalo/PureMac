@@ -15,17 +15,22 @@ actor CleaningEngine {
     /// Search directories, process list and timeouts for the developer tool
     /// caches (uv, go, Gradle). Tests inject fakes; the app uses `.live`.
     private let devTools: DevToolCacheEnvironment
+    /// Ollama API and CLI, `hf` and the model folders. Tests inject fakes.
+    private let localAIModels: LocalAIModels
 
     init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         dockerBinaryPath: String? = nil,
         worktreeSettings: @escaping @Sendable () -> GitWorktreeSettings = { GitWorktreeSettings.current() },
-        devToolEnvironment: DevToolCacheEnvironment = .live
+        devToolEnvironment: DevToolCacheEnvironment = .live,
+        localAIModels: LocalAIModels? = nil
     ) {
-        self.homeDirectory = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        let canonicalHome = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        self.homeDirectory = canonicalHome
         self.dockerBinaryPath = dockerBinaryPath
         self.worktreeSettings = worktreeSettings
         self.devTools = devToolEnvironment
+        self.localAIModels = localAIModels ?? LocalAIModels(context: .live(homeDirectory: canonicalHome))
     }
 
     struct CleaningResult {
@@ -77,6 +82,23 @@ actor CleaningEngine {
 
             if item.category == .aiApps, !isSupportedAIAppPath(item.path) {
                 result.errors.append("Unsupported AI app cleanup path: \(item.path)")
+                continue
+            }
+
+            if item.category == .localAIModels {
+                // Models are removed only through LocalAIModels: the Ollama API
+                // (or `ollama rm` when the API is unreachable), and `hf cache rm` or one validated folder delete
+                // for Hugging Face. This never reaches the generic allow-list
+                // below, and never the admin pass.
+                let outcome = await localAIModels.remove(item)
+                result.freedSpace += outcome.freed
+                if outcome.cleaned {
+                    result.itemsCleaned += 1
+                    result.cleanedPaths.insert(item.path)
+                }
+                if let error = outcome.error {
+                    result.errors.append(error)
+                }
                 continue
             }
 
@@ -358,6 +380,10 @@ actor CleaningEngine {
         // refuses to escalate.
         let exclusions = CleanupExclusions.paths()
         let validated: [(item: CleanableItem, resolved: String)] = items.compactMap { item in
+            guard item.category != .localAIModels else {
+                result.errors.append("Administrator cleanup is unavailable for local AI models: \(item.name)")
+                return nil
+            }
             guard item.category != .aiApps else {
                 result.errors.append("Administrator cleanup is unavailable for AI app data: \(item.name)")
                 return nil
@@ -1087,6 +1113,11 @@ actor CleaningEngine {
         }
         if item.category == .aiApps {
             return item.path == resolvedPath && isSupportedAIAppPath(resolvedPath)
+        }
+        // Local AI Models rows have their own validated route in cleanItems;
+        // if one ever reaches the generic path it must not be deletable here.
+        if item.category == .localAIModels {
+            return false
         }
         let originalIsManaged = XcodeBuildMCPDerivedDataSupport.isManagedDerivedDataPath(
             item.path,

@@ -155,15 +155,27 @@ final class AppState: ObservableObject {
         categoryResults[selectedCategory]
     }
 
+    /// Results of the categories Smart Scan covers: set (a),
+    /// `CleaningCategory.smartScannable`. The Overview narrows them further
+    /// with `isReviewedInCategoryOnly` (set (b)).
     var allResults: [CategoryResult] {
-        CleaningCategory.scannable.compactMap { categoryResults[$0] }.filter { $0.totalSize > 0 }
+        CleaningCategory.smartScannable.compactMap { categoryResults[$0] }.filter { $0.totalSize > 0 }
     }
 
-    /// Categories whose removal needs the per-risk review sheet (Docker).
-    /// The Overview never counts, selects or cleans them: they are removable
-    /// only from their own category screen, where every risk is acknowledged.
+    /// Junk total shown on the dashboard and sidebar: set (a) only, so
+    /// worktrees and model downloads never count as junk found.
+    private var smartScanTotalSize: Int64 {
+        categoryResults
+            .filter { CleaningCategory.smartScannable.contains($0.key) }
+            .values
+            .reduce(0) { $0 + $1.totalSize }
+    }
+
+    /// Set (b), `CleaningCategory.overviewExcluded`: the Overview never counts,
+    /// selects or cleans these categories (Docker, worktrees, models). They
+    /// are removable only from their own category screen.
     func isReviewedInCategoryOnly(_ category: CleaningCategory) -> Bool {
-        RemovalRisk.requiresAcknowledgement(category)
+        CleaningCategory.overviewExcluded.contains(category)
     }
 
     /// Selected items the Overview "Clean" button may remove.
@@ -657,7 +669,7 @@ final class AppState: ObservableObject {
         for (category, result) in categoryResults {
             categoryResults[category] = applyingCleanupExclusions(to: result)
         }
-        totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+        totalJunkSize = smartScanTotalSize
     }
 
     func removeCleanupExclusion(_ path: String) {
@@ -672,8 +684,8 @@ final class AppState: ObservableObject {
         return CategoryResult(
             category: result.category,
             items: items,
-            totalSize: items.reduce(0) { $0 + $1.size },
-            note: result.note
+            totalSize: items.reduce(0) { $0 + $1.sizeInCategoryTotal },
+            notes: result.notes
         )
     }
 
@@ -850,7 +862,8 @@ final class AppState: ObservableObject {
     }
 
     private func retryCleanItems(_ requested: [CleanableItem]) async {
-        // A permission retry never re-runs a Docker prune that skipped the review sheet.
+        // A permission retry never re-runs what the Overview may not clean
+        // (Docker prunes, worktrees, models): set (b).
         let items = requested.filter { !isReviewedInCategoryOnly($0.category) }
         guard !items.isEmpty, !scanState.isActive, !deviceBackupRemovalInProgress else { return }
         let generation = UUID()
@@ -885,7 +898,7 @@ final class AppState: ObservableObject {
             }
             categoryResults[cat] = catResult.removingItems(at: result.cleanedPaths)
         }
-        totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+        totalJunkSize = smartScanTotalSize
 
         // Route survivors back through the same outcome path the original
         // cleanup uses. Without this, an FDA revocation between grant and
@@ -958,7 +971,7 @@ final class AppState: ObservableObject {
                 }
                 guard !Task.isCancelled, scanGeneration == generation else { return }
                 categoryResults[category] = applyingCleanupExclusions(to: result)
-                totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+                totalJunkSize = smartScanTotalSize
             }
             scanProgress = 1
             scanTicker.path = ""
@@ -974,13 +987,14 @@ final class AppState: ObservableObject {
     func cleanAll(itemIDs: Set<UUID>? = nil, scheduled: Bool = false) {
         guard !scanState.isActive, !deviceBackupRemovalInProgress else { return }
 
-        // Manual and scheduled alike: categories that need the risk review
-        // (Docker) are never cleaned from here, only from cleanCategory
-        // after the review sheet.
+        // Manual and scheduled alike: categories in set (b) (Docker,
+        // worktrees, models) are never cleaned from here, only from
+        // cleanCategory on their own screen.
         let itemsToClean = allResults.filter { !isReviewedInCategoryOnly($0.category) }.flatMap { $0.items }.filter { item in
             guard itemIDs?.contains(item.id) ?? true else { return false }
             guard isItemSelected(item), !item.isSelectionBlocked else { return false }
-            if scheduled && item.category == .gitWorktrees { return false }
+            // Defence in depth: the filter above already dropped these categories.
+            guard !CleaningCategory.overviewExcluded.contains(item.category) else { return false }
             if scheduled && XcodeBuildMCPDerivedDataSupport.isManagedDerivedDataPath(item.path) {
                 // Scheduled XcodeBuildMCP cleanup is intentionally stricter
                 // than ordinary Xcode Junk: only old, unlocked rows qualify.
@@ -1030,7 +1044,7 @@ final class AppState: ObservableObject {
                 }
                 categoryResults[cat] = catResult.removingItems(at: result.cleanedPaths)
             }
-            totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+            totalJunkSize = smartScanTotalSize
 
             handleCleanOutcome(errors: result.errors, survivors: survivors)
 
@@ -1043,7 +1057,9 @@ final class AppState: ObservableObject {
         guard let result = categoryResults[category], !scanState.isActive,
               !deviceBackupRemovalInProgress else { return }
 
-        let selectedItems = result.items.filter { isItemSelected($0) && (itemIDs?.contains($0.id) ?? true) }
+        let selectedItems = result.items.filter {
+            isItemSelected($0) && !$0.isSelectionBlocked && (itemIDs?.contains($0.id) ?? true)
+        }
         guard !selectedItems.isEmpty else { return }
         let generation = UUID()
         cleanupGeneration = generation
@@ -1081,7 +1097,7 @@ final class AppState: ObservableObject {
                 }
                 categoryResults[category] = existing.removingItems(at: cleanResult.cleanedPaths)
             }
-            totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+            totalJunkSize = smartScanTotalSize
 
             let survivors = survivingItems(from: selectedItems, result: cleanResult)
             handleCleanOutcome(errors: cleanResult.errors, survivors: survivors)

@@ -4,13 +4,17 @@ actor ScanEngine {
     private let fileManager = FileManager.default
     private let home: String
     private let devTools: DevToolCacheEnvironment
+    private let localAIModels: LocalAIModels
 
     init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-        devToolEnvironment: DevToolCacheEnvironment = .live
+        devToolEnvironment: DevToolCacheEnvironment = .live,
+        localAIModels: LocalAIModels? = nil
     ) {
-        home = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory).path
+        let canonicalHome = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        home = canonicalHome.path
         devTools = devToolEnvironment
+        self.localAIModels = localAIModels ?? LocalAIModels(context: .live(homeDirectory: canonicalHome))
     }
 
     /// Live path reporter for the dashboard's scanning ticker. Throttled so
@@ -86,6 +90,8 @@ actor ScanEngine {
             return await scanDockerCache()
         case .gitWorktrees:
             return await scanGitWorktrees()
+        case .localAIModels:
+            return await scanLocalAIModels()
         case .universalBinaries:
             return scanUniversalBinaries()
         case .languageFiles:
@@ -949,7 +955,7 @@ actor ScanEngine {
             // Docker's own documented fallback, never run by PureMac.
             note = String(localized: "Docker Desktop's disk image (Docker.raw) uses \(size) on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself.")
         }
-        return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize, note: note)
+        return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize, notes: note.map { [$0] } ?? [])
     }
 
     /// One row per linked git worktree found in agent folders and Claude
@@ -1011,6 +1017,23 @@ actor ScanEngine {
         }
         let totalSize = items.reduce(0) { $0 + $1.sizeInCategoryTotal }
         return CategoryResult(category: .gitWorktrees, items: items, totalSize: totalSize)
+    }
+
+    /// Ollama models (via `ollama`'s own API/CLI) and Hugging Face caches.
+    /// Every row starts unselected: models are user data, not junk. Smart Scan
+    /// and scheduled scans never reach this (see `CleaningCategory.smartScannable`).
+    private func scanLocalAIModels() async -> CategoryResult {
+        let outcome = await localAIModels.scan()
+        for item in outcome.items {
+            report(item.name)
+        }
+        let totalSize = outcome.items.reduce(0) { $0 + $1.size }
+        return CategoryResult(
+            category: .localAIModels,
+            items: outcome.items,
+            totalSize: totalSize,
+            notes: outcome.notes
+        )
     }
 
     private func scanUniversalBinaries() -> CategoryResult {

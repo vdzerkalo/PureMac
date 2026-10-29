@@ -151,12 +151,12 @@ final class AppStateTests: XCTestCase {
             isSelected: true,
             lastModified: nil
         )
-        let result = CategoryResult(category: .dockerCache, items: [pruned, kept], totalSize: 150, note: "Docker.raw note")
+        let result = CategoryResult(category: .dockerCache, items: [pruned, kept], totalSize: 150, notes: ["Docker.raw note"])
 
         let remaining = try XCTUnwrap(result.removingItems(at: [pruned.path]))
         XCTAssertEqual(remaining.items.map(\.id), [kept.id])
         XCTAssertEqual(remaining.totalSize, 50)
-        XCTAssertEqual(remaining.note, "Docker.raw note")
+        XCTAssertEqual(remaining.notes, ["Docker.raw note"])
 
         XCTAssertNil(result.removingItems(at: [pruned.path, kept.path]))
     }
