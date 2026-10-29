@@ -570,8 +570,9 @@ actor CleaningEngine {
 
     private func unlinkDevToolCache(_ item: CleanableItem) -> DevToolOutcome {
         // Narrow the TOCTOU window: the root must still be a real directory
-        // right before the unlink.
-        guard !DevToolCaches.hasSymlinkBelowHome(item.path, home: homeDirectory.path) else {
+        // right before the unlink. A same-user process can still swap a link
+        // in between this check and removeItem (see docs/DEV-TOOL-CACHES.md).
+        guard isUnchangedDevToolRoot(item.path) else {
             let msg = "Aborting delete: path resolution changed between check and unlink for \(item.path)"
             Logger.shared.log(msg, level: .warning)
             return DevToolOutcome(error: msg)
@@ -586,12 +587,24 @@ actor CleaningEngine {
         }
     }
 
-    /// `uv cache clean --cache-dir <root>`. Never `--force`: uv refuses to
-    /// clean a cache another uv process holds, and that is reported, not
-    /// overridden. uv waits for the lock instead of failing, so a run that
-    /// outlives the timeout counts as locked.
+    /// True while `path` is still a real directory chain below the home
+    /// directory: no symlink on the way and the resolved path equals the path.
+    private func isUnchangedDevToolRoot(_ path: String) -> Bool {
+        !DevToolCaches.hasSymlinkBelowHome(path, home: homeDirectory.path)
+            && URL(fileURLWithPath: path).resolvingSymlinksInPath().path == path
+    }
+
+    /// `uv cache clean --cache-dir <root>`. Never `--force`. uv waits for a
+    /// lock another uv process holds instead of failing, so only a run that
+    /// outlives the timeout counts as busy. Any non-zero exit is a real error
+    /// and its stderr is logged and shown.
     private func runUVCacheClean(uv: String, item: CleanableItem) async -> DevToolOutcome {
-        let busy = "Skipped \(item.name): the uv cache is locked by another uv process. Close it, then clean again."
+        let busy = "Skipped \(item.name): uv did not finish in time; the cache may be locked by another uv process. Close it, then clean again."
+        guard isUnchangedDevToolRoot(item.path) else {
+            let msg = "Aborting uv cache clean: path resolution changed for \(item.path)"
+            Logger.shared.log(msg, level: .warning)
+            return DevToolOutcome(error: msg)
+        }
         do {
             let output = try await BrewProcessRunner.run(
                 executableURL: URL(fileURLWithPath: uv),
@@ -602,15 +615,13 @@ actor CleaningEngine {
                 Logger.shared.log("uv cache clean removed \(item.path)", level: .info)
                 return DevToolOutcome(freed: item.size, removed: true, handled: true)
             }
-            let stderr = String(decoding: output.stderr, as: UTF8.self).lowercased()
-            if stderr.contains("in-use") || stderr.contains("in use") || stderr.contains("lock") {
-                Logger.shared.log("uv cache clean: cache is locked (\(item.path))", level: .info)
-                return DevToolOutcome(skipped: true, error: busy)
-            }
+            let stderr = String(decoding: output.stderr, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             Logger.shared.log("uv cache clean exited \(output.status): \(stderr)", level: .error)
-            return DevToolOutcome(error: "Couldn't clean \(item.name): uv cache clean failed (exit \(output.status))")
+            let detail = stderr.isEmpty ? "" : ": \(String(stderr.prefix(300)))"
+            return DevToolOutcome(error: "Couldn't clean \(item.name): uv cache clean failed (exit \(output.status))\(detail)")
         } catch ApplicationUpdaterError.timedOut {
-            Logger.shared.log("uv cache clean timed out; treating the cache as locked (\(item.path))", level: .info)
+            Logger.shared.log("uv cache clean timed out; treating the cache as busy (\(item.path))", level: .info)
             return DevToolOutcome(skipped: true, error: busy)
         } catch {
             Logger.shared.log("uv cache clean failed to run: \(error.localizedDescription)", level: .error)
@@ -639,10 +650,19 @@ actor CleaningEngine {
                 Logger.shared.log(msg, level: .error)
                 return DevToolOutcome(error: msg)
             }
-            guard (reported as NSString).standardizingPath == item.path else {
+            // `go env` may have taken a while: compare go's directory in
+            // canonical form and re-check the root right before `go clean`.
+            let canonicalReported = URL(fileURLWithPath: (reported as NSString).standardizingPath)
+                .resolvingSymlinksInPath().path
+            guard reported.hasPrefix("/"), canonicalReported == item.path else {
                 let msg = "Skipped \(item.name): go uses \(reported), not \(item.path)"
                 Logger.shared.log(msg, level: .warning)
                 return DevToolOutcome(skipped: true, error: msg)
+            }
+            guard isUnchangedDevToolRoot(item.path) else {
+                let msg = "Aborting go clean: path resolution changed for \(item.path)"
+                Logger.shared.log(msg, level: .warning)
+                return DevToolOutcome(error: msg)
             }
             let output = try await BrewProcessRunner.run(
                 executableURL: URL(fileURLWithPath: go),
