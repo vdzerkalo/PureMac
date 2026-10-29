@@ -8,6 +8,8 @@ struct GitWorktreeSettings: Equatable {
     static let extraRootsKey = "settings.cleaning.worktrees.extraRoots"
     static let baseBranchKey = "settings.cleaning.worktrees.baseBranch"
     static let deleteMergedBranchKey = "settings.cleaning.worktrees.deleteMergedBranch"
+    /// Manual Smart Scan also scans worktrees (`CleaningCategory.smartScanOptInKey`).
+    static let includeInSmartScanKey = "settings.cleaning.worktrees.includeInSmartScan"
     static let inactiveDaysRange = 1...365
 
     /// Days without activity before a merged worktree counts as idle.

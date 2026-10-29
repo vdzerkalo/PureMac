@@ -98,15 +98,41 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    // Categories a Smart Scan or a scheduled scan covers. Git worktrees are
-    // left out of both: removing one runs `git worktree remove` on the user's
-    // own repositories, so it is scanned and cleaned only from its own
-    // category screen. Rows scanned there do stay in `categoryResults`, so
-    // the Overview also refuses them: `RemovalRisk.requiresAcknowledgement`
-    // keeps them out of its totals, its Clean button, its category checkbox
-    // and `cleanAll` (manual and scheduled alike).
+    // Categories a Smart Scan or a scheduled scan covers by default. Git
+    // worktrees are left out of both: removing one runs `git worktree
+    // remove` on the user's own repositories, so it is cleaned only from its
+    // own category screen, and its scan can take minutes. Rows scanned there
+    // do stay in `categoryResults`, so the Overview also refuses them:
+    // `RemovalRisk.requiresAcknowledgement` keeps them out of its totals,
+    // its Clean button, its category checkbox and `cleanAll` (manual and
+    // scheduled alike).
     static var smartScannable: [CleaningCategory] {
         scannable.filter { $0 != .gitWorktrees }
+    }
+
+    // Categories outside `smartScannable` that the user can add to a manual
+    // Smart Scan: "Add to Smart Scan" on the Overview or a toggle in
+    // Settings, stored under this key. Adding one adds only its scan; the
+    // Overview still never counts, selects or cleans it, and scheduled scans
+    // keep `smartScannable`.
+    var smartScanOptInKey: String? {
+        switch self {
+        case .gitWorktrees: return GitWorktreeSettings.includeInSmartScanKey
+        default: return nil
+        }
+    }
+
+    static var smartScanOptional: [CleaningCategory] {
+        scannable.filter { $0.smartScanOptInKey != nil && !smartScannable.contains($0) }
+    }
+
+    /// What a manual Smart Scan covers: `smartScannable` plus the optional
+    /// categories added in `defaults`, in `scannable` order.
+    static func smartScanCategories(defaults: UserDefaults = .standard) -> [CleaningCategory] {
+        scannable.filter { category in
+            smartScannable.contains(category)
+                || (smartScanOptional.contains(category) && category.smartScanOptInKey.map(defaults.bool(forKey:)) == true)
+        }
     }
 
     // Categories that rewrite app bundles in place (binary thinning,

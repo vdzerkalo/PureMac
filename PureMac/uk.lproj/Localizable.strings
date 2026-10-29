@@ -975,6 +975,12 @@
 "Base branch" = "Основна гілка";
 "origin/HEAD, origin/main, origin/master, main, master" = "origin/HEAD, origin/main, origin/master, main, master";
 "Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged." = "Залиште порожнім, щоб перебрати їх по черзі. Якщо такої гілки в репозиторії немає, там нічого не вважається злитим.";
+"Not in Smart Scan" = "Не входить у Smart Scan";
+"Scanned only after you add them" = "Скануються, лише коли ви їх додасте";
+"Scanning only reads. Removal stays on the category screen." = "Сканування лише читає. Видалення лишається на екрані категорії.";
+"Add to Smart Scan" = "Додати до Smart Scan";
+"Include in Smart Scan" = "Включати в Smart Scan";
+"Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen." = "Тоді Smart Scan також показує worktree. Він лише читає ваші репозиторії і з великою кількістю worktree може тривати кілька хвилин; сканування за розкладом їх пропускає, а видаляються worktree лише з їхнього екрана.";
 "Delete the merged branch after removing a worktree" = "Видаляти злиту гілку після видалення worktree";
 "Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged." = "Виконує git branch -d, ніколи -D, лише для worktree, які можна видалити, і лише якщо git згоден, що гілку злито.";
 "Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep." = "Окрім списку проєктів Claude Code і папок worktree Cursor та Codex, у цих папках шукають репозиторії на три рівні вглиб.";

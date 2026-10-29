@@ -140,6 +140,8 @@ final class AppState: ObservableObject {
 
     var scheduler = SchedulerService()
     private let scanEngine = ScanEngine()
+    /// Where the Smart Scan opt-ins live (`CleaningCategory.smartScanOptInKey`).
+    private let settingsDefaults: UserDefaults
     private let cleaningEngine: CleaningEngine
     private let locationsProvider: () -> Locations
     private let appFileScanner: AppFileScanner
@@ -192,9 +194,11 @@ final class AppState: ObservableObject {
         locationsProvider: @escaping () -> Locations = Locations.init,
         appFileScanner: @escaping AppFileScanner = AppState.defaultAppFileScanner,
         appFileTrasher: @escaping AppFileTrasher = AppState.defaultAppFileTrasher,
-        cleaningEngine: CleaningEngine = CleaningEngine()
+        cleaningEngine: CleaningEngine = CleaningEngine(),
+        settingsDefaults: UserDefaults = .standard
     ) {
         self.cleaningEngine = cleaningEngine
+        self.settingsDefaults = settingsDefaults
         self.locationsProvider = locationsProvider
         self.appFileScanner = appFileScanner
         self.appFileTrasher = appFileTrasher
@@ -900,7 +904,39 @@ final class AppState: ObservableObject {
 
     func startSmartScan() {
         guard !scanState.isActive, !deviceBackupRemovalInProgress else { return }
-        beginScan(categories: CleaningCategory.smartScannable, replacingResults: true)
+        beginScan(categories: smartScanCategories, replacingResults: true)
+    }
+
+    // MARK: - Smart Scan opt-in
+
+    var smartScanCategories: [CleaningCategory] {
+        CleaningCategory.smartScanCategories(defaults: settingsDefaults)
+    }
+
+    func isAddedToSmartScan(_ category: CleaningCategory) -> Bool {
+        category.smartScanOptInKey.map(settingsDefaults.bool(forKey:)) ?? false
+    }
+
+    func setAddedToSmartScan(_ category: CleaningCategory, _ added: Bool) {
+        guard let key = category.smartScanOptInKey else { return }
+        objectWillChange.send()
+        settingsDefaults.set(added, forKey: key)
+    }
+
+    /// Optional categories the Overview offers to add to Smart Scan: not
+    /// added yet, and with nothing found by a scan on their own screen.
+    var smartScanAdditionOffers: [CleaningCategory] {
+        CleaningCategory.smartScanOptional.filter {
+            !isAddedToSmartScan($0) && (categoryResults[$0]?.totalSize ?? 0) == 0
+        }
+    }
+
+    /// "Add to Smart Scan": every later Smart Scan includes the category,
+    /// and it is scanned now so its row joins the results without a rescan.
+    func addToSmartScan(_ category: CleaningCategory) {
+        guard !scanState.isActive, CleaningCategory.smartScanOptional.contains(category) else { return }
+        setAddedToSmartScan(category, true)
+        scanSingleCategory(category)
     }
 
     func scanSingleCategory(_ category: CleaningCategory) {

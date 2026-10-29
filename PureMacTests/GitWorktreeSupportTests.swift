@@ -1549,3 +1549,48 @@ final class WorktreeRemovalRiskTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Proposed: 1 of 3 items"))
     }
 }
+
+@MainActor
+final class SmartScanOptInTests: XCTestCase {
+    private var suiteName: String!
+    private var defaults: UserDefaults!
+
+    override func setUp() {
+        suiteName = "PureMac.SmartScanOptInTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    func testWorktreesJoinOnlyAManualSmartScanAndOnlyWhenAdded() {
+        XCTAssertEqual(CleaningCategory.smartScanOptional, [.gitWorktrees])
+        XCTAssertEqual(CleaningCategory.smartScanCategories(defaults: defaults), CleaningCategory.smartScannable)
+        XCTAssertFalse(CleaningCategory.smartScanCategories(defaults: defaults).contains(.gitWorktrees), "off by default")
+
+        defaults.set(true, forKey: GitWorktreeSettings.includeInSmartScanKey)
+        let added = CleaningCategory.smartScanCategories(defaults: defaults)
+        XCTAssertEqual(added, CleaningCategory.scannable.filter { CleaningCategory.smartScannable.contains($0) || $0 == .gitWorktrees })
+        XCTAssertFalse(CleaningCategory.smartScannable.contains(.gitWorktrees), "scheduled scans keep skipping worktrees")
+    }
+
+    func testOverviewOffersWorktreesUntilAddedAndNeverSelectsThem() {
+        let state = AppState(performStartupTasks: false, settingsDefaults: defaults)
+        XCTAssertEqual(state.smartScanAdditionOffers, [.gitWorktrees])
+
+        state.setAddedToSmartScan(.gitWorktrees, true)
+        XCTAssertTrue(state.isAddedToSmartScan(.gitWorktrees))
+        XCTAssertTrue(defaults.bool(forKey: GitWorktreeSettings.includeInSmartScanKey))
+        XCTAssertTrue(state.smartScanCategories.contains(.gitWorktrees))
+        XCTAssertEqual(state.smartScanAdditionOffers, [])
+        XCTAssertTrue(state.isReviewedInCategoryOnly(.gitWorktrees), "adding the scan does not open the Overview's Clean button")
+
+        state.setAddedToSmartScan(.gitWorktrees, false)
+        let item = CleanableItem(name: "r · x", path: "/r/wt/x", size: 4_096, category: .gitWorktrees, isSelected: true, lastModified: nil)
+        state.categoryResults[.gitWorktrees] = CategoryResult(category: .gitWorktrees, items: [item], totalSize: 4_096)
+        XCTAssertEqual(state.smartScanAdditionOffers, [], "scanned on its own screen: the row is already in the plan")
+        XCTAssertEqual(state.totalSelectedSize, 0)
+        XCTAssertFalse(state.smartScanCategories.contains(.gitWorktrees))
+    }
+}
