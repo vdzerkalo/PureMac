@@ -492,6 +492,7 @@
 "%lld files totaling %@ were moved. Every protected copy remains in place." = "%lld files totaling %@ were moved. Every protected copy remains in place.";
 "%lld files totaling %@ will be moved to Trash. The protected copy in every group stays in place." = "%lld files totaling %@ will be moved to Trash. The protected copy in every group stays in place.";
 "%lld folders" = "%lld folders";
+
 /* Additional interface strings. */
 "%lld found" = "%lld found";
 "%lld inaccessible" = "%lld inaccessible";
@@ -995,6 +996,7 @@
 "Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay" = "Навсегда · удалить только папки сборки, которые игнорирует git; worktree и его отслеживаемые файлы остаются";
 "Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders." = "Папки сборки, такие как node_modules, .next, dist или target, в этих worktree удаляются навсегда, а не перемещаются в Корзину. Git их игнорирует, отслеживаемых файлов внутри нет; worktree и их файлы остаются, а следующая установка или сборка создаст папки снова.";
 "Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool." = "Сначала остановите dev-серверы, наблюдатели и сборки, работающие из этих worktree. PureMac пропускает worktree, которые видит используемыми, но видит не каждый инструмент.";
+
 /* Docker polish */
 "Dangling Docker images (untagged leftovers)" = "Dangling-образы Docker (остатки без тегов)";
 "Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling-образы Docker (остатки без тегов, размер не оценён)";
@@ -1017,6 +1019,7 @@
 
 /* Git Worktrees artifacts safety review */
 "A build folder contains a git repository, so PureMac will not delete build folders here." = "Папка сборки содержит git-репозиторий, поэтому PureMac не будет удалять здесь папки сборки.";
+
 /* Dev Tool Caches */
 "Dev Tool Caches" = "Кэши инструментов разработчика";
 "Package, build, and download caches of developer tools" = "Кэши пакетов, сборок и загрузок инструментов разработчика";
@@ -1046,6 +1049,7 @@
 "NuGet packages (may hold local packages)" = "Пакеты NuGet (могут содержать локальные пакеты)";
 "NuGet HTTP cache" = "HTTP-кэш NuGet";
 "%@ (Gradle is running)" = "%@ (Gradle запущен)";
+
 /* Local AI Models */
 "Local AI Models" = "Локальные модели ИИ";
 "Ollama models and Hugging Face downloads. Removed models must be downloaded again." = "Модели Ollama и загрузки Hugging Face. Удалённые модели придётся скачивать заново.";
@@ -1068,6 +1072,7 @@
 "Linked from %@ · cannot be removed" = "Есть ссылка из %@ · удалить нельзя";
 "%lld item(s) in Application Support/huggingface were not listed because they do not look like model data." = "Элементов в Application Support/huggingface: %lld. Они не показаны, так как не похожи на данные моделей.";
 "Files linked from outside the cache are not detected." = "Файлы, на которые ссылаются извне кеша, не обнаруживаются.";
+
 /* AI Agent Data */
 "AI Agent Data" = "Данные ИИ-агентов";
 "Large, regenerable data of AI agent apps. Review each item before removal." = "Крупные восстанавливаемые данные приложений ИИ-агентов. Проверьте каждый элемент перед удалением.";
@@ -1084,6 +1089,7 @@
 "Cursor extension download cache" = "Кэш загруженных расширений Cursor";
 "Downloaded extension packages (.vsix). Downloaded again when needed." = "Загруженные пакеты расширений (.vsix). При необходимости загружаются снова.";
 "%@ is running. Quit it to remove this." = "%@ запущено. Закройте приложение, чтобы удалить это.";
+
 /* Space Explorer treemap */
 "List" = "Список";
 "Treemap" = "Древовидная карта";
@@ -1094,3 +1100,9 @@
 "Folder" = "Папка";
 "Hover a tile to see its name and size. Click a folder to open it." = "Наведите курсор на плитку, чтобы увидеть название и размер. Щёлкните папку, чтобы открыть её.";
 "Skipped and inaccessible items are not included in these sizes." = "Пропущенные и недоступные элементы не учтены в этих размерах.";
+
+/* Local AI Models removal risks */
+"Nothing goes to the Trash: models are deleted permanently." = "Ничего не попадает в Корзину: модели удаляются безвозвратно.";
+"Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Модели Ollama удаляются через сам Ollama. Файлы, общие с другими моделями, остаются на диске, поэтому освободится меньше места, чем показано. Чтобы снова пользоваться удалённой моделью, её нужно загрузить через pull заново.";
+"Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Репозитории Hugging Face и папки моделей удаляются со всеми файлами. Чтобы снова ими пользоваться, их нужно скачать целиком, часто это много гигабайт, а на медленном соединении это могут быть часы.";
+"Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Ссылки из-за пределов кэша не обнаруживаются: проект, ссылающийся на удалённую папку, перестанет работать.";

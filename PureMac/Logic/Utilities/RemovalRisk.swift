@@ -1,13 +1,23 @@
 import Foundation
 
 /// Extra friction for removals that touch the user's own developer data
-/// (Docker objects, git worktrees): the review sheet lists the concrete
-/// risks and every one must be acknowledged before a final confirmation.
+/// (Docker objects, git worktrees, local AI models): the review sheet lists
+/// the concrete risks and every one must be acknowledged before a final
+/// confirmation.
 /// Also builds a compact prompt the user can hand to an AI agent to get a
 /// second opinion before anything is deleted.
 enum RemovalRisk {
+    /// Set (c): the categories whose removal needs the risk sheet. Docker
+    /// objects, worktrees and model downloads are permanent and are the
+    /// user's own work or downloads; AI Agent Data goes to the Trash, so it
+    /// has no sheet. Every category here is also in
+    /// `CleaningCategory.overviewExcluded` (set (b)).
+    static var acknowledgedCategories: Set<CleaningCategory> {
+        [.dockerCache, .gitWorktrees, .localAIModels]
+    }
+
     static func requiresAcknowledgement(_ category: CleaningCategory) -> Bool {
-        category == .dockerCache || category == .gitWorktrees
+        acknowledgedCategories.contains(category)
     }
 
     /// The risks the user confirms one by one for the items under review.
@@ -59,6 +69,20 @@ enum RemovalRisk {
                 risks.append(String(localized: "Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool."))
             }
             return risks
+        case .localAIModels:
+            let ollama = items.contains { $0.ollamaModelName != nil }
+            let files = items.contains { $0.ollamaModelName == nil }
+            var risks = [
+                String(localized: "Nothing goes to the Trash: models are deleted permanently."),
+            ]
+            if ollama {
+                risks.append(String(localized: "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again."))
+            }
+            if files {
+                risks.append(String(localized: "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection."))
+                risks.append(String(localized: "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working."))
+            }
+            return risks
         default:
             return []
         }
@@ -85,6 +109,7 @@ enum RemovalRisk {
             return "worktree remove \(name):\(relative)"
         }
         if let command = item.dockerCommandLine { return command }
+        if let model = item.ollamaModelName { return "ollama rm \(model)" }
         if item.isActionItem { return item.name }
         return "delete \(abbreviate(item.path))"
     }
@@ -172,6 +197,7 @@ enum RemovalRisk {
                 : "BLOCKED (worktree busy); worktree is \(worktree)"
         }
         if item.requiresExplicitSelection { return "opt-in only; erases data" }
+        if item.category == .localAIModels { return "opt-in; model download, permanent, shared files stay" }
         return item.isSelected ? "selected by default" : "opt-in"
     }
 
@@ -179,6 +205,7 @@ enum RemovalRisk {
         switch category {
         case .dockerCache: return "docker ps -a, docker images --filter dangling=true, docker volume ls, docker system df -v"
         case .gitWorktrees: return "git status, git log, git stash list"
+        case .localAIModels: return "ollama list, hf cache ls, ls -la on the listed folders"
         default: return "list and inspect only"
         }
     }

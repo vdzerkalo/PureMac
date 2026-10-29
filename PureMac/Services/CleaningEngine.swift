@@ -110,6 +110,10 @@ actor CleaningEngine {
                 // (or `ollama rm` when the API is unreachable), and `hf cache rm` or one validated folder delete
                 // for Hugging Face. This never reaches the generic allow-list
                 // below, and never the admin pass.
+                if !item.isActionItem, isDockerDiskState(item.path) {
+                    result.errors.append(Self.dockerDiskStateRefusal(item.path))
+                    continue
+                }
                 let outcome = await localAIModels.remove(item)
                 result.freedSpace += outcome.freed
                 if outcome.cleaned {
@@ -575,6 +579,10 @@ actor CleaningEngine {
             return (false, false, nil, msg)
         }
 
+        if isDockerDiskState(item.path) {
+            let msg = Self.dockerDiskStateRefusal(item.path)
+            return (false, false, nil, msg)
+        }
         let validation = AIAgentDataSupport.validateForRemoval(
             path: item.path,
             homeDirectory: homeDirectory,
@@ -587,6 +595,9 @@ actor CleaningEngine {
         case .success(let value): validated = value
         }
 
+        if isDockerDiskState(validated.url.path) {
+            return (false, false, nil, Self.dockerDiskStateRefusal(validated.url.path))
+        }
         do {
             let resulting = try trashOperation(validated.url)
             return (true, false, resulting?.path, nil)
@@ -763,6 +774,9 @@ actor CleaningEngine {
         guard let report = item.gitWorktree, let repository = report.repositoryPath else {
             return (0, false, "Not a git worktree PureMac can remove: \(item.name)", nil)
         }
+        if isDockerDiskState(item.path) {
+            return (0, false, Self.dockerDiskStateRefusal(item.path), nil)
+        }
         guard let gitPath = GitWorktreeScanner.locateGit() else {
             return (0, false, "git not found — install Homebrew git or the Xcode command-line tools", nil)
         }
@@ -837,6 +851,9 @@ actor CleaningEngine {
         guard !CleanupExclusions.excludes(report.worktreePath, paths: exclusions) else {
             return (0, false, "Excluded from cleanup: \(item.name)", nil)
         }
+        if isDockerDiskState(report.worktreePath) {
+            return (0, false, Self.dockerDiskStateRefusal(report.worktreePath), nil)
+        }
         // The worktree was removed after the scan (for example in the same
         // batch): its build folders went with it.
         guard GitWorktreeScanner.pathExists(report.worktreePath) else { return (0, true, nil, nil) }
@@ -882,6 +899,10 @@ actor CleaningEngine {
             // Narrow the window between the last check and the delete.
             guard case .ok(let resolved) = WorktreeArtifactSupport.check(worktree: report.worktreePath, relative: relative) else {
                 problems.append("\(relative): changed while being checked")
+                continue
+            }
+            if isDockerDiskState(resolved) {
+                problems.append("\(relative): \(Self.dockerDiskStateRefusal(resolved))")
                 continue
             }
             let bytes = GitWorktreeScanner.allocatedBytes(under: URL(fileURLWithPath: resolved))
@@ -1179,6 +1200,24 @@ actor CleaningEngine {
 
     // MARK: - Helpers
 
+    /// The Docker/OrbStack deny list (`DockerSupport.isProtectedDiskPath`: VM
+    /// disks, their containers, and every parent folder that would take them
+    /// along). The one entry point every deletion route calls BEFORE its own
+    /// allow-list or validation: the generic user and admin passes
+    /// (`isSafeToDelete`), developer tool caches, Local AI Models, AI Agent
+    /// Data (Trash), worktree removal and worktree artifact folders. Tests pin
+    /// each route (`DeletionDenyListTests`). Internal for tests.
+    func isDockerDiskState(_ path: String) -> Bool {
+        guard DockerSupport.isProtectedDiskPath(path, homeDirectory: homeDirectory) else { return false }
+        Logger.shared.log("Refusing to delete Docker/OrbStack disk state: \(path)", level: .warning)
+        return true
+    }
+
+    /// Error text of a route that refused a Docker/OrbStack location.
+    static func dockerDiskStateRefusal(_ path: String) -> String {
+        "Skipped Docker/OrbStack disk state: \(path)"
+    }
+
     /// Internal so tests can prove what both the user pass and the admin pass refuse.
     func isSafeToDelete(
         item: CleanableItem,
@@ -1187,9 +1226,7 @@ actor CleaningEngine {
     ) -> Bool {
         // Docker/OrbStack VM disks sit under allow-listed roots; refuse them
         // first, for every category and in both the user and admin pass.
-        if DockerSupport.isProtectedDiskPath(item.path, homeDirectory: homeDirectory)
-            || DockerSupport.isProtectedDiskPath(resolvedPath, homeDirectory: homeDirectory) {
-            Logger.shared.log("Refusing to delete Docker/OrbStack disk state: \(resolvedPath)", level: .warning)
+        if isDockerDiskState(item.path) || isDockerDiskState(resolvedPath) {
             return false
         }
         if item.category == .aiApps {
@@ -1259,8 +1296,7 @@ actor CleaningEngine {
             return false
         }
         // Same for Docker/OrbStack disks (also checked per item above).
-        if DockerSupport.isProtectedDiskPath(resolvedPath, homeDirectory: homeDirectory) {
-            Logger.shared.log("Refusing to delete Docker/OrbStack disk state: \(resolvedPath)", level: .warning)
+        if isDockerDiskState(resolvedPath) {
             return false
         }
 
