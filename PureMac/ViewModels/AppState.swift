@@ -137,7 +137,7 @@ final class AppState: ObservableObject {
 
     var scheduler = SchedulerService()
     private let scanEngine = ScanEngine()
-    private let cleaningEngine = CleaningEngine()
+    private let cleaningEngine: CleaningEngine
     private let locationsProvider: () -> Locations
     private let appFileScanner: AppFileScanner
     private let appFileTrasher: AppFileTrasher
@@ -156,8 +156,23 @@ final class AppState: ObservableObject {
         CleaningCategory.scannable.compactMap { categoryResults[$0] }.filter { $0.totalSize > 0 }
     }
 
+    /// Categories whose removal needs the per-risk review sheet (Docker).
+    /// The Overview never counts, selects or cleans them: they are removable
+    /// only from their own category screen, where every risk is acknowledged.
+    func isReviewedInCategoryOnly(_ category: CleaningCategory) -> Bool {
+        RemovalRisk.requiresAcknowledgement(category)
+    }
+
+    /// Selected items the Overview "Clean" button may remove.
+    var overviewSelectedItems: [CleanableItem] {
+        allResults
+            .filter { !isReviewedInCategoryOnly($0.category) }
+            .flatMap { $0.items }
+            .filter { isItemSelected($0) }
+    }
+
     var totalSelectedSize: Int64 {
-        allResults.flatMap { $0.items }.filter { isItemSelected($0) }.reduce(0) { $0 + $1.size }
+        overviewSelectedItems.reduce(0) { $0 + $1.size }
     }
 
     var currentAppFileSearchLocationCount: Int {
@@ -173,8 +188,10 @@ final class AppState: ObservableObject {
         performStartupTasks: Bool = true,
         locationsProvider: @escaping () -> Locations = Locations.init,
         appFileScanner: @escaping AppFileScanner = AppState.defaultAppFileScanner,
-        appFileTrasher: @escaping AppFileTrasher = AppState.defaultAppFileTrasher
+        appFileTrasher: @escaping AppFileTrasher = AppState.defaultAppFileTrasher,
+        cleaningEngine: CleaningEngine = CleaningEngine()
     ) {
+        self.cleaningEngine = cleaningEngine
         self.locationsProvider = locationsProvider
         self.appFileScanner = appFileScanner
         self.appFileTrasher = appFileTrasher
@@ -649,7 +666,12 @@ final class AppState: ObservableObject {
         let excluded = excludedCleanupPaths
         guard !excluded.isEmpty else { return result }
         let items = result.items.filter { !CleanupExclusions.excludes($0.path, paths: excluded) }
-        return CategoryResult(category: result.category, items: items, totalSize: items.reduce(0) { $0 + $1.size })
+        return CategoryResult(
+            category: result.category,
+            items: items,
+            totalSize: items.reduce(0) { $0 + $1.size },
+            note: result.note
+        )
     }
 
     func setSelection(_ selected: Bool, for items: [CleanableItem]) {
@@ -686,7 +708,7 @@ final class AppState: ObservableObject {
 
     func selectAllInCategory(_ category: CleaningCategory) {
         guard let result = categoryResults[category] else { return }
-        for item in result.items {
+        for item in result.items where !item.requiresExplicitSelection {
             if item.isSelected {
                 deselectedItems.remove(item.id)
             } else {
@@ -726,11 +748,11 @@ final class AppState: ObservableObject {
     func categoryBinding(for category: CleaningCategory) -> Binding<Bool> {
         Binding<Bool>(
             get: { [weak self] in
-                guard let self else { return false }
+                guard let self, !self.isReviewedInCategoryOnly(category) else { return false }
                 return self.selectedCountInCategory(category) > 0
             },
             set: { [weak self] newValue in
-                guard let self else { return }
+                guard let self, !self.isReviewedInCategoryOnly(category) else { return }
                 if newValue {
                     self.selectAllInCategory(category)
                 } else {
@@ -813,8 +835,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func retryCleanItems(_ items: [CleanableItem]) async {
-        guard !scanState.isActive, !deviceBackupRemovalInProgress else { return }
+    private func retryCleanItems(_ requested: [CleanableItem]) async {
+        // A permission retry never re-runs a Docker prune that skipped the review sheet.
+        let items = requested.filter { !isReviewedInCategoryOnly($0.category) }
+        guard !items.isEmpty, !scanState.isActive, !deviceBackupRemovalInProgress else { return }
         let generation = UUID()
         cleanupGeneration = generation
         scanState = .cleaning(progress: 0)
@@ -840,21 +864,12 @@ final class AppState: ObservableObject {
         if result.itemsCleaned > 0 { lastCleanedDate = Date() }
 
         for (cat, catResult) in categoryResults {
-            let remaining = catResult.items.filter { !result.cleanedPaths.contains($0.path) }
             let cleared = catResult.items.filter { result.cleanedPaths.contains($0.path) }
             for item in cleared {
                 selectedCleanupItems.remove(item.id)
                 deselectedItems.remove(item.id)
             }
-            if remaining.isEmpty {
-                categoryResults.removeValue(forKey: cat)
-            } else {
-                categoryResults[cat] = CategoryResult(
-                    category: cat,
-                    items: remaining,
-                    totalSize: remaining.reduce(0) { $0 + $1.size }
-                )
-            }
+            categoryResults[cat] = catResult.removingItems(at: result.cleanedPaths)
         }
         totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
 
@@ -944,7 +959,10 @@ final class AppState: ObservableObject {
     func cleanAll(itemIDs: Set<UUID>? = nil, scheduled: Bool = false) {
         guard !scanState.isActive, !deviceBackupRemovalInProgress else { return }
 
-        let itemsToClean = allResults.flatMap { $0.items }.filter { item in
+        // Manual and scheduled alike: categories that need the risk review
+        // (Docker) are never cleaned from here, only from cleanCategory
+        // after the review sheet.
+        let itemsToClean = allResults.filter { !isReviewedInCategoryOnly($0.category) }.flatMap { $0.items }.filter { item in
             guard itemIDs?.contains(item.id) ?? true else { return false }
             guard isItemSelected(item) else { return false }
             if scheduled && XcodeBuildMCPDerivedDataSupport.isManagedDerivedDataPath(item.path) {
@@ -988,21 +1006,12 @@ final class AppState: ObservableObject {
             let survivors = survivingItems(from: itemsToClean, result: result)
 
             for (cat, catResult) in categoryResults {
-                let remaining = catResult.items.filter { !result.cleanedPaths.contains($0.path) }
                 let cleared = catResult.items.filter { result.cleanedPaths.contains($0.path) }
                 for item in cleared {
                     selectedCleanupItems.remove(item.id)
                     deselectedItems.remove(item.id)
                 }
-                if remaining.isEmpty {
-                    categoryResults.removeValue(forKey: cat)
-                } else {
-                    categoryResults[cat] = CategoryResult(
-                        category: cat,
-                        items: remaining,
-                        totalSize: remaining.reduce(0) { $0 + $1.size }
-                    )
-                }
+                categoryResults[cat] = catResult.removingItems(at: result.cleanedPaths)
             }
             totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
 
@@ -1047,21 +1056,12 @@ final class AppState: ObservableObject {
             if cleanResult.itemsCleaned > 0 { lastCleanedDate = Date() }
 
             if let existing = categoryResults[category] {
-                let remaining = existing.items.filter { !cleanResult.cleanedPaths.contains($0.path) }
                 let cleared = existing.items.filter { cleanResult.cleanedPaths.contains($0.path) }
                 for item in cleared {
                     selectedCleanupItems.remove(item.id)
                     deselectedItems.remove(item.id)
                 }
-                if remaining.isEmpty {
-                    categoryResults.removeValue(forKey: category)
-                } else {
-                    categoryResults[category] = CategoryResult(
-                        category: category,
-                        items: remaining,
-                        totalSize: remaining.reduce(0) { $0 + $1.size }
-                    )
-                }
+                categoryResults[category] = existing.removingItems(at: cleanResult.cleanedPaths)
             }
             totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
 

@@ -12,6 +12,9 @@ struct CategoryDetailView: View {
 
     @State private var filter = CleanupReviewFilter()
     @State private var pendingReview: CleanupSelection?
+    @State private var acknowledgedRisks: Set<Int> = []
+    @State private var confirmingRemoval = false
+    @State private var copiedPrompt = false
 
     private var result: CategoryResult? { appState.categoryResults[category] }
     private var visibleItems: [CleanableItem] { filter.apply(to: result?.items ?? []) }
@@ -80,6 +83,11 @@ struct CategoryDetailView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
+                if let note = result?.note {
+                    Text(note)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 16)
             Button {
@@ -132,10 +140,14 @@ struct CategoryDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(visibleItems.allSatisfy(appState.isItemSelected) ? "Deselect visible" : "Select visible") {
-                    appState.setSelection(!visibleItems.allSatisfy(appState.isItemSelected), for: visibleItems)
+                // Rows that need an explicit click (Docker volumes) are left
+                // out of the bulk selection, but "Deselect visible" clears them.
+                let bulkItems = visibleItems.filter { !$0.requiresExplicitSelection }
+                let allBulkSelected = bulkItems.allSatisfy(appState.isItemSelected)
+                Button(allBulkSelected ? "Deselect visible" : "Select visible") {
+                    appState.setSelection(!allBulkSelected, for: allBulkSelected ? visibleItems : bulkItems)
                 }
-                .disabled(visibleItems.isEmpty || appState.scanState.isActive)
+                .disabled(bulkItems.isEmpty || appState.scanState.isActive)
                 .buttonStyle(.borderless)
             }
         }
@@ -166,7 +178,11 @@ struct CategoryDetailView: View {
                     .buttonStyle(.borderless)
                     .disabled(appState.scanState.isActive)
             }
+            if RemovalRisk.requiresAcknowledgement(category) {
+                copyPromptButton(proposed: selectedItems)
+            }
             Button {
+                acknowledgedRisks = []
                 pendingReview = CleanupSelection(items: selectedItems)
             } label: {
                 Label("Review removal", systemImage: "trash")
@@ -184,7 +200,8 @@ struct CategoryDetailView: View {
     }
 
     private func removalReview(items: [CleanableItem]) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let risks = RemovalRisk.risks(for: category, items: items)
+        return VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Review removal")
                     .font(.title2.weight(.semibold))
@@ -210,7 +227,12 @@ struct CategoryDetailView: View {
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             }
-                            if !item.path.isEmpty {
+                            if let action = item.dockerPruneAction {
+                                Text(item.dockerCommandLine ?? action.commandLine)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            } else if !item.path.isEmpty {
                                 Text(item.path)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
@@ -227,23 +249,91 @@ struct CategoryDetailView: View {
                 }
                 .padding(.trailing, 8)
             }
-            .frame(minHeight: 160, maxHeight: 300)
+            .frame(minHeight: 160, maxHeight: risks.isEmpty ? 300 : 220)
+            if !risks.isEmpty {
+                riskAcknowledgements(risks)
+            }
             HStack {
+                if !risks.isEmpty {
+                    copyPromptButton(proposed: items)
+                }
                 Spacer()
                 Button("Cancel", role: .cancel) { pendingReview = nil }
                     .keyboardShortcut(.cancelAction)
                 Button("Remove \(items.count) items", role: .destructive) {
-                    let itemIDs = Set(items.map(\.id))
-                    pendingReview = nil
-                    appState.cleanCategory(category, itemIDs: itemIDs)
+                    if risks.isEmpty {
+                        remove(items)
+                    } else {
+                        confirmingRemoval = true
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Tint.red)
-                .disabled(items.isEmpty || appState.scanState.isActive)
+                .disabled(items.isEmpty || appState.scanState.isActive || acknowledgedRisks.count < risks.count)
+                // A tinted prominent button keeps its colour when disabled;
+                // dim it so the locked state is visible until every risk is ticked.
+                .opacity(acknowledgedRisks.count < risks.count ? 0.45 : 1)
             }
         }
         .padding(24)
         .frame(width: 580)
+        .alert(Text("Remove \(items.count) items permanently?"), isPresented: $confirmingRemoval) {
+            Button("Cancel", role: .cancel) {}
+            Button("Remove permanently", role: .destructive) { remove(items) }
+        } message: {
+            Text("This cannot be undone. Nothing is moved to the Trash.")
+        }
+    }
+
+    /// Docker removals delete the user's own work, not caches an app
+    /// rebuilds silently: every risk is ticked off before the Remove button
+    /// unlocks, and a final alert follows it.
+    private func riskAcknowledgements(_ risks: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Confirm each risk before removing", systemImage: "exclamationmark.triangle.fill")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(Tint.red)
+            ForEach(Array(risks.enumerated()), id: \.offset) { index, risk in
+                Toggle(isOn: Binding(
+                    get: { acknowledgedRisks.contains(index) },
+                    set: { if $0 { acknowledgedRisks.insert(index) } else { acknowledgedRisks.remove(index) } }
+                )) {
+                    Text(risk)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .toggleStyle(.checkbox)
+            }
+        }
+        .padding(12)
+        .background(Tint.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Copies a compact review brief for an AI agent: every found item, the
+    /// proposed ones marked, and instructions to check read-only and ask the
+    /// owner before anything is removed.
+    private func copyPromptButton(proposed: [CleanableItem]) -> some View {
+        Button {
+            let prompt = RemovalRisk.agentPrompt(
+                category: category,
+                found: result?.items ?? proposed,
+                proposed: Set(proposed.map(\.id))
+            )
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(prompt, forType: .string)
+            copiedPrompt = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedPrompt = false }
+        } label: {
+            Label(copiedPrompt ? "Copied" : "Copy agent prompt", systemImage: copiedPrompt ? "checkmark" : "doc.on.clipboard")
+        }
+        .buttonStyle(.bordered)
+        .help("Copy a short brief with every found item so an AI agent can check the risks with you before removal.")
+    }
+
+    private func remove(_ items: [CleanableItem]) {
+        let itemIDs = Set(items.map(\.id))
+        pendingReview = nil
+        appState.cleanCategory(category, itemIDs: itemIDs)
     }
 
     private func removalMethod(_ item: CleanableItem) -> String {
@@ -280,7 +370,8 @@ private struct CleanupFileRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath)
+                Text(item.dockerCommandLine
+                    ?? (item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

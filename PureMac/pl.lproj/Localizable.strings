@@ -311,7 +311,9 @@
 "pnpm content-addressable store" = "magazyn adresowany treścią pnpm";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Czyszczenie Dockera (zatrzymane kontenery, nieużywane obrazy i pamięć podręczna kompilacji)";
+"Docker build cache" = "Pamięć podręczna kompilacji Dockera";
+"Stopped Docker containers" = "Zatrzymane kontenery Dockera";
+"Unused Docker volumes (may contain data such as databases)" = "Nieużywane wolumeny Dockera (mogą zawierać dane, np. bazy danych)";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "Co godzinę";
@@ -927,3 +929,28 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* Risky removals */
+"Nothing goes to the Trash: Docker deletes these objects permanently." = "Nothing goes to the Trash: Docker deletes these objects permanently.";
+"Stopped containers and the files inside them are deleted; running containers are kept." = "Stopped containers and the files inside them are deleted; running containers are kept.";
+"Confirm each risk before removing" = "Confirm each risk before removing";
+"Remove %lld items permanently?" = "Remove %lld items permanently?";
+"Remove permanently" = "Remove permanently";
+"This cannot be undone. Nothing is moved to the Trash." = "This cannot be undone. Nothing is moved to the Trash.";
+"Copy agent prompt" = "Copy agent prompt";
+"Copied" = "Copied";
+"Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Copy a short brief with every found item so an AI agent can check the risks with you before removal.";
+
+/* Docker polish */
+"Dangling Docker images (untagged leftovers)" = "Dangling Docker images (untagged leftovers)";
+"Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling Docker images (untagged leftovers, size not estimated)";
+"All unused Docker images (pulled or rebuilt when needed)" = "All unused Docker images (pulled or rebuilt when needed)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself." = "Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself.";
+"Build cache is deleted; the next build recreates it and is slower." = "Build cache is deleted; the next build recreates it and is slower.";
+"All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded." = "All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded.";
+"Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source." = "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source.";
+
+/* Docker review fixes */
+"Unused Docker volumes (may contain data such as databases, size not estimated)" = "Unused Docker volumes (may contain data such as databases, size not estimated)";
+"The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back.";
+"Reviewed inside the category before removal" = "Reviewed inside the category before removal";

@@ -311,7 +311,9 @@
 "pnpm content-addressable store" = "Хранилище pnpm с адресацией по содержимому";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Очистка Docker (остановленные контейнеры, непривязанные образы и кэш сборки)";
+"Docker build cache" = "Кэш сборки Docker";
+"Stopped Docker containers" = "Остановленные контейнеры Docker";
+"Unused Docker volumes (may contain data such as databases)" = "Неиспользуемые тома Docker (могут содержать данные, например базы данных)";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "Каждый час";
@@ -413,7 +415,7 @@
 /* Smart Care dashboard hero + Care areas — English fallback, pending translation */
 "%@ free" = "%@ free";
 "%lld checks" = "%lld checks";
-"%lld items found" = "%lld items found";
+"%lld items found" = "Найдено объектов: %lld";
 "%lld selected" = "%lld selected";
 "%lld-POINT LOCAL SCAN" = "%lld-POINT LOCAL SCAN";
 "%lld/%lld checked" = "%lld/%lld checked";
@@ -493,7 +495,7 @@
 /* Additional interface strings. */
 "%lld found" = "%lld found";
 "%lld inaccessible" = "%lld inaccessible";
-"%lld items · %@ found" = "%lld items · %@ found";
+"%lld items · %@ found" = "Найдено объектов: %lld · %@";
 "%lld matched" = "%lld matched";
 "%lld of %lld items shown" = "%lld of %lld items shown";
 "%lld percent" = "%lld percent";
@@ -735,7 +737,7 @@
 "Refreshing package data and comparing installed versions." = "Refreshing package data and comparing installed versions.";
 "Refused to delete %lld protected item(s) (home credential directory or similar)." = "Refused to delete %lld protected item(s) (home credential directory or similar).";
 "Remove %lld files" = "Remove %lld files";
-"Remove %lld items" = "Remove %lld items";
+"Remove %lld items" = "Удалить элементов: %lld";
 "Remove apps and their related files" = "Remove apps and their related files";
 "Remove selected app files?" = "Remove selected app files?";
 "Remove selected files?" = "Remove selected files?";
@@ -927,3 +929,28 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* Risky removals */
+"Nothing goes to the Trash: Docker deletes these objects permanently." = "Ничего не попадает в Корзину: Docker удаляет эти объекты навсегда.";
+"Stopped containers and the files inside them are deleted; running containers are kept." = "Остановленные контейнеры и файлы в них удаляются; запущенные остаются.";
+"Confirm each risk before removing" = "Подтвердите каждый риск перед удалением";
+"Remove %lld items permanently?" = "Удалить навсегда элементов: %lld?";
+"Remove permanently" = "Удалить навсегда";
+"This cannot be undone. Nothing is moved to the Trash." = "Это нельзя отменить. Ничего не попадёт в Корзину.";
+"Copy agent prompt" = "Скопировать промпт для агента";
+"Copied" = "Скопировано";
+"Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Скопировать короткий бриф со всеми найденными элементами, чтобы AI-агент проверил риски вместе с вами до удаления.";
+
+/* Docker polish */
+"Dangling Docker images (untagged leftovers)" = "Dangling-образы Docker (остатки без тегов)";
+"Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling-образы Docker (остатки без тегов, размер не оценён)";
+"All unused Docker images (pulled or rebuilt when needed)" = "Все неиспользуемые образы Docker (загружаются или собираются снова при необходимости)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself." = "Образ диска Docker Desktop (Docker.raw) занимает на диске %@. По данным Docker, место, освобождённое внутри него, может возвращаться macOS несколько минут; если этого не произошло, выполните сами `docker run --privileged --pid=host docker/desktop-reclaim-space`.";
+"Build cache is deleted; the next build recreates it and is slower." = "Кэш сборки будет удалён; следующая сборка создаст его заново и будет медленнее.";
+"All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded." = "Все образы, которые не использует ни один контейнер, будут удалены, с тегами или без; образы, собранные локально и никогда не отправленные в registry, можно только собрать заново, а не скачать.";
+"Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source." = "Dangling-образы (без тега) будут удалены; если такой образ ещё нужен, его придётся собрать заново из исходников.";
+
+/* Docker review fixes */
+"Unused Docker volumes (may contain data such as databases, size not estimated)" = "Неиспользуемые тома Docker (могут содержать данные, например базы данных, размер не оценён)";
+"The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "Тома, названные в команде, будут стёрты вместе с данными (базы данных, загрузки); ни pull, ни сборка их не вернут.";
+"Reviewed inside the category before removal" = "Удаляется в самой категории после просмотра";
