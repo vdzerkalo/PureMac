@@ -7,6 +7,7 @@
 - macOS 13 Ventura or later. Universal Apple Silicon and Intel binary.
 - Developer ID signed, Apple-notarized. MIT license, no paid feature tier.
 - Smart Care scans cleanup categories with progress, cancellation, filters, exclusions, and manual confirmation.
+- Local AI Models lists Ollama models and Hugging Face downloads for manual review. It is excluded from Smart Scan and scheduled cleaning, and nothing is preselected.
 - App Uninstaller discovers related files using heuristic matching. Users must review matches.
 - Orphan Finder surfaces files associated with apps no longer installed.
 - Space Explorer measures allocated folder storage and reports skipped or inaccessible items.
@@ -18,7 +19,7 @@
 - Settings includes appearance, language, Full Disk Access, and user-requested GitHub release checks.
 
 ## Removal behavior
-User-level app uninstalling, orphan removal, and exact-duplicate removal use Trash. Recovery is possible only until Trash is emptied. Dashboard/category cleanup, scheduled auto-clean, Trash emptying, Docker/Xcode runtime cleanup, administrator-authorized removal, local snapshot deletion, and CLI cleanup can permanently delete data. Manual removal requires confirmation. Scheduled auto-clean runs unattended once enabled. Keep backups and review selections. Purgeable space is managed by macOS and is not promised as recoverable cleanup.
+User-level app uninstalling, orphan removal, and exact-duplicate removal use Trash. Recovery is possible only until Trash is emptied. Dashboard/category cleanup, scheduled auto-clean, Trash emptying, Docker/Xcode runtime cleanup, Local AI Models removal (`ollama rm`, `hf cache rm`, or deleting one validated cache folder), administrator-authorized removal, local snapshot deletion, and CLI cleanup can permanently delete data. Manual removal requires confirmation. Scheduled auto-clean runs unattended once enabled. Keep backups and review selections. Purgeable space is managed by macOS and is not promised as recoverable cleanup.
 
 ## Privacy
 No telemetry, analytics, or crash reporting. Local scans and cleanup work offline. Scanned paths and file contents are not uploaded. GitHub release checks and Homebrew update operations use the network. Homebrew operations run with analytics disabled.
