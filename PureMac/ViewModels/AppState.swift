@@ -82,6 +82,10 @@ final class AppState: ObservableObject {
     @Published var scanWasCancelled = false
     /// Optional category added from the Overview and scanning right now.
     @Published private(set) var categoryBeingAdded: CleaningCategory?
+    /// Categories the running scan has not started yet; `addToSmartScan`
+    /// appends to it while `scanAcceptsAdditions`.
+    @Published private(set) var queuedScanCategories: [CleaningCategory] = []
+    private var scanAcceptsAdditions = false
     @Published var lastScanDate: Date?
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = UUID()
@@ -985,16 +989,32 @@ final class AppState: ObservableObject {
         settingsDefaults.set(added, forKey: key)
     }
 
-    /// "Add to Smart Scan": every later Smart Scan includes the category,
-    /// and it is scanned now so its row joins the results without a rescan.
-    /// The Overview keeps the plan on screen and shows this scan in the
-    /// category's own row (`categoryBeingAdded`).
+    /// "Add to Smart Scan": every later Smart Scan includes the category.
+    /// Before any scan it is only saved. During a Smart Scan it joins the
+    /// end of that scan (`queuedScanCategories`). After one, it is scanned
+    /// now so its row joins the results without a rescan; the Overview keeps
+    /// the plan on screen and shows that scan in the category's own row
+    /// (`categoryBeingAdded`).
     func addToSmartScan(_ category: CleaningCategory) {
-        guard !scanState.isActive, !deviceBackupRemovalInProgress,
-              CleaningCategory.smartScanOptional.contains(category) else { return }
+        guard canAddToSmartScan, CleaningCategory.smartScanOptional.contains(category) else { return }
         setAddedToSmartScan(category, true)
-        categoryBeingAdded = category
-        beginScan(categories: [category], replacingResults: false)
+        switch scanState {
+        case .scanning:
+            guard currentScanCategory != category.rawValue, !queuedScanCategories.contains(category) else { return }
+            queuedScanCategories.append(category)
+        case .completed:
+            beginScan(categories: [category], replacingResults: false, addingToResults: true)
+        default:
+            break
+        }
+    }
+
+    /// False while cleaning, removing device backups, or scanning anything
+    /// but a Smart Scan (a category's own screen, a scheduled scan).
+    var canAddToSmartScan: Bool {
+        guard !deviceBackupRemovalInProgress else { return false }
+        if case .scanning = scanState { return scanAcceptsAdditions }
+        return !scanState.isActive
     }
 
     func scanSingleCategory(_ category: CleaningCategory) {
@@ -1011,16 +1031,22 @@ final class AppState: ObservableObject {
         scanWasCancelled = true
         scanTicker.path = ""
         categoryBeingAdded = nil
+        queuedScanCategories = []
+        scanAcceptsAdditions = false
         scanState = categoryResults.isEmpty ? .idle : .completed
     }
 
-    private func beginScan(categories: [CleaningCategory], replacingResults: Bool) {
+    /// `replacingResults` is a Smart Scan, `addingToResults` a category
+    /// added from the Overview; both accept `addToSmartScan` while running.
+    private func beginScan(categories: [CleaningCategory], replacingResults: Bool, addingToResults: Bool = false) {
         let generation = UUID()
         scanGeneration = generation
         scanWasCancelled = false
         totalFreedSpace = 0
         lastCleanupNotes = []
         scanProgress = 0
+        queuedScanCategories = categories
+        scanAcceptsAdditions = replacingResults || addingToResults
         scanState = .scanning(progress: 0, currentCategory: "Preparing...")
         if replacingResults {
             categoryResults = [:]
@@ -1028,31 +1054,37 @@ final class AppState: ObservableObject {
             clearSelectionState()
         }
         scanTask = Task {
-            for (index, category) in categories.enumerated() {
+            var done = 0
+            while !queuedScanCategories.isEmpty {
                 guard !Task.isCancelled, scanGeneration == generation else { return }
-                let progress = Double(index) / Double(categories.count)
-                scanProgress = progress
+                let category = queuedScanCategories.removeFirst()
+                // Recounted per category: added categories join the total.
+                let total = Double(done + 1 + queuedScanCategories.count)
+                advanceScanProgress(to: Double(done) / total)
                 currentScanCategory = category.rawValue
-                scanState = .scanning(progress: progress, currentCategory: category.rawValue)
+                if addingToResults { categoryBeingAdded = category }
+                scanState = .scanning(progress: scanProgress, currentCategory: category.rawValue)
                 clearSelectionState(for: category)
                 let result = await scanEngine.scanCategory(category, onPath: { [weak self] path in
                     Task { @MainActor [weak self] in
                         guard let self, self.scanGeneration == generation else { return }
                         self.scanTicker.path = path
                     }
-                }, onFraction: { [weak self] fraction in
+                }, onFraction: { [weak self, done] fraction in
                     Task { @MainActor [weak self] in
                         guard let self, self.scanGeneration == generation else { return }
-                        self.advanceScanProgress(to: (Double(index) + fraction) / Double(categories.count))
+                        self.advanceScanProgress(to: (Double(done) + fraction) / total)
                     }
                 })
                 guard !Task.isCancelled, scanGeneration == generation else { return }
                 categoryResults[category] = applyingCleanupExclusions(to: result)
                 totalJunkSize = smartScanTotalSize
+                done += 1
             }
             scanProgress = 1
             scanTicker.path = ""
             categoryBeingAdded = nil
+            scanAcceptsAdditions = false
             lastScanDate = Date()
             scanState = .completed
             scanTask = nil

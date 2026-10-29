@@ -2068,19 +2068,45 @@ final class SmartScanOptInTests: XCTestCase {
 
     func testAddingFromTheOverviewScansInItsRowUntilStopped() {
         let state = AppState(performStartupTasks: false, settingsDefaults: defaults)
-        state.addToSmartScan(.trashBins)
-        XCTAssertNil(state.categoryBeingAdded, "only optional categories are added")
+        state.addToSmartScan(.gitWorktrees)
+        XCTAssertTrue(state.isAddedToSmartScan(.gitWorktrees), "before any scan the choice is only saved")
         XCTAssertFalse(state.scanState.isActive)
+        state.setAddedToSmartScan(.gitWorktrees, false)
+
+        state.scanState = .completed
+        state.addToSmartScan(.trashBins)
+        XCTAssertFalse(state.scanState.isActive, "only optional categories are added")
 
         state.addToSmartScan(.gitWorktrees)
-        XCTAssertEqual(state.categoryBeingAdded, .gitWorktrees)
         XCTAssertTrue(state.scanState.isActive)
         XCTAssertTrue(state.isAddedToSmartScan(.gitWorktrees), "the choice is saved before the scan ends")
+        XCTAssertTrue(state.canAddToSmartScan, "another optional category can join this scan")
 
         state.cancelScan()
         XCTAssertNil(state.categoryBeingAdded)
+        XCTAssertTrue(state.queuedScanCategories.isEmpty)
         XCTAssertFalse(state.scanState.isActive)
         XCTAssertTrue(state.isAddedToSmartScan(.gitWorktrees), "stopping the scan keeps the choice")
+    }
+
+    func testAddingDuringASmartScanJoinsItsQueueOnce() {
+        let state = AppState(performStartupTasks: false, settingsDefaults: defaults)
+        state.startSmartScan()
+        XCTAssertTrue(state.canAddToSmartScan)
+        let queued = state.queuedScanCategories.count
+
+        state.addToSmartScan(.gitWorktrees)
+        state.addToSmartScan(.gitWorktrees)
+        XCTAssertEqual(state.queuedScanCategories.count, queued + 1)
+        XCTAssertEqual(state.queuedScanCategories.last, .gitWorktrees)
+        XCTAssertTrue(state.isAddedToSmartScan(.gitWorktrees))
+        state.cancelScan()
+
+        state.scanSingleCategory(.trashBins)
+        XCTAssertFalse(state.canAddToSmartScan, "a category screen's own scan takes no additions")
+        state.addToSmartScan(.gitWorktrees)
+        XCTAssertFalse(state.queuedScanCategories.contains(.gitWorktrees))
+        state.cancelScan()
     }
 
     func testScanProgressMovesForwardOnlyByWholePercents() {
