@@ -81,6 +81,7 @@
 		BC6C800216343438413349A3 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4FD34378988D430A582ED0 /* OnboardingView.swift */; };
 		BF1DAD05E70EB1AE0103BFEA /* XcodeBuildMCPDerivedDataSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04F5D30AEC87F2213C8D59AD /* XcodeBuildMCPDerivedDataSupportTests.swift */; };
 		C85B54037A5989A85968F328 /* AppUpdatesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0AF1B9C42A20B6C9FC2DD9 /* AppUpdatesView.swift */; };
+		CCDF8D8469AE537D0D7AF15A /* FakeTrash.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBAC2F44FFC05A30798DAEFB /* FakeTrash.swift */; };
 		CDCDFEBA39A3290101F86AC6 /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F510F232341EE18F11DC934 /* MainWindow.swift */; };
 		CFA64F54CDBF8A4765E0068D /* LocalizationFilesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 155CE1B8CDCCCA6F9FD028C1 /* LocalizationFilesTests.swift */; };
 		D0E6B0AFF83228F121B4DDD3 /* DuplicateFinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 089D484A0482787027665936 /* DuplicateFinder.swift */; };
@@ -239,6 +240,7 @@
 		DB798781B99987F55D77E2E3 /* SystemMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMonitor.swift; sourceTree = "<group>"; };
 		DFC4A1FD7DB92C82725B4314 /* uk */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = uk; path = uk.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		E866A1541D289C69144A5E62 /* FullDiskAccessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullDiskAccessManager.swift; sourceTree = "<group>"; };
+		EBAC2F44FFC05A30798DAEFB /* FakeTrash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakeTrash.swift; sourceTree = "<group>"; };
 		ED0C4D8912DA94F81B2AEF8F /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		EDBC9DA7C5043AD9A873BA03 /* CleanupExclusions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupExclusions.swift; sourceTree = "<group>"; };
 		EEF15CB1B8EFCA78EF491824 /* ScanError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanError.swift; sourceTree = "<group>"; };
@@ -278,6 +280,7 @@
 				6BA1FC37E3821117365707CD /* DeviceBackupCoordinationTests.swift */,
 				4D0D0E67A3C5B3740B858AD8 /* DeviceBackupServiceTests.swift */,
 				D379BB1C513985CF9AB783D5 /* DuplicateFinderTests.swift */,
+				EBAC2F44FFC05A30798DAEFB /* FakeTrash.swift */,
 				155CE1B8CDCCCA6F9FD028C1 /* LocalizationFilesTests.swift */,
 				0621A14395DCA19EC2995842 /* MonitoringLifecycleTests.swift */,
 				A5984F53676A523D97AF2A89 /* NodeCachePathTests.swift */,
@@ -701,6 +704,7 @@
 				89D5B9A5B4F25EA729B5B08B /* DeviceBackupCoordinationTests.swift in Sources */,
 				5FF5942BC279628276CF6543 /* DeviceBackupServiceTests.swift in Sources */,
 				4FAAA6E9887181C4C0AA9F87 /* DuplicateFinderTests.swift in Sources */,
+				CCDF8D8469AE537D0D7AF15A /* FakeTrash.swift in Sources */,
 				CFA64F54CDBF8A4765E0068D /* LocalizationFilesTests.swift in Sources */,
 				20E0D6D821D0D1BFAC82E6E4 /* MonitoringLifecycleTests.swift in Sources */,
 				E4145581C55556DB43725FBB /* NodeCachePathTests.swift in Sources */,

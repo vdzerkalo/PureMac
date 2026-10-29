@@ -9,8 +9,9 @@ actor CleaningEngine {
     /// Reports whether an AI agent app is running. Injected by tests; the
     /// default inspects the real process list.
     private let isAIAgentOwnerRunning: AIAgentDataSupport.OwnerRunningCheck
-    /// Moves a validated URL to the Trash and returns where it went. Injected
-    /// by tests so they never touch the real Trash.
+    /// Moves a URL to the Trash and returns where it went. Used by every Move
+    /// to Trash route (XcodeBuildMCP DerivedData, AI agent data). Injected by
+    /// tests so they never touch the real Trash.
     typealias TrashOperation = (URL) throws -> URL?
     private let trashOperation: TrashOperation
 
@@ -241,9 +242,7 @@ actor CleaningEngine {
                     }
                     // PureMac's safety contract is Trash-only for recoverable
                     // cleanup. XcodeBuildMCP DerivedData must not be unlinked.
-                    var resulting: NSURL?
-                    try fileManager.trashItem(at: resolvedURL, resultingItemURL: &resulting)
-                    if let trashedPath = resulting?.path {
+                    if let trashedPath = try trashOperation(resolvedURL)?.path {
                         result.trashedPaths.insert(trashedPath)
                     }
                 } else {

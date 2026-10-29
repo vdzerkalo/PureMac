@@ -305,7 +305,7 @@ actor ScanEngine {
             if candidate.rule.isDirectory {
                 size = directorySize(path: path)
             } else {
-                // Allocated size: a VM disk image can be sparse.
+                // Allocated size: a large single file can be sparse.
                 let values = try? candidate.url.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
                 size = Int64(values?.totalFileAllocatedSize ?? values?.fileSize ?? 0)
             }

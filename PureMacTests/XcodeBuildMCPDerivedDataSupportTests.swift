@@ -107,7 +107,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
             isSelected: true,
             lastModified: nil
         )
-        let result = await CleaningEngine(homeDirectory: temporaryHome)
+        let result = await CleaningEngine(homeDirectory: temporaryHome, trashOperation: FakeTrash.operation(in: temporaryHome))
             .cleanItems([item]) { _ in }
 
         XCTAssertEqual(result.itemsCleaned, 0)
@@ -151,7 +151,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
 
         let scan = await ScanEngine(homeDirectory: temporaryHome).scanCategory(.xcodeJunk)
         let item = try XCTUnwrap(scan.items.first { $0.name == "XcodeBuildMCP: Legacy DerivedData" })
-        let result = await CleaningEngine(homeDirectory: temporaryHome).cleanItems([item]) { _ in }
+        let result = await CleaningEngine(homeDirectory: temporaryHome, trashOperation: FakeTrash.operation(in: temporaryHome)).cleanItems([item]) { _ in }
 
         XCTAssertEqual(result.itemsCleaned, 1)
         XCTAssertTrue(result.errors.isEmpty)
@@ -159,7 +159,6 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
         XCTAssertFalse(fileManager.fileExists(atPath: managedRoot.appendingPathComponent("locks").path))
         let trashedPath = try XCTUnwrap(result.trashedPaths.first)
         XCTAssertTrue(fileManager.fileExists(atPath: trashedPath))
-        try? fileManager.removeItem(atPath: trashedPath)
     }
 
     func testCleaningManagedDerivedDataLeavesWorkspaceStateIntact() async throws {
@@ -193,7 +192,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
 
         let scan = await ScanEngine(homeDirectory: temporaryHome).scanCategory(.xcodeJunk)
         let item = try XCTUnwrap(scan.items.first { $0.name == "\(tool): PureMac" })
-        let result = await CleaningEngine(homeDirectory: temporaryHome)
+        let result = await CleaningEngine(homeDirectory: temporaryHome, trashOperation: FakeTrash.operation(in: temporaryHome))
             .cleanItems([item]) { _ in }
 
         XCTAssertEqual(result.itemsCleaned, 1)
@@ -201,14 +200,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
         XCTAssertEqual(result.trashedPaths.count, 1)
         let trashedPath = try XCTUnwrap(result.trashedPaths.first)
         XCTAssertTrue(fileManager.fileExists(atPath: trashedPath))
-        XCTAssertTrue(
-            trashedPath.hasPrefix(
-                fileManager.homeDirectoryForCurrentUser
-                    .appendingPathComponent(".Trash", isDirectory: true)
-                    .path + "/"
-            )
-        )
-        try? fileManager.removeItem(atPath: trashedPath)
+        XCTAssertTrue(trashedPath.hasPrefix(FakeTrash.folder(in: temporaryHome).path + "/"))
         for directory in preservedDirectories {
             XCTAssertTrue(fileManager.fileExists(atPath: directory.appendingPathComponent("must-survive").path))
         }
@@ -266,7 +258,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
 
         let scan = await ScanEngine(homeDirectory: linkedHome).scanCategory(.xcodeJunk)
         let item = try XCTUnwrap(scan.items.first { $0.name == "XcodeBuildMCP: PureMac" })
-        let result = await CleaningEngine(homeDirectory: linkedHome).cleanItems([item]) { _ in }
+        let result = await CleaningEngine(homeDirectory: linkedHome, trashOperation: FakeTrash.operation(in: linkedHome)).cleanItems([item]) { _ in }
 
         XCTAssertEqual(result.itemsCleaned, 1)
         XCTAssertTrue(result.errors.isEmpty)
@@ -299,7 +291,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
             isSelected: true,
             lastModified: nil
         )
-        let result = await CleaningEngine(homeDirectory: temporaryHome).cleanItems([item]) { _ in }
+        let result = await CleaningEngine(homeDirectory: temporaryHome, trashOperation: FakeTrash.operation(in: temporaryHome)).cleanItems([item]) { _ in }
 
         XCTAssertEqual(result.itemsCleaned, 0)
         XCTAssertFalse(result.errors.isEmpty)
@@ -326,7 +318,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
             lastModified: nil
         )
 
-        let result = await CleaningEngine(homeDirectory: temporaryHome)
+        let result = await CleaningEngine(homeDirectory: temporaryHome, trashOperation: FakeTrash.operation(in: temporaryHome))
             .cleanWithAdminPrivileges(items: [item])
 
         XCTAssertEqual(result.itemsCleaned, 0)
@@ -376,7 +368,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
             isSelected: true,
             lastModified: nil
         )
-        let result = await CleaningEngine(homeDirectory: temporaryHome)
+        let result = await CleaningEngine(homeDirectory: temporaryHome, trashOperation: FakeTrash.operation(in: temporaryHome))
             .cleanItems([item]) { _ in }
 
         XCTAssertEqual(result.itemsCleaned, 0)
@@ -533,7 +525,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
             isSelected: true,
             lastModified: nil
         )
-        let result = await CleaningEngine(homeDirectory: linkedHome).cleanItems([item]) { _ in }
+        let result = await CleaningEngine(homeDirectory: linkedHome, trashOperation: FakeTrash.operation(in: linkedHome)).cleanItems([item]) { _ in }
 
         XCTAssertEqual(result.itemsCleaned, 1)
         XCTAssertTrue(result.errors.isEmpty)
@@ -571,7 +563,7 @@ final class XcodeBuildMCPDerivedDataSupportTests: XCTestCase {
                 lastModified: nil
             )
         }
-        let result = await CleaningEngine(homeDirectory: linkedHome).cleanItems(items) { _ in }
+        let result = await CleaningEngine(homeDirectory: linkedHome, trashOperation: FakeTrash.operation(in: linkedHome)).cleanItems(items) { _ in }
 
         XCTAssertEqual(result.itemsCleaned, 0)
         XCTAssertTrue(result.cleanedPaths.isEmpty)
