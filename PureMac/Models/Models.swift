@@ -15,6 +15,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case brewCache = "Brew Cache"
     case nodeCache = "Node Cache"
     case dockerCache = "Docker Cache"
+    case localAIModels = "Local AI Models"
     case universalBinaries = "Universal Binaries"
     case languageFiles = "Language Files"
 
@@ -34,6 +35,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .brewCache: return "mug.fill"
         case .nodeCache: return "leaf.fill"
         case .dockerCache: return "shippingbox.fill"
+        case .localAIModels: return "brain"
         case .universalBinaries: return "cpu"
         case .languageFiles: return "globe"
         }
@@ -53,6 +55,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .brewCache: return "Homebrew download cache"
         case .nodeCache: return "npm, yarn, and pnpm download caches"
         case .dockerCache: return "Docker images, containers, and build cache"
+        case .localAIModels: return "Ollama models and Hugging Face downloads. Removed models must be downloaded again."
         case .universalBinaries: return "Unused CPU architecture slices in app binaries"
         case .languageFiles: return "Unused app localizations"
         }
@@ -72,6 +75,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .brewCache: return .mint
         case .nodeCache: return .pink
         case .dockerCache: return .indigo
+        case .localAIModels: return .orange
         case .universalBinaries: return .brown
         case .languageFiles: return .gray
         }
@@ -92,6 +96,21 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         allCases.filter {
             $0 != .smartScan && $0 != .purgeableSpace && !appModifying.contains($0)
         }
+    }
+
+    // Categories the user can scan from the sidebar but that Smart Scan, the
+    // dashboard totals, "Clean All" and scheduled scans never touch.
+    //
+    // Local AI models are user data, not junk: each one is a multi-gigabyte
+    // download the user chose to keep, and removal cannot be undone. They are
+    // reviewed and removed one category-page at a time, never in bulk.
+    static var userDataCategories: Set<CleaningCategory> {
+        [.localAIModels]
+    }
+
+    // Categories included in Smart Scan, bulk cleaning and scheduled scans.
+    static var smartScannable: [CleaningCategory] {
+        scannable.filter { !userDataCategories.contains($0) }
     }
 
     // Categories that rewrite app bundles in place (binary thinning,
@@ -143,6 +162,10 @@ struct CleanableItem: Identifiable, Hashable {
     /// runtime disk-image identifier from `simctl runtime list`.
     static let simctlRuntimePathPrefix = "simctl-runtime:"
 
+    /// Path prefix for virtual Local AI Models rows removed with
+    /// `ollama rm <name>`. Never a filesystem path.
+    static let ollamaModelPathPrefix = "ollama-model:"
+
     let id = UUID()
     let name: String
     let path: String
@@ -150,15 +173,44 @@ struct CleanableItem: Identifiable, Hashable {
     let category: CleaningCategory
     var isSelected: Bool
     let lastModified: Date?
+    /// Optional second line shown under the name instead of the path
+    /// (Local AI Models uses it for the model kind and sharing caveats).
+    var detail: String? = nil
+    /// Bulk selection (select visible, category checkbox, select all) skips
+    /// this row; only a click on the row itself selects it.
+    var selectOnlyByHand: Bool = false
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
-    /// True for action-only items (Docker prune, simctl runtimes) that have
-    /// no real filesystem path to reveal in Finder.
+    /// True for action-only items (Docker prune, simctl runtimes, Ollama
+    /// models) that have no real filesystem path to reveal in Finder.
     var isActionItem: Bool {
         path.isEmpty || path.hasPrefix(Self.simctlRuntimePathPrefix)
+            || path.hasPrefix(Self.ollamaModelPathPrefix)
+    }
+
+    /// Ollama rows are `ollama-model:<name>#<digest>`. `#` cannot occur in a
+    /// valid model name, so the first one separates the digest recorded at
+    /// scan time (checked again right before `ollama rm`).
+    private var ollamaPathPayload: Substring? {
+        guard category == .localAIModels, path.hasPrefix(Self.ollamaModelPathPrefix) else { return nil }
+        return path.dropFirst(Self.ollamaModelPathPrefix.count)
+    }
+
+    var ollamaModelName: String? {
+        guard let payload = ollamaPathPayload else { return nil }
+        let name = String(payload.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+        return name.isEmpty ? nil : name
+    }
+
+    var ollamaModelDigest: String? {
+        guard let payload = ollamaPathPayload,
+              let hash = payload.firstIndex(of: "#")
+        else { return nil }
+        let digest = String(payload[payload.index(after: hash)...])
+        return digest.isEmpty ? nil : digest
     }
 
     var simctlRuntimeIdentifier: String? {
@@ -183,6 +235,9 @@ struct CategoryResult: Identifiable {
     let category: CleaningCategory
     var items: [CleanableItem]
     var totalSize: Int64
+    /// Explanations shown on the category page (for example "Ollama is not
+    /// running"). Already localized; not part of the totals.
+    var notes: [String] = []
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
@@ -224,7 +279,7 @@ struct ScheduleConfig: Codable {
     var interval: ScheduleInterval = .daily
     var autoClean: Bool = false
     var autoPurge: Bool = false
-    var categoriesToScan: [CleaningCategory] = CleaningCategory.scannable
+    var categoriesToScan: [CleaningCategory] = CleaningCategory.smartScannable
     var lastRunDate: Date?
     var nextRunDate: Date?
     var notifyOnCompletion: Bool = true

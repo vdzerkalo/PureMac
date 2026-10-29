@@ -927,3 +927,26 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* Local AI Models */
+"Local AI Models" = "Локальные модели ИИ";
+"Ollama models and Hugging Face downloads. Removed models must be downloaded again." = "Модели Ollama и загрузки Hugging Face. Удалённые модели придётся скачивать заново.";
+"OLLAMA_HOST points to another machine. PureMac only manages models on this Mac." = "OLLAMA_HOST указывает на другой компьютер. PureMac управляет только моделями на этом Mac.";
+"Ollama is not running or the ollama command was not found. Start Ollama and scan again to list its models." = "Ollama не запущена, или команда ollama не найдена. Запустите Ollama и просканируйте снова, чтобы увидеть её модели.";
+"Ollama model · freed space can be smaller when models share files" = "Модель Ollama · освобождённое место может быть меньше, если у моделей общие файлы";
+"Non-standard folder in the Hugging Face cache · review before removing" = "Нестандартная папка в кеше Hugging Face · проверьте перед удалением";
+"Model files in Application Support/huggingface · review before removing" = "Файлы моделей в Application Support/huggingface · проверьте перед удалением";
+"%lld Hugging Face repo(s) keep their files in a shared store outside the repo folder and are not listed. Removing them would not free space." = "Репозиториев Hugging Face: %lld. Их файлы лежат в общем хранилище вне папки репозитория, поэтому они не показаны. Удаление не освободило бы место.";
+"Hugging Face last-used dates are approximate: the newest change among a repo's refs and snapshots." = "Даты последнего использования Hugging Face приблизительные: это самое новое изменение среди refs и snapshots репозитория.";
+"Hugging Face model" = "Модель Hugging Face";
+"Hugging Face dataset" = "Набор данных Hugging Face";
+"Hugging Face space" = "Space Hugging Face";
+"%@ · %lld revision(s)" = "%@ · ревизий: %lld";
+"Ollama models are removed through Ollama itself. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them." = "Модели Ollama удаляются через сам Ollama. Файлы, общие для нескольких моделей, остаются на диске, поэтому может освободиться меньше места, чем показано. Репозитории и папки Hugging Face удаляются и скачиваются заново, когда понадобятся.";
+"Permanent · Remove through Ollama" = "Безвозвратно · Удалить через Ollama";
+"Permanent · Delete model files" = "Безвозвратно · Удалить файлы моделей";
+
+/* Local AI Models: links and unrecognised files */
+"Linked from %@ · cannot be removed" = "Есть ссылка из %@ · удалить нельзя";
+"%lld item(s) in Application Support/huggingface were not listed because they do not look like model data." = "Элементов в Application Support/huggingface: %lld. Они не показаны, так как не похожи на данные моделей.";
+"Files linked from outside the cache are not detected." = "Файлы, на которые ссылаются извне кеша, не обнаруживаются.";

@@ -3,9 +3,15 @@ import Foundation
 actor ScanEngine {
     private let fileManager = FileManager.default
     private let home: String
+    private let localAIModels: LocalAIModels
 
-    init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
-        home = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory).path
+    init(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        localAIModels: LocalAIModels? = nil
+    ) {
+        let canonicalHome = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        home = canonicalHome.path
+        self.localAIModels = localAIModels ?? LocalAIModels(context: .live(homeDirectory: canonicalHome))
     }
 
     /// Live path reporter for the dashboard's scanning ticker. Throttled so
@@ -77,6 +83,8 @@ actor ScanEngine {
             return await scanNodeCache()
         case .dockerCache:
             return await scanDockerCache()
+        case .localAIModels:
+            return await scanLocalAIModels()
         case .universalBinaries:
             return scanUniversalBinaries()
         case .languageFiles:
@@ -893,6 +901,23 @@ actor ScanEngine {
 
         let totalSize = items.reduce(0) { $0 + $1.size }
         return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize)
+    }
+
+    /// Ollama models (via `ollama`'s own API/CLI) and Hugging Face caches.
+    /// Every row starts unselected: models are user data, not junk. Smart Scan
+    /// and scheduled scans never reach this (see `CleaningCategory.smartScannable`).
+    private func scanLocalAIModels() async -> CategoryResult {
+        let outcome = await localAIModels.scan()
+        for item in outcome.items {
+            report(item.name)
+        }
+        let totalSize = outcome.items.reduce(0) { $0 + $1.size }
+        return CategoryResult(
+            category: .localAIModels,
+            items: outcome.items,
+            totalSize: totalSize,
+            notes: outcome.notes
+        )
     }
 
     private func scanUniversalBinaries() -> CategoryResult {
