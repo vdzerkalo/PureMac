@@ -649,7 +649,12 @@ final class AppState: ObservableObject {
         let excluded = excludedCleanupPaths
         guard !excluded.isEmpty else { return result }
         let items = result.items.filter { !CleanupExclusions.excludes($0.path, paths: excluded) }
-        return CategoryResult(category: result.category, items: items, totalSize: items.reduce(0) { $0 + $1.size })
+        return CategoryResult(
+            category: result.category,
+            items: items,
+            totalSize: items.reduce(0) { $0 + $1.size },
+            note: result.note
+        )
     }
 
     func setSelection(_ selected: Bool, for items: [CleanableItem]) {
@@ -686,7 +691,7 @@ final class AppState: ObservableObject {
 
     func selectAllInCategory(_ category: CleaningCategory) {
         guard let result = categoryResults[category] else { return }
-        for item in result.items {
+        for item in result.items where !item.requiresExplicitSelection {
             if item.isSelected {
                 deselectedItems.remove(item.id)
             } else {

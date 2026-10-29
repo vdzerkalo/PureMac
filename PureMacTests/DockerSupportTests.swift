@@ -39,18 +39,119 @@ final class DockerSupportTests: XCTestCase {
         XCTAssertEqual(DockerSupport.parseSystemDF(""), [])
     }
 
-    // MARK: - prune estimate
+    // MARK: - prune actions
 
-    func testSystemPruneEstimateExcludesImagesAndVolumes() {
-        // `docker system prune -f` keeps tagged images and every volume, so
-        // only the container and build-cache figures may be promised.
-        let estimate = DockerSupport.systemPruneEstimate(DockerSupport.parseSystemDF(systemDFOutput))
+    func testPruneEstimatesGiveOneActionPerReclaimableRow() {
+        let estimates = DockerSupport.pruneEstimates(DockerSupport.parseSystemDF(systemDFOutput))
 
-        XCTAssertEqual(estimate, 20_190_000 + 11_290_000_000)
+        XCTAssertEqual(estimates.map { $0.action }, [.buildCache, .stoppedContainers, .unusedImages, .unusedVolumes])
+        XCTAssertEqual(estimates.map { $0.bytes }, [11_290_000_000, 20_190_000, 10_680_000_000, 5_550_000_000])
     }
 
-    func testSystemPruneEstimateOfNoRowsIsZero() {
-        XCTAssertEqual(DockerSupport.systemPruneEstimate([]), 0)
+    func testPruneEstimatesSkipEmptyRows() {
+        let rows: [DockerSupport.DiskUsageRow] = [
+            .init(type: "Images", size: 1_000, reclaimable: 0),
+            .init(type: "Build Cache", size: 2_000, reclaimable: 2_000),
+        ]
+
+        XCTAssertEqual(DockerSupport.pruneEstimates(rows).map { $0.action }, [.buildCache])
+        XCTAssertTrue(DockerSupport.pruneEstimates([]).isEmpty)
+    }
+
+    func testPruneActionArgumentsMatchWhatDfCountsAsReclaimable() {
+        // df counts every unused object, so images, volumes and build cache
+        // need -a; without it only dangling objects go and the row overstates.
+        XCTAssertEqual(DockerSupport.PruneAction.buildCache.arguments, ["builder", "prune", "-a", "-f"])
+        XCTAssertEqual(DockerSupport.PruneAction.stoppedContainers.arguments, ["container", "prune", "-f"])
+        XCTAssertEqual(DockerSupport.PruneAction.unusedImages.arguments, ["image", "prune", "-a", "-f"])
+        XCTAssertEqual(DockerSupport.PruneAction.unusedVolumes.arguments, ["volume", "prune", "-a", "-f"])
+        XCTAssertEqual(DockerSupport.PruneAction.unusedImages.commandLine, "docker image prune -a -f")
+        for action in DockerSupport.PruneAction.allCases {
+            XCTAssertFalse(action.arguments.contains("system"), "\(action) must not run a whole-system prune")
+        }
+    }
+
+    func testOnlyVolumesRequireExplicitSelection() {
+        let explicit = DockerSupport.PruneAction.allCases.filter(\.requiresExplicitSelection)
+        XCTAssertEqual(explicit, [.unusedVolumes])
+    }
+
+    func testActionPathRoundTrips() {
+        for action in DockerSupport.PruneAction.allCases {
+            XCTAssertEqual(DockerSupport.action(forPath: DockerSupport.actionPath(for: action)), action)
+        }
+        XCTAssertNil(DockerSupport.action(forPath: "docker-prune:bogus"))
+        XCTAssertNil(DockerSupport.action(forPath: "/Users/test/Library/Containers/com.docker.docker/Data/log"))
+        XCTAssertNil(DockerSupport.action(forPath: ""))
+    }
+
+    func testPruneRowsAreActionItems() {
+        let volumes = CleanableItem(
+            name: "Unused Docker volumes",
+            path: DockerSupport.actionPath(for: .unusedVolumes),
+            size: 1,
+            category: .dockerCache,
+            isSelected: false,
+            lastModified: nil
+        )
+        XCTAssertTrue(volumes.isActionItem)
+        XCTAssertEqual(volumes.dockerPruneAction, .unusedVolumes)
+        XCTAssertTrue(volumes.requiresExplicitSelection)
+
+        // The prefix only means something inside the Docker category.
+        let elsewhere = CleanableItem(
+            name: "Not Docker",
+            path: DockerSupport.actionPath(for: .unusedVolumes),
+            size: 1,
+            category: .userCache,
+            isSelected: false,
+            lastModified: nil
+        )
+        XCTAssertNil(elsewhere.dockerPruneAction)
+        XCTAssertFalse(elsewhere.requiresExplicitSelection)
+    }
+
+    // MARK: - reclaimed space
+
+    func testParseReclaimedSpaceFromPruneSummaries() {
+        XCTAssertEqual(DockerSupport.parseReclaimedSpace("""
+        Deleted Containers:
+        4f2c1b0a9e8d
+
+        Total reclaimed space: 20.19MB
+        """), 20_190_000)
+        // `docker builder prune` (buildx) ends with a tab-separated "Total:" line.
+        XCTAssertEqual(DockerSupport.parseReclaimedSpace("""
+        ID\t\t\t\t\t\tRECLAIMABLE\tSIZE\t\tLAST ACCESSED
+        x7f2kq\t\t\t\t\t\ttrue \t\t11.29GB\t\t3 weeks ago
+        Total:\t11.29GB
+        """), 11_290_000_000)
+        XCTAssertEqual(DockerSupport.parseReclaimedSpace("Total reclaimed space: 0B"), 0)
+        XCTAssertNil(DockerSupport.parseReclaimedSpace(""))
+    }
+
+    // MARK: - Docker.raw
+
+    func testDockerRawPathIsInsideDockerDesktopContainer() {
+        XCTAssertEqual(
+            DockerSupport.dockerRawPath(homeDirectory: "/Users/test"),
+            "/Users/test/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"
+        )
+    }
+
+    func testAllocatedSizeReportsBlocksNotApparentLength() throws {
+        // A sparse file, like Docker.raw: huge apparent length, almost no blocks.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PureMac-DockerRaw-\(UUID().uuidString).raw")
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: nil))
+        defer { try? FileManager.default.removeItem(at: url) }
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: 1_000_000_000)
+        try handle.close()
+
+        let allocated = try XCTUnwrap(DockerSupport.allocatedSize(ofFileAt: url.path))
+        XCTAssertLessThan(allocated, 1_000_000)
+        XCTAssertNil(DockerSupport.allocatedSize(ofFileAt: url.path + ".missing"))
     }
 
     // MARK: - byte parsing

@@ -80,6 +80,11 @@ struct CategoryDetailView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
+                if let note = result?.note {
+                    Text(note)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 16)
             Button {
@@ -132,10 +137,14 @@ struct CategoryDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(visibleItems.allSatisfy(appState.isItemSelected) ? "Deselect visible" : "Select visible") {
-                    appState.setSelection(!visibleItems.allSatisfy(appState.isItemSelected), for: visibleItems)
+                // Rows that need an explicit click (Docker volumes) are left
+                // out of the bulk selection, but "Deselect visible" clears them.
+                let bulkItems = visibleItems.filter { !$0.requiresExplicitSelection }
+                let allBulkSelected = bulkItems.allSatisfy(appState.isItemSelected)
+                Button(allBulkSelected ? "Deselect visible" : "Select visible") {
+                    appState.setSelection(!allBulkSelected, for: allBulkSelected ? visibleItems : bulkItems)
                 }
-                .disabled(visibleItems.isEmpty || appState.scanState.isActive)
+                .disabled(bulkItems.isEmpty || appState.scanState.isActive)
                 .buttonStyle(.borderless)
             }
         }
@@ -210,7 +219,12 @@ struct CategoryDetailView: View {
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             }
-                            if !item.path.isEmpty {
+                            if let action = item.dockerPruneAction {
+                                Text(action.commandLine)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            } else if !item.path.isEmpty {
                                 Text(item.path)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
@@ -280,7 +294,8 @@ private struct CleanupFileRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath)
+                Text(item.dockerPruneAction?.commandLine
+                    ?? (item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

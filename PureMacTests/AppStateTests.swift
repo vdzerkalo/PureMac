@@ -103,6 +103,37 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(state.isItemSelected(hidden))
     }
 
+    func testBulkSelectionSkipsDockerVolumes() {
+        let state = AppState(performStartupTasks: false)
+        let buildCache = CleanableItem(
+            name: "Docker build cache",
+            path: DockerSupport.actionPath(for: .buildCache),
+            size: 100,
+            category: .dockerCache,
+            isSelected: false,
+            lastModified: nil
+        )
+        let volumes = CleanableItem(
+            name: "Unused Docker volumes",
+            path: DockerSupport.actionPath(for: .unusedVolumes),
+            size: 100,
+            category: .dockerCache,
+            isSelected: false,
+            lastModified: nil
+        )
+        state.categoryResults[.dockerCache] = CategoryResult(category: .dockerCache, items: [buildCache, volumes], totalSize: 200)
+
+        state.selectAllInCategory(.dockerCache)
+        XCTAssertTrue(state.isItemSelected(buildCache))
+        XCTAssertFalse(state.isItemSelected(volumes))
+
+        state.toggleItem(volumes)
+        XCTAssertTrue(state.isItemSelected(volumes))
+        state.deselectAllInCategory(.dockerCache)
+        XCTAssertFalse(state.isItemSelected(buildCache))
+        XCTAssertFalse(state.isItemSelected(volumes))
+    }
+
     func testScheduledScanWaitsForReviewToLeaveForeground() {
         let state = AppState(performStartupTasks: false)
         let item = cleanupItem(selected: true)

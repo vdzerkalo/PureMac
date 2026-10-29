@@ -98,14 +98,16 @@ actor CleaningEngine {
                 continue
             }
 
-            if item.category == .dockerCache && item.path.isEmpty {
-                // The virtual "Docker prune" entry (empty path, like
-                // purgeableSpace) reclaims space inside the Docker/OrbStack VM
-                // via `docker system prune -f` — there is no file to unlink.
-                let pruneOutcome = await pruneDockerSystem()
+            if let action = item.dockerPruneAction {
+                // Virtual Docker Cache rows reclaim space inside the
+                // Docker/OrbStack VM through their own prune command — there
+                // is no file to unlink.
+                let pruneOutcome = await pruneDocker(action)
                 result.freedSpace += pruneOutcome.freed
-                if pruneOutcome.freed > 0 { result.itemsCleaned += 1 }
-                result.cleanedPaths.insert(item.path)
+                if pruneOutcome.error == nil {
+                    result.itemsCleaned += 1
+                    result.cleanedPaths.insert(item.path)
+                }
                 if let error = pruneOutcome.error {
                     result.errors.append(error)
                 }
@@ -415,14 +417,15 @@ actor CleaningEngine {
 
     // MARK: - Docker
 
-    /// Runs `docker system prune -f` (no -a: tagged images and running
-    /// containers survive) and reports the bytes Docker says it reclaimed.
-    /// This is the clean action behind the virtual "Docker prune" item —
-    /// with a VM-based runtime (Docker Desktop, OrbStack) the junk lives
-    /// inside the VM disk, unreachable by any file unlink from the host.
-    /// Returns a friendly error when no CLI is installed or the daemon is
-    /// not running — common with OrbStack, which only runs on demand.
-    func pruneDockerSystem() async -> (freed: Int64, error: String?) {
+    /// Runs the prune behind one Docker Cache row (see
+    /// DockerSupport.PruneAction) and reports the bytes Docker says it
+    /// reclaimed. Running containers, images they use and volumes they mount
+    /// are never removed by any of these commands. With a VM-based runtime
+    /// (Docker Desktop, OrbStack) the junk lives inside the VM disk,
+    /// unreachable by any file unlink from the host. Returns a friendly error
+    /// when no CLI is installed or the daemon is not running — common with
+    /// OrbStack, which only runs on demand.
+    func pruneDocker(_ action: DockerSupport.PruneAction) async -> (freed: Int64, error: String?) {
         guard let dockerBin = DockerSupport.locateBinary(homeDirectory: homeDirectory.path) else {
             return (0, "Docker CLI not found — install Docker Desktop or OrbStack")
         }
@@ -434,17 +437,17 @@ actor CleaningEngine {
         do {
             result = try await BrewProcessRunner.run(
                 executableURL: URL(fileURLWithPath: dockerBin),
-                arguments: ["system", "prune", "-f"],
+                arguments: action.arguments,
                 timeout: DockerSupport.pruneTimeout
             )
         } catch is CancellationError {
             return (0, nil)
         } catch ApplicationUpdaterError.timedOut {
-            Logger.shared.log("docker system prune timed out after \(Int(DockerSupport.pruneTimeout))s", level: .error)
-            return (0, "docker system prune did not finish in time — check Docker Desktop or OrbStack, then clean again")
+            Logger.shared.log("\(action.commandLine) timed out after \(Int(DockerSupport.pruneTimeout))s", level: .error)
+            return (0, "\(action.commandLine) did not finish in time — check Docker Desktop or OrbStack, then clean again")
         } catch {
-            Logger.shared.log("docker system prune failed to launch: \(error.localizedDescription)", level: .error)
-            return (0, "Couldn't run docker system prune: \(error.localizedDescription)")
+            Logger.shared.log("\(action.commandLine) failed to launch: \(error.localizedDescription)", level: .error)
+            return (0, "Couldn't run \(action.commandLine): \(error.localizedDescription)")
         }
 
         guard result.status == 0 else {
@@ -452,19 +455,14 @@ actor CleaningEngine {
             if DockerSupport.isDaemonUnavailable(stderr: stderrText) {
                 return (0, "Docker isn't running — start Docker Desktop or OrbStack, then clean again")
             }
-            Logger.shared.log("docker system prune exited \(result.status): \(stderrText)", level: .error)
-            return (0, "docker system prune failed (exit \(result.status))")
+            Logger.shared.log("\(action.commandLine) exited \(result.status): \(stderrText)", level: .error)
+            return (0, "\(action.commandLine) failed (exit \(result.status))")
         }
 
-        // Final line reads "Total reclaimed space: 1.234GB" ("0B" when idle).
         let output = String(data: result.stdout, encoding: .utf8) ?? ""
-        if let line = output.split(separator: "\n").last(where: { $0.contains("Total reclaimed space:") }),
-           let raw = line.split(separator: ":").last?.trimmingCharacters(in: .whitespaces),
-           let bytes = DockerSupport.parseHumanBytes(raw) {
-            Logger.shared.log("docker system prune reclaimed \(bytes) bytes", level: .info)
-            return (bytes, nil)
-        }
-        return (0, nil)
+        let bytes = DockerSupport.parseReclaimedSpace(output) ?? 0
+        Logger.shared.log("\(action.commandLine) reclaimed \(bytes) bytes", level: .info)
+        return (bytes, nil)
     }
 
     // MARK: - Simulator Runtimes

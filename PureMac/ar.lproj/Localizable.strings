@@ -270,7 +270,11 @@
 "pnpm content-addressable store" = "مخزن pnpm القابل للعنونة بالمحتوى";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "تنظيف Docker (الحاويات المتوقفة، والصور غير المرتبطة، وذاكرة التخزين المؤقت للبناء)";
+"Docker build cache" = "ذاكرة التخزين المؤقت لبناء Docker";
+"Stopped Docker containers" = "حاويات Docker المتوقفة";
+"Unused Docker images (downloaded again when needed)" = "صور Docker غير المستخدمة (يُعاد تنزيلها عند الحاجة)";
+"Unused Docker volumes (may contain data such as databases)" = "وحدات تخزين Docker غير المستخدمة (قد تحتوي على بيانات مثل قواعد البيانات)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "تستخدم صورة قرص Docker Desktop (Docker.raw) مساحة %@ على القرص. تعود المساحة التي تحررها هذه الإجراءات إلى macOS بعد بضع دقائق من التنظيف.";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "كل ساعة";

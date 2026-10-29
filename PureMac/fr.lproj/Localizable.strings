@@ -382,7 +382,11 @@
 "%lld item(s) failed to delete.\n\n%@" = "Échec de la suppression de %lld élément(s).\n\n%@";
 "Category" = "Catégorie";
 "Check for Updates" = "Rechercher des mises à jour";
-"Docker prune (stopped containers, dangling images, build cache)" = "Purge Docker (conteneurs arrêtés, images orphelines, cache de build)";
+"Docker build cache" = "Cache de build Docker";
+"Stopped Docker containers" = "Conteneurs Docker arrêtés";
+"Unused Docker images (downloaded again when needed)" = "Images Docker inutilisées (retéléchargées si nécessaire)";
+"Unused Docker volumes (may contain data such as databases)" = "Volumes Docker inutilisés (peuvent contenir des données, comme des bases de données)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "L’image disque de Docker Desktop (Docker.raw) occupe %@ sur le disque. L’espace libéré par ces actions est rendu à macOS quelques minutes après le nettoyage.";
 "Finder" = "Finder";
 "Fix" = "Corriger";
 "LM Studio Conversations (Optional)" = "Conversations LM Studio (facultatif)";

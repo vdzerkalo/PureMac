@@ -311,7 +311,11 @@
 "pnpm content-addressable store" = "Хранилище pnpm с адресацией по содержимому";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Очистка Docker (остановленные контейнеры, непривязанные образы и кэш сборки)";
+"Docker build cache" = "Кэш сборки Docker";
+"Stopped Docker containers" = "Остановленные контейнеры Docker";
+"Unused Docker images (downloaded again when needed)" = "Неиспользуемые образы Docker (будут загружены снова при необходимости)";
+"Unused Docker volumes (may contain data such as databases)" = "Неиспользуемые тома Docker (могут содержать данные, например базы данных)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "Образ диска Docker Desktop (Docker.raw) занимает на диске %@. Место, освобождённое этими действиями, возвращается macOS через несколько минут после очистки.";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "Каждый час";

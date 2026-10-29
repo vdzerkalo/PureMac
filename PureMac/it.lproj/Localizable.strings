@@ -311,7 +311,11 @@
 "pnpm content-addressable store" = "Archivio di pnpm indirizzato per contenuto";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Pulizia Docker (container arrestati, immagini senza riferimenti, cache di compilazione)";
+"Docker build cache" = "Cache di compilazione Docker";
+"Stopped Docker containers" = "Container Docker arrestati";
+"Unused Docker images (downloaded again when needed)" = "Immagini Docker inutilizzate (scaricate di nuovo quando servono)";
+"Unused Docker volumes (may contain data such as databases)" = "Volumi Docker inutilizzati (possono contenere dati, come database)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "L’immagine disco di Docker Desktop (Docker.raw) occupa %@ sul disco. Lo spazio liberato da queste azioni torna disponibile per macOS pochi minuti dopo la pulizia.";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "Ogni ora";

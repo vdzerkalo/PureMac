@@ -270,7 +270,11 @@
 "pnpm content-addressable store" = "pnpm 内容寻址存储";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Docker 清理（已停止的容器、悬空镜像和构建缓存）";
+"Docker build cache" = "Docker 构建缓存";
+"Stopped Docker containers" = "已停止的 Docker 容器";
+"Unused Docker images (downloaded again when needed)" = "未使用的 Docker 镜像（需要时会重新下载）";
+"Unused Docker volumes (may contain data such as databases)" = "未使用的 Docker 卷（可能包含数据库等数据）";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "Docker Desktop 的磁盘映像（Docker.raw）在磁盘上占用 %@。这些操作释放的空间会在清理后几分钟内归还给 macOS。";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "每小时";

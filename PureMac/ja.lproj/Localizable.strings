@@ -270,7 +270,11 @@
 "pnpm content-addressable store" = "pnpmコンテンツアドレッサブルストア";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Docker クリーンアップ（停止中のコンテナ、未使用イメージ、ビルドキャッシュ）";
+"Docker build cache" = "Docker ビルドキャッシュ";
+"Stopped Docker containers" = "停止中の Docker コンテナ";
+"Unused Docker images (downloaded again when needed)" = "未使用の Docker イメージ（必要なときに再ダウンロードされます）";
+"Unused Docker volumes (may contain data such as databases)" = "未使用の Docker ボリューム（データベースなどのデータを含む場合があります）";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "Docker Desktop のディスクイメージ（Docker.raw）はディスク上で %@ を使用しています。これらの操作で解放された領域は、クリーンアップの数分後に macOS に戻ります。";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "1時間ごと";

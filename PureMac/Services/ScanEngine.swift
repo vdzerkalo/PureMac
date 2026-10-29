@@ -866,30 +866,38 @@ actor ScanEngine {
         }
 
         // If the `docker` CLI is available and the daemon answers, surface
-        // reclaimable space reported by `docker system df` as a single
-        // virtual entry. Cleaning it runs `docker system prune -f` (see
-        // CleaningEngine.pruneDockerSystem) — stopped containers, dangling
-        // images, unused networks, and build cache; running containers and
-        // tagged images are untouched. The empty path mirrors the purgeable-
-        // space convention: this is an action, not a file unlink, so the UI
-        // must not offer reveal-in-Finder or attempt removeItem on it.
+        // one virtual row per `docker system df` type with reclaimable space.
+        // Each row runs its own prune (see DockerSupport.PruneAction and
+        // CleaningEngine.pruneDocker) — space inside the Docker/OrbStack VM
+        // is unreachable by any file unlink from the host. Rows start
+        // unselected: build cache and images cost a rebuild or re-pull, and
+        // volumes may hold data nothing can recreate. The docker-prune: path
+        // marks them as actions, so the UI never offers reveal-in-Finder.
         // Works for both Docker Desktop and OrbStack (see
         // DockerSupport.candidateBinaryPaths for where each ships its CLI).
         if !Task.isCancelled,
            let dockerBin = DockerSupport.locateBinary(homeDirectory: home),
-           let reclaimable = await reclaimableDockerSpace(dockerBin: dockerBin), reclaimable > 0 {
-            items.append(CleanableItem(
-                name: String(localized: "Docker prune (stopped containers, dangling images, build cache)"),
-                path: "",
-                size: reclaimable,
-                category: .dockerCache,
-                isSelected: false,
-                lastModified: nil
-            ))
+           let rows = await dockerDiskUsage(dockerBin: dockerBin) {
+            for estimate in DockerSupport.pruneEstimates(rows) {
+                items.append(CleanableItem(
+                    name: dockerPruneItemName(estimate.action),
+                    path: DockerSupport.actionPath(for: estimate.action),
+                    size: estimate.bytes,
+                    category: .dockerCache,
+                    isSelected: false,
+                    lastModified: nil
+                ))
+            }
         }
 
         let totalSize = items.reduce(0) { $0 + $1.size }
-        return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize)
+        let dockerRaw = DockerSupport.dockerRawPath(homeDirectory: home)
+        var note: String?
+        if let allocated = DockerSupport.allocatedSize(ofFileAt: dockerRaw), allocated > 0 {
+            let size = ByteCountFormatter.string(fromByteCount: allocated, countStyle: .file)
+            note = String(localized: "Docker Desktop's disk image (Docker.raw) uses \(size) on disk. Space freed by these actions returns to macOS a few minutes after cleaning.")
+        }
+        return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize, note: note)
     }
 
     private func scanUniversalBinaries() -> CategoryResult {
@@ -942,11 +950,23 @@ actor ScanEngine {
         return CategoryResult(category: .languageFiles, items: items, totalSize: totalSize)
     }
 
-    /// Bytes `docker system prune -f` is expected to free, from
-    /// `docker system df`. Returns nil when Docker isn't running or the
-    /// command fails — callers should treat that as "no reclaimable info
+    private func dockerPruneItemName(_ action: DockerSupport.PruneAction) -> String {
+        switch action {
+        case .buildCache:
+            return String(localized: "Docker build cache")
+        case .stoppedContainers:
+            return String(localized: "Stopped Docker containers")
+        case .unusedImages:
+            return String(localized: "Unused Docker images (downloaded again when needed)")
+        case .unusedVolumes:
+            return String(localized: "Unused Docker volumes (may contain data such as databases)")
+        }
+    }
+
+    /// Rows of `docker system df`. Returns nil when Docker isn't running or
+    /// the command fails — callers should treat that as "no reclaimable info
     /// available", not as an error.
-    private func reclaimableDockerSpace(dockerBin: String) async -> Int64? {
+    private func dockerDiskUsage(dockerBin: String) async -> [DockerSupport.DiskUsageRow]? {
         let result: BrewProcessOutput
         do {
             result = try await BrewProcessRunner.run(
@@ -963,7 +983,7 @@ actor ScanEngine {
         guard result.status == 0,
               let output = String(data: result.stdout, encoding: .utf8)
         else { return nil }
-        return DockerSupport.systemPruneEstimate(DockerSupport.parseSystemDF(output))
+        return DockerSupport.parseSystemDF(output)
     }
 
     // MARK: - Helpers
