@@ -1085,7 +1085,8 @@ final class AppState: ObservableObject {
         return items.filter {
             !$0.isActionItem &&
                 !result.cleanedPaths.contains($0.path) &&
-                !result.protectedPaths.contains($0.path)
+                !result.protectedPaths.contains($0.path) &&
+                !result.skippedPaths.contains($0.path)
         }
     }
 

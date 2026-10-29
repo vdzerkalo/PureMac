@@ -14,6 +14,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case xcodeJunk = "Xcode Junk"
     case brewCache = "Brew Cache"
     case nodeCache = "Node Cache"
+    case devToolCaches = "Dev Tool Caches"
     case dockerCache = "Docker Cache"
     case universalBinaries = "Universal Binaries"
     case languageFiles = "Language Files"
@@ -33,6 +34,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .xcodeJunk: return "hammer.fill"
         case .brewCache: return "mug.fill"
         case .nodeCache: return "leaf.fill"
+        case .devToolCaches: return "wrench.and.screwdriver.fill"
         case .dockerCache: return "shippingbox.fill"
         case .universalBinaries: return "cpu"
         case .languageFiles: return "globe"
@@ -52,6 +54,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .xcodeJunk: return "Derived data, archives, and simulator runtimes"
         case .brewCache: return "Homebrew download cache"
         case .nodeCache: return "npm, yarn, and pnpm download caches"
+        case .devToolCaches: return "Package, build, and download caches of developer tools"
         case .dockerCache: return "Docker images, containers, and build cache"
         case .universalBinaries: return "Unused CPU architecture slices in app binaries"
         case .languageFiles: return "Unused app localizations"
@@ -71,6 +74,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .xcodeJunk: return .cyan
         case .brewCache: return .mint
         case .nodeCache: return .pink
+        case .devToolCaches: return .green
         case .dockerCache: return .indigo
         case .universalBinaries: return .brown
         case .languageFiles: return .gray
