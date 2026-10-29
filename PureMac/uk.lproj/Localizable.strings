@@ -415,7 +415,7 @@
 /* Smart Care dashboard hero + Care areas — English fallback, pending translation */
 "%@ free" = "%@ free";
 "%lld checks" = "%lld checks";
-"%lld items found" = "%lld items found";
+"%lld items found" = "Знайдено об’єктів: %lld";
 "%lld selected" = "%lld selected";
 "%lld-POINT LOCAL SCAN" = "%lld-POINT LOCAL SCAN";
 "%lld/%lld checked" = "%lld/%lld checked";
@@ -495,7 +495,7 @@
 /* Additional interface strings. */
 "%lld found" = "%lld found";
 "%lld inaccessible" = "%lld inaccessible";
-"%lld items · %@ found" = "%lld items · %@ found";
+"%lld items · %@ found" = "Знайдено об’єктів: %lld · %@";
 "%lld matched" = "%lld matched";
 "%lld of %lld items shown" = "%lld of %lld items shown";
 "%lld percent" = "%lld percent";
