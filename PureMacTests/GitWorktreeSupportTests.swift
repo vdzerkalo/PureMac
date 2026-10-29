@@ -631,6 +631,33 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: worktree))
     }
 
+    func testWorktreeInCloudProviderStorageIsNotRemoved() async throws {
+        // A `com~apple~` component marks iCloud state wherever it appears,
+        // which stands in for a repository under ~/Library/Mobile Documents.
+        let worktree = try addWorktree("com~apple~CloudDocs/synced", branch: "synced")
+        try commit(in: worktree, file: "s.txt")
+        try mergeIntoMain("synced")
+        try age(worktree)
+        let inspected = await scanner().reinspect(path: worktree, repository: repo)
+        let report = try XCTUnwrap(inspected)
+        XCTAssertEqual(report.verdict.status, .safeToDelete)
+        var item = CleanableItem(
+            name: report.displayName,
+            path: worktree,
+            size: 1_000,
+            category: .gitWorktrees,
+            isSelected: true,
+            lastModified: report.lastActivity
+        )
+        item.gitWorktree = report
+
+        let result = await CleaningEngine(homeDirectory: root).cleanItems([item]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(worktree)/s.txt"))
+        XCTAssertTrue(result.errors.contains { $0.contains("cloud-synced") }, "\(result.errors)")
+    }
+
     // MARK: Polish: symlinks, sizes, settings, branches, prune
 
     private func item(for report: GitWorktreeReport, size: Int64 = 1_000) -> CleanableItem {
