@@ -145,7 +145,15 @@ final class AppState: ObservableObject {
     // MARK: - Computed
 
     var totalItemCount: Int {
-        categoryResults.values.reduce(0) { $0 + $1.itemCount }
+        categoryResults.filter { !CleaningCategory.reviewOnly.contains($0.key) }
+            .values.reduce(0) { $0 + $1.itemCount }
+    }
+
+    /// Headline "junk found" figure. Review-only categories are listed in their
+    /// own view and never counted here.
+    private var junkTotalSize: Int64 {
+        categoryResults.filter { !CleaningCategory.reviewOnly.contains($0.key) }
+            .values.reduce(0) { $0 + $1.totalSize }
     }
 
     var currentCategoryResult: CategoryResult? {
@@ -153,7 +161,7 @@ final class AppState: ObservableObject {
     }
 
     var allResults: [CategoryResult] {
-        CleaningCategory.scannable.compactMap { categoryResults[$0] }.filter { $0.totalSize > 0 }
+        CleaningCategory.smartScannable.compactMap { categoryResults[$0] }.filter { $0.totalSize > 0 }
     }
 
     var totalSelectedSize: Int64 {
@@ -637,7 +645,7 @@ final class AppState: ObservableObject {
         for (category, result) in categoryResults {
             categoryResults[category] = applyingCleanupExclusions(to: result)
         }
-        totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+        totalJunkSize = junkTotalSize
     }
 
     func removeCleanupExclusion(_ path: String) {
@@ -856,7 +864,7 @@ final class AppState: ObservableObject {
                 )
             }
         }
-        totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+        totalJunkSize = junkTotalSize
 
         // Route survivors back through the same outcome path the original
         // cleanup uses. Without this, an FDA revocation between grant and
@@ -881,7 +889,7 @@ final class AppState: ObservableObject {
 
     func startSmartScan() {
         guard !scanState.isActive, !deviceBackupRemovalInProgress else { return }
-        beginScan(categories: CleaningCategory.scannable, replacingResults: true)
+        beginScan(categories: CleaningCategory.smartScannable, replacingResults: true)
     }
 
     func scanSingleCategory(_ category: CleaningCategory) {
@@ -928,7 +936,7 @@ final class AppState: ObservableObject {
                 }
                 guard !Task.isCancelled, scanGeneration == generation else { return }
                 categoryResults[category] = applyingCleanupExclusions(to: result)
-                totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+                totalJunkSize = junkTotalSize
             }
             scanProgress = 1
             scanTicker.path = ""
@@ -1004,7 +1012,7 @@ final class AppState: ObservableObject {
                     )
                 }
             }
-            totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+            totalJunkSize = junkTotalSize
 
             handleCleanOutcome(errors: result.errors, survivors: survivors)
 
@@ -1063,7 +1071,7 @@ final class AppState: ObservableObject {
                     )
                 }
             }
-            totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+            totalJunkSize = junkTotalSize
 
             let survivors = survivingItems(from: selectedItems, result: cleanResult)
             handleCleanOutcome(errors: cleanResult.errors, survivors: survivors)
@@ -1106,7 +1114,11 @@ final class AppState: ObservableObject {
         // root-owned bundles that Full Disk Access cannot make writable, so
         // they must not steer the user into a Grant Access loop that can
         // never succeed. Only junk-file survivors count toward that hint.
-        let fdaFixableSurvivors = survivors.filter { !CleaningCategory.appModifying.contains($0.category) }
+        // AI agent data is moved to the Trash from the user's own folders; it
+        // fails because the owning app runs or the path changed, not for FDA.
+        let fdaFixableSurvivors = survivors.filter {
+            !CleaningCategory.appModifying.contains($0.category) && $0.category != .aiAgentData
+        }
         let likelyFDA = !fdaGranted && !fdaFixableSurvivors.isEmpty
         cleanErrorIsFDAFixable = likelyFDA
         pendingPermissionRetryItems = survivors
@@ -1116,6 +1128,9 @@ final class AppState: ObservableObject {
                 format: String(localized: "%lld item(s) need Full Disk Access to remove. Tap Grant Access to fix in one step."),
                 Int64(fdaFixableSurvivors.count)
             )
+        } else if !survivors.isEmpty, survivors.allSatisfy({ $0.category == .aiAgentData }),
+                  let first = errors.first {
+            cleanError = first
         } else if !survivors.isEmpty {
             let preview = survivors.prefix(2).map { ($0.path as NSString).lastPathComponent }.joined(separator: ", ")
             let extra = survivors.count > 2 ? String(format: String(localized: " and %lld more"), Int64(survivors.count - 2)) : ""
@@ -1145,7 +1160,7 @@ final class AppState: ObservableObject {
 
     func runScheduledScan() async {
         guard canRunScheduledScan(isAppActive: NSApp.isActive) else { return }
-        let categories = scheduler.config.categoriesToScan.filter { CleaningCategory.scannable.contains($0) }
+        let categories = scheduler.config.categoriesToScan.filter { CleaningCategory.smartScannable.contains($0) }
         guard !categories.isEmpty else { return }
         let generation = UUID()
         scanGeneration = generation

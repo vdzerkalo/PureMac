@@ -12,10 +12,34 @@ struct CategoryDetailView: View {
 
     @State private var filter = CleanupReviewFilter()
     @State private var pendingReview: CleanupSelection?
+    /// AI agent apps that are running right now. Their rows cannot be selected.
+    @State private var runningOwners: Set<AIAgentDataSupport.Owner> = []
+    private let ownerRefresh = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     private var result: CategoryResult? { appState.categoryResults[category] }
     private var visibleItems: [CleanableItem] { filter.apply(to: result?.items ?? []) }
-    private var selectedItems: [CleanableItem] { (result?.items ?? []).filter(appState.isItemSelected) }
+    private var selectedItems: [CleanableItem] {
+        (result?.items ?? []).filter { appState.isItemSelected($0) && blockedOwner(for: $0) == nil }
+    }
+
+    /// The running app that blocks this item, for review-only AI agent rows.
+    private func blockedOwner(for item: CleanableItem) -> AIAgentDataSupport.Owner? {
+        guard category == .aiAgentData,
+              let owner = AIAgentDataSupport.rule(forPath: item.path)?.owner,
+              runningOwners.contains(owner) else { return nil }
+        return owner
+    }
+
+    private func refreshRunningOwners() {
+        guard category == .aiAgentData else { return }
+        let check = AIAgentDataSupport.liveOwnerRunningCheck(
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
+        )
+        DispatchQueue.global(qos: .utility).async {
+            let running = Set(AIAgentDataSupport.Owner.allCases.filter(check))
+            DispatchQueue.main.async { runningOwners = running }
+        }
+    }
     private var selectedSize: Int64 { selectedItems.reduce(0) { $0 + $1.size } }
 
     var body: some View {
@@ -40,7 +64,7 @@ struct CategoryDetailView: View {
                     EmptyStateView("No matching files", systemImage: "line.3.horizontal.decrease.circle", description: "Try another name, size, or date range.", action: { filter = CleanupReviewFilter() }, actionLabel: "Clear filters", tint: Tint.teal)
                 } else {
                     List(visibleItems) { item in
-                        CleanupFileRow(item: item)
+                        CleanupFileRow(item: item, blockedBy: blockedOwner(for: item))
                             .listRowSeparator(.visible)
                     }
                     .listStyle(.inset)
@@ -62,7 +86,11 @@ struct CategoryDetailView: View {
         .onChange(of: category) { _ in
             filter = CleanupReviewFilter()
             pendingReview = nil
+            runningOwners = []
+            refreshRunningOwners()
         }
+        .onAppear { refreshRunningOwners() }
+        .onReceive(ownerRefresh) { _ in refreshRunningOwners() }
     }
 
     private var header: some View {
@@ -247,6 +275,9 @@ struct CategoryDetailView: View {
     }
 
     private func removalMethod(_ item: CleanableItem) -> String {
+        if item.category == .aiAgentData {
+            return String(localized: "Move to Trash")
+        }
         if item.simctlRuntimeIdentifier != nil {
             return String(localized: "Permanent · Remove simulator runtime")
         }
@@ -263,6 +294,8 @@ struct CategoryDetailView: View {
 private struct CleanupFileRow: View {
     @EnvironmentObject var appState: AppState
     let item: CleanableItem
+    /// Set for a review-only AI agent row whose owning app is running.
+    var blockedBy: AIAgentDataSupport.Owner?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -270,6 +303,7 @@ private struct CleanupFileRow: View {
                 .labelsHidden()
                 .toggleStyle(.checkbox)
                 .tint(Tint.teal)
+                .disabled(blockedBy != nil)
                 .accessibilityLabel("Select \(item.name)")
             Image(systemName: item.isActionItem ? "gearshape.2" : "doc")
                 .font(.system(size: 18))
@@ -286,6 +320,21 @@ private struct CleanupFileRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(item.path)
+                if let detail = item.detail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let blockedBy {
+                    Label(
+                        String(format: String(localized: "%@ is running. Quit it to remove this."), blockedBy.displayName),
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.orange)
+                }
             }
             Spacer(minLength: 12)
             if !item.isSelected {

@@ -927,3 +927,22 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* AI Agent Data */
+"AI Agent Data" = "Дані ШІ-агентів";
+"Large, regenerable data of AI agent apps. Review each item before removal." = "Великі дані програм ШІ-агентів, які можна відтворити. Перегляньте кожен елемент перед видаленням.";
+"Claude Desktop VM disk image" = "Образ диска ВМ Claude Desktop";
+"Root disk of the Claude Desktop VM. The compressed copy rootfs.img.zst stays next to it. Session data is a separate file and is not touched." = "Кореневий диск ВМ Claude Desktop. Стиснена копія rootfs.img.zst лишається поруч. Дані сесій зберігаються в окремому файлі й не зачіпаються.";
+"Claude iOS Simulator build output" = "Результат збірки iOS Simulator від Claude";
+"Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build." = "Результат збірки Xcode для інструмента iOS Simulator від Claude. Створюється знову під час наступної збірки.";
+"Claude Desktop web cache" = "Веб-кеш Claude Desktop";
+"Chromium HTTP cache of Claude Desktop. Rebuilt automatically." = "HTTP-кеш Chromium у Claude Desktop. Відновлюється автоматично.";
+"Claude Desktop code cache" = "Кеш коду Claude Desktop";
+"Chromium compiled-script cache of Claude Desktop. Rebuilt automatically." = "Кеш скомпільованих скриптів Chromium у Claude Desktop. Відновлюється автоматично.";
+"Codex plugin backup %@" = "Резервна копія плагінів Codex %@";
+"Old copy of Codex's plugin folder left by a plugin sync. The current plugins are kept elsewhere." = "Стара копія теки плагінів Codex, залишена синхронізацією плагінів. Поточні плагіни зберігаються в іншому місці.";
+"Antigravity backup: browser recordings" = "Резервна копія Antigravity: записи браузера";
+"Frames of agent browser sessions inside the one-time backup. The live recordings stay in ~/.gemini/antigravity. Backup settings are not touched." = "Кадри сеансів браузера агента в одноразовій резервній копії. Актуальні записи лишаються в ~/.gemini/antigravity. Налаштування в копії не зачіпаються.";
+"Cursor extension download cache" = "Кеш завантажених розширень Cursor";
+"Downloaded extension packages (.vsix). Downloaded again when needed." = "Завантажені пакети розширень (.vsix). Завантажуються знову за потреби.";
+"%@ is running. Quit it to remove this." = "%@ запущено. Закрийте програму, щоб видалити це.";
