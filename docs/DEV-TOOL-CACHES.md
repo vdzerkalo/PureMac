@@ -18,7 +18,7 @@
 | Tool | Paths | Removal method | Default | Notes |
 |---|---|---|---|---|
 | Bun | `.bun/install/cache` | unlink | selected | `~/.bun/bin` is not touched. |
-| uv | `.cache/uv`, `Library/Caches/uv` | `uv cache clean --cache-dir <root>`; unlink if `uv` is not installed | selected | Never `--force`. A cache locked by another uv process is reported, not cleaned. |
+| uv | `.cache/uv`, `Library/Caches/uv` | `uv cache clean --cache-dir <root>`; unlink if `uv` is not installed | selected | Never `--force`. uv waits for a lock held by another uv process; a run that exceeds the timeout is reported as busy and skipped. |
 | pip | `Library/Caches/pip`, `.cache/pip` | unlink | selected | Moved here from "User Cache" so it is not listed twice. |
 | Poetry | `Library/Caches/pypoetry`, `.cache/pypoetry` | unlink | selected | |
 | CocoaPods | `Library/Caches/CocoaPods` | unlink | selected | `~/.cocoapods` (spec repos) is not touched. |
@@ -26,7 +26,7 @@
 | Gradle | `.gradle/caches`, `.gradle/wrapper/dists` | unlink, refused while Gradle runs | selected (unselected while Gradle runs) | CLI also lists `.gradle/daemon` (logs and daemon registry); the GUI does not. `gradle.properties` is never touched. |
 | Cargo | `.cargo/registry/cache`, `.cargo/registry/index`, `.cargo/git/db`, `.cargo/git/checkouts` | unlink | selected | Exactly these four. `~/.cargo/bin`, `config.toml`, `credentials.toml` and `registry/src` are not touched. |
 | Go build cache | `Library/Caches/go-build` | `go clean -cache`; unlink if `go` is not installed | selected | |
-| Go module cache | `go/pkg/mod` | `go clean -modcache` only | selected | Listed only when `go` is found. The CLI lists the subset `go/pkg/mod/cache`; `go clean -modcache` removes all of `go/pkg/mod`, so the GUI row and size cover it. Module files are read-only, so plain removal is never attempted. |
+| Go module cache | `go/pkg/mod` | `go clean -modcache` only | selected | Listed only when `go` is found. **Deliberate deviation from the CLI**, which lists the subset `go/pkg/mod/cache`: `go clean -modcache` removes all of `go/pkg/mod`, so the GUI row and its size cover exactly what is removed. Module files are read-only, so plain removal is never attempted. |
 | Deno | `Library/Caches/deno`, `.cache/deno` | unlink | selected | |
 | Dart pub | `.pub-cache/hosted`, `.pub-cache/git` | unlink | selected | The CLI lists all of `.pub-cache`; `bin/` and `global_packages/` hold `dart pub global activate` tools and are excluded. |
 | Playwright | `Library/Caches/ms-playwright`, `.cache/ms-playwright` | unlink | selected | Browser downloads, re-fetched by `playwright install`. |
@@ -51,6 +51,8 @@ Row names are localization keys (`DevToolCaches.Root.nameKey`). Several rows can
 
 Smart Scan and scheduled cleaning include the category: every row except Maven/NuGet is regenerable by the tool, as for "Node Cache". Opt-in rows are never preselected, so unattended cleaning leaves them alone.
 
+Opt-in rows (`Root.selectedByDefault == false`) carry `CleanableItem.selectOnlyByHand = true`. Only a per-row toggle (`AppState.toggleItem`, the row checkbox) selects them. "Select all" (`AppState.selectAllInCategory`), the Overview category checkbox (`AppState.categoryBinding`) and "Select visible" (`AppState.setSelection`, `CategoryDetailView`) skip them; "Clear selection" and "Deselect visible" still deselect them.
+
 The roots are excluded from the "User Cache" scan (`ScanEngine.scanUserCache`), so no path is counted in two categories.
 
 ## How it removes
@@ -63,9 +65,10 @@ The roots are excluded from the "User Cache" scan (`ScanEngine.scanUserCache`), 
 4. By `Removal`:
    - `unlink`: `FileManager.removeItem` on the root directory after a second symlink check.
    - `unlinkUnlessGradleRunning`: `DevToolCacheEnvironment.isGradleRunning()` is checked at clean time; if true the item is skipped with the message "a Gradle daemon or build is running. Run `gradle --stop`, then clean again."
-   - `uvCacheClean`: `uv cache clean --cache-dir <root>`. Exit 0 counts as cleaned. Exit != 0 with "in-use"/"in use"/"lock" in stderr, or no exit within `commandTimeout` (300 s; uv waits for the lock), is reported as locked and skipped. Other failures are errors. `--force` is never passed. Without `uv`, the root is unlinked.
-   - `goCleanCache`: `go env GOCACHE` must equal the row path, then `go clean -cache`. Without `go`, the root is unlinked.
-   - `goCleanModcache`: `go env GOMODCACHE` must equal the row path, then `go clean -modcache`. Without `go`, the item is skipped and nothing is touched. If `go env` names a different directory (exported variable, `go env -w`), the item is skipped and the path is reported.
+   - `uvCacheClean`: `uv cache clean --cache-dir <root>`, started only after the root passes `isUnchangedDevToolRoot` again. Exit 0 counts as cleaned. No exit within `commandTimeout` (300 s; uv waits for a lock held by another uv process) is reported as busy and skipped. Any non-zero exit is an error: stderr is logged and the first 300 characters are shown; stderr text is never interpreted. `--force` is never passed. Without `uv`, the root is unlinked.
+   - `goCleanCache`: `go env GOCACHE`, then `go clean -cache`. Without `go`, the root is unlinked.
+   - `goCleanModcache`: `go env GOMODCACHE`, then `go clean -modcache`. Without `go`, the item is skipped and nothing is touched.
+   - For both Go rows the value printed by `go env` must be absolute and, after `resolvingSymlinksInPath`, equal the row path; otherwise the item is skipped and the path is reported (exported variable, `go env -w`). The root is checked again with `isUnchangedDevToolRoot` after `go env` returns and immediately before `go clean`.
 5. A skipped item stays in the list, its reason is shown in the "Couldn't clean everything" alert, and it does not trigger the Full Disk Access prompt (`CleaningResult.skippedPaths`, `AppState.survivingItems`).
 
 Freed space is the scan-time size of each cleaned row.
@@ -77,10 +80,11 @@ Never touched: anything outside the listed roots, including siblings and parents
 1. Only exact roots are removable. `DevToolCaches.root(forPath:home:)` rejects parents, descendants, relative paths, `..` and control characters. Test: `testRootLookupIsExactMatchOnly`, `testCleanRefusesPathsThatAreNotExactRoots`.
 2. The delete allowlist gains exact roots only, derived from the same list: `CleaningEngine.allowedDeletionRoots` → `DevToolCaches.absolutePaths`. Broad parents are not allow-listed. Test: `testEveryRootIsInsideAnAllowlistedRoot`, `testAllowlistGainsExactRootsNotBroadParents`.
 3. No root equals, contains, or sits inside `~/.claude`, `~/.ollama`, `~/.cache/huggingface`, `~/.ssh`, `~/.cargo/bin`, `~/.cargo/config.toml`, `~/.gradle/gradle.properties` and similar. `~/.m2/repository` is a root only as an unselected row. Test: `testNoRootEqualsContainsOrSitsInsideProtectedLocations`, `testMavenRepositoryAppearsOnlyAsAnUnselectedRow`.
-4. Symlinked roots and symlinked ancestors are refused at scan and at clean: `DevToolCaches.hasSymlinkBelowHome` (`lstat`, never follows). The check runs again right before the unlink (`CleaningEngine.unlinkDevToolCache`). Test: `testScanRefusesSymlinkedRoots`, `testCleanRefusesSymlinkedRootAndKeepsTarget`.
-5. Opt-in roots (Maven, NuGet) are never preselected. Test: `testMavenAndNuGetAreOptInAndEverythingElseIsPreselected`, `testScanFindsEveryPresentRootWithCatalogSelection`.
-6. uv is cleaned through uv, pinned to the row with `--cache-dir`, never forced. Test: `testUVCleanUsesUVWithExplicitCacheDirAndNeverForce`, `testUVCleanWhenCacheIsLockedReportsAndDoesNotForce`, `testUVCleanThatWaitsForTheLockPastTheTimeoutIsReportedAsLocked`.
-7. `go clean` runs only when `go` reports the row's directory as its cache. Module cache is never unlinked. Test: `testGoCleanUsesGoCleanForBuildAndModuleCaches`, `testGoCleanRefusesWhenGoUsesADifferentCacheDirectory`, `testGoModuleCacheIsLeftAloneWithoutGo`.
+4. Symlinked roots and symlinked ancestors are refused at scan and at clean: `DevToolCaches.hasSymlinkBelowHome` (`lstat`, never follows). `CleaningEngine.isUnchangedDevToolRoot` (no symlink on the way and `resolvingSymlinksInPath` equals the path) runs at the start of the clean, right before `uv cache clean`, right before `go clean`, and right before the unlink (`unlinkDevToolCache`). Test: `testScanRefusesSymlinkedRoots`, `testCleanRefusesSymlinkedRootAndKeepsTarget`, `testUVCleanIsNotStartedOnASymlinkedRoot`, `testGoCleanAbortsWhenTheRootBecomesASymlinkDuringGoEnv`.
+   Residual race: plain removal uses `FileManager.removeItem` after the check above. `renameatx_np` with `RENAME_NOFOLLOW_ANY` would close the window, but the macOS SDK header (`sys/stdio.h`) declares the flag with no availability annotation (only `renameatx_np` itself is marked 10.12), so it cannot be shown to exist on the macOS 13 deployment target and is not used. A process running as the same user can still replace a root with a symlink between the last check and the unlink. The tools (`uv`, `go`) have the same window between the check and their own start. Nothing outside the user's own files is exposed by this, since a same-user process can already delete them.
+5. Opt-in roots (Maven, NuGet) are never preselected and cannot be selected in bulk: `CleanableItem.selectOnlyByHand`, honored by `AppState.selectAllInCategory`, `AppState.setSelection` and `CategoryDetailView`'s "Select visible". Test: `testMavenAndNuGetAreOptInAndEverythingElseIsPreselected`, `testScanFindsEveryPresentRootWithCatalogSelection`, `DevToolCacheSelectionTests` (`testSelectAllInCategorySkipsOptInRows`, `testCategoryCheckboxBindingSkipsOptInRows`, `testSelectVisibleSkipsOptInRows`, `testOnlyAPerRowToggleSelectsAnOptInRow`).
+6. uv is cleaned through uv, pinned to the row with `--cache-dir`, never forced. Only a timeout counts as busy; stderr is never pattern-matched, so a real failure is never hidden as "locked". Test: `testUVCleanUsesUVWithExplicitCacheDirAndNeverForce`, `testUVStderrMentioningLockIsARealErrorNotABusySkip`, `testUVCleanThatWaitsForTheLockPastTheTimeoutIsReportedAsBusy`, `testUVCleanFailureOtherThanLockIsAnErrorNotASkip`.
+7. `go clean` runs only when `go` reports, in canonical form, the row's directory as its cache. Module cache is never unlinked. Test: `testGoCleanUsesGoCleanForBuildAndModuleCaches`, `testGoCleanRefusesWhenGoUsesADifferentCacheDirectory`, `testGoEnvValueIsComparedInCanonicalForm`, `testGoEnvValueThatIsASymlinkToAnotherDirectoryIsRefused`, `testGoModuleCacheIsLeftAloneWithoutGo`.
 8. Gradle caches are not removed while a Gradle process runs; an unreadable process list counts as running. Test: `testGradleCleanSkippedWhileDaemonRuns`, `testUnreadableProcessListCountsAsGradleRunning`, `testScanFlagsGradleRowsWhileGradleRuns`.
 9. Cargo: only the four registry/git roots. Test: `testPlainCleanRemovesOnlyTheRootAndKeepsSiblings`, `testScanDoesNotListCargoBinOrConfig`.
 10. No administrator escalation: `CleaningEngine.cleanWithAdminPrivileges` drops `.devToolCaches` items. Test: `testAdminPassRefusesDevToolCaches`.
@@ -93,13 +97,14 @@ Logs go through `Logger.shared` (PureMac log file).
 | Symptom | Cause | Where to look |
 |---|---|---|
 | Row missing | Directory absent, empty, symlinked, or `go` not found (Go module cache) | Log: `Dev tool caches: refusing symlinked cache root <path>`, `Dev tool caches: go not found; not listing the Go module cache` |
-| Alert: "the uv cache is locked by another uv process" | Another `uv` holds the cache lock, or `uv cache clean` ran past the timeout | Log: `uv cache clean: cache is locked`, `uv cache clean timed out; treating the cache as locked` |
+| Alert: "uv did not finish in time; the cache may be locked by another uv process" | `uv cache clean` was still waiting (usually for the lock of another uv process) after 300 s | Log: `uv cache clean timed out; treating the cache as busy` |
 | Alert: "a Gradle daemon or build is running" | `ps` shows a Gradle process | Run `gradle --stop` (or quit the IDE build), clean again. Log: `Skipped <name>: a Gradle daemon or build is running` |
 | Alert: "go uses <dir>, not <path>" | `GOCACHE`/`GOMODCACHE` points elsewhere | Log: `Skipped <name>: go uses ...` |
 | Alert: "`go` was not found, so the module cache was left untouched" | Go module cache row selected without `go` installed | Install Go or remove the directory yourself |
 | Alert: "Skipped symlink or unsafe path" | Path is not an exact root, or a symlink appeared after the scan | Log: `Skipped symlink or unsafe path`, `Unsupported developer tool cache path` |
 | Alert: "<name> at <path>: ..." | `removeItem` failed (permissions, file in use) | Log: `Clean failed:` |
-| `uv cache clean failed (exit N)` | uv failed for a reason other than the lock | Log: `uv cache clean exited N:` |
+| Alert: "uv cache clean failed (exit N): <stderr>" | uv exited non-zero (permissions, I/O error, ...). The row stays in the list and can raise the Full Disk Access prompt | Log: `uv cache clean exited N: <stderr>` |
+| Alert: "Aborting uv cache clean" / "Aborting go clean: path resolution changed" | The root, or a directory above it, became a symlink after the scan | Log with the same text; inspect the path with `ls -ld` |
 
 ## Testing
 

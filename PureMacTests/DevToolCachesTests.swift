@@ -223,6 +223,7 @@ final class DevToolCachesTests: XCTestCase {
         let optIn = Set(DevToolCaches.roots.filter { !$0.selectedByDefault }.map { $0.path(home: home) })
         for item in result.items {
             XCTAssertEqual(item.isSelected, !optIn.contains(item.path), item.path)
+            XCTAssertEqual(item.selectOnlyByHand, optIn.contains(item.path), item.path)
             XCTAssertEqual(item.category, .devToolCaches)
             XCTAssertGreaterThan(item.size, 0)
         }
@@ -485,11 +486,11 @@ final class DevToolCachesTests: XCTestCase {
         XCTAssertTrue(result.errors.isEmpty)
     }
 
-    func testUVCleanWhenCacheIsLockedReportsAndDoesNotForce() async throws {
+    func testUVStderrMentioningLockIsARealErrorNotABusySkip() async throws {
         let cache = try makeCache(".cache/uv")
         try installTool("uv", script: """
         echo "$@" >> "\(log.path)"
-        echo "error: Cache is currently in-use by another process" >&2
+        echo "error: failed to remove \(cache)/.lock: Operation not permitted" >&2
         exit 2
 
         """)
@@ -499,13 +500,13 @@ final class DevToolCachesTests: XCTestCase {
         XCTAssertEqual(toolLog(), ["cache clean --cache-dir \(cache)"])
         XCTAssertEqual(result.itemsCleaned, 0)
         XCTAssertTrue(result.cleanedPaths.isEmpty)
-        XCTAssertEqual(result.skippedPaths, [cache])
+        XCTAssertTrue(result.skippedPaths.isEmpty, "a real failure must stay a survivor")
         XCTAssertEqual(result.errors.count, 1)
-        XCTAssertTrue(result.errors[0].contains("locked"))
+        XCTAssertTrue(result.errors[0].contains("Operation not permitted"))
         XCTAssertTrue(exists(".cache/uv/payload.bin"))
     }
 
-    func testUVCleanThatWaitsForTheLockPastTheTimeoutIsReportedAsLocked() async throws {
+    func testUVCleanThatWaitsForTheLockPastTheTimeoutIsReportedAsBusy() async throws {
         let cache = try makeCache("Library/Caches/uv")
         try installTool("uv", script: """
         echo "$@" >> "\(log.path)"
@@ -521,6 +522,8 @@ final class DevToolCachesTests: XCTestCase {
         XCTAssertEqual(toolLog(), ["cache clean --cache-dir \(cache)"])
         XCTAssertEqual(result.skippedPaths, [cache])
         XCTAssertTrue(result.cleanedPaths.isEmpty)
+        XCTAssertEqual(result.errors.count, 1)
+        XCTAssertTrue(result.errors[0].contains("locked by another uv process"))
         XCTAssertTrue(exists("Library/Caches/uv/payload.bin"))
     }
 
@@ -617,6 +620,79 @@ final class DevToolCachesTests: XCTestCase {
         XCTAssertTrue(exists("Library/Caches/go-build/payload.bin"))
     }
 
+    func testGoCleanAbortsWhenTheRootBecomesASymlinkDuringGoEnv() async throws {
+        let build = try makeCache("Library/Caches/go-build")
+        let outside = base.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 8192).write(to: outside.appendingPathComponent("keep.bin"))
+        // `go env` swaps the root for a link to another directory, then reports the root.
+        try installTool("go", script: """
+        echo "$@" >> "\(log.path)"
+        if [ "$1" = "env" ]; then
+          rm -rf "\(build)"
+          ln -s "\(outside.path)" "\(build)"
+          echo "\(build)"
+          exit 0
+        fi
+        rm -rf "\(build)/"
+        exit 0
+
+        """)
+
+        let result = await clean([item("Library/Caches/go-build")])
+
+        XCTAssertEqual(toolLog(), ["env GOCACHE"], "go clean must not run after the swap")
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.cleanedPaths.isEmpty)
+        XCTAssertEqual(result.errors.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.appendingPathComponent("keep.bin").path))
+    }
+
+    func testGoEnvValueIsComparedInCanonicalForm() async throws {
+        let build = try makeCache("Library/Caches/go-build")
+        let alias = base.appendingPathComponent("alias-to-gocache").path
+        try FileManager.default.createSymbolicLink(atPath: alias, withDestinationPath: build)
+        try installTool("go", script: goScript(cacheReports: alias, modcacheReports: alias)
+            .replacingOccurrences(of: "rm -rf \"\(alias)\"", with: "rm -rf \"\(build)\""))
+
+        let result = await clean([item("Library/Caches/go-build")])
+
+        // A link that resolves to the row's directory is the same directory.
+        XCTAssertEqual(toolLog(), ["env GOCACHE", "clean -cache"])
+        XCTAssertEqual(result.itemsCleaned, 1)
+        XCTAssertFalse(exists("Library/Caches/go-build"))
+    }
+
+    func testGoEnvValueThatIsASymlinkToAnotherDirectoryIsRefused() async throws {
+        try makeCache("Library/Caches/go-build")
+        let elsewhere = base.appendingPathComponent("elsewhere", isDirectory: true)
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        let alias = base.appendingPathComponent("alias-to-elsewhere").path
+        try FileManager.default.createSymbolicLink(atPath: alias, withDestinationPath: elsewhere.path)
+        try installTool("go", script: goScript(cacheReports: alias, modcacheReports: alias))
+
+        let result = await clean([item("Library/Caches/go-build")])
+
+        XCTAssertEqual(toolLog(), ["env GOCACHE"])
+        XCTAssertEqual(result.skippedPaths, [home + "/Library/Caches/go-build"])
+        XCTAssertTrue(exists("Library/Caches/go-build/payload.bin"))
+    }
+
+    func testUVCleanIsNotStartedOnASymlinkedRoot() async throws {
+        let outside = base.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 8192).write(to: outside.appendingPathComponent("keep.bin"))
+        try FileManager.default.createDirectory(atPath: home + "/.cache", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: home + "/.cache/uv", withDestinationPath: outside.path)
+        try installTool("uv", script: "echo \"$@\" >> \"\(log.path)\"\nexit 0\n")
+
+        let result = await clean([item(".cache/uv")])
+
+        XCTAssertTrue(toolLog().isEmpty)
+        XCTAssertEqual(result.errors.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.appendingPathComponent("keep.bin").path))
+    }
+
     // MARK: - Localization
 
     func testEveryRootNameHasAnEnglishLocalization() throws {
@@ -632,5 +708,79 @@ final class DevToolCachesTests: XCTestCase {
         XCTAssertNotNil(strings["%@ (Gradle is running)"])
         XCTAssertNotNil(strings[CleaningCategory.devToolCaches.rawValue])
         XCTAssertNotNil(strings[CleaningCategory.devToolCaches.description])
+    }
+}
+
+/// Bulk selection must never select rows that only a per-row toggle may select.
+@MainActor
+final class DevToolCacheSelectionTests: XCTestCase {
+    private func row(_ name: String, selected: Bool, handOnly: Bool) -> CleanableItem {
+        CleanableItem(
+            name: name,
+            path: "/Users/example/\(name)",
+            size: 4_096,
+            category: .devToolCaches,
+            isSelected: selected,
+            lastModified: nil,
+            selectOnlyByHand: handOnly
+        )
+    }
+
+    private func makeState() -> (AppState, normal: CleanableItem, optIn: CleanableItem, other: CleanableItem) {
+        let state = AppState(performStartupTasks: false)
+        let normal = row(".bun/install/cache", selected: true, handOnly: false)
+        let optIn = row(".m2/repository", selected: false, handOnly: true)
+        let other = row("plain-unselected", selected: false, handOnly: false)
+        state.categoryResults[.devToolCaches] = CategoryResult(
+            category: .devToolCaches, items: [normal, optIn, other], totalSize: 3 * 4_096
+        )
+        state.scanState = .completed
+        return (state, normal, optIn, other)
+    }
+
+    func testOptInRowStartsUnselected() {
+        let (state, normal, optIn, _) = makeState()
+        XCTAssertTrue(state.isItemSelected(normal))
+        XCTAssertFalse(state.isItemSelected(optIn))
+    }
+
+    func testSelectAllInCategorySkipsOptInRows() {
+        let (state, normal, optIn, other) = makeState()
+        state.deselectAllInCategory(.devToolCaches)
+        state.selectAllInCategory(.devToolCaches)
+
+        XCTAssertTrue(state.isItemSelected(normal))
+        XCTAssertTrue(state.isItemSelected(other), "other unselected rows keep their select-all behaviour")
+        XCTAssertFalse(state.isItemSelected(optIn))
+        XCTAssertEqual(state.selectedSizeInCategory(.devToolCaches), 2 * 4_096)
+    }
+
+    func testCategoryCheckboxBindingSkipsOptInRows() {
+        let (state, _, optIn, _) = makeState()
+        let binding = state.categoryBinding(for: .devToolCaches)
+        binding.wrappedValue = false
+        binding.wrappedValue = true
+        XCTAssertFalse(state.isItemSelected(optIn))
+        XCTAssertEqual(state.selectedCountInCategory(.devToolCaches), 2)
+    }
+
+    func testSelectVisibleSkipsOptInRows() {
+        let (state, normal, optIn, other) = makeState()
+        state.setSelection(false, for: [normal, optIn, other])
+        state.setSelection(true, for: [normal, optIn, other])
+        XCTAssertTrue(state.isItemSelected(normal))
+        XCTAssertTrue(state.isItemSelected(other))
+        XCTAssertFalse(state.isItemSelected(optIn))
+    }
+
+    func testOnlyAPerRowToggleSelectsAnOptInRow() {
+        let (state, _, optIn, _) = makeState()
+        state.toggleItem(optIn)
+        XCTAssertTrue(state.isItemSelected(optIn))
+        // A later bulk select leaves the choice alone, and clearing deselects it.
+        state.selectAllInCategory(.devToolCaches)
+        XCTAssertTrue(state.isItemSelected(optIn))
+        state.deselectAllInCategory(.devToolCaches)
+        XCTAssertFalse(state.isItemSelected(optIn))
     }
 }
