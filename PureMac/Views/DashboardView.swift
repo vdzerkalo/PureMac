@@ -728,7 +728,7 @@ private struct CategoryResultRow: View {
     }
 }
 
-private struct ScanPathTicker: View {
+struct ScanPathTicker: View {
     @ObservedObject var ticker: ScanProgressTicker
 
     var body: some View {

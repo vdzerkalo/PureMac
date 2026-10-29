@@ -925,18 +925,21 @@ actor ScanEngine {
         scanner.inactiveDays = settings.inactiveDays
         scanner.extraRoots = settings.extraRoots
         scanner.baseBranchOverride = settings.baseBranch
-        var items: [CleanableItem] = []
-        for scanned in await scanner.scan() {
-            if Task.isCancelled { break }
-            report(scanned.path)
-            // Sizes never follow symlinks and are split into ignored build
-            // artifacts and everything else.
-            var worktree = scanned
-            if GitWorktreeScanner.pathExists(worktree.path) {
-                let sizes = GitWorktreeScanner.measure(path: worktree.path, artifactDirectories: worktree.artifactDirectories)
-                worktree.artifactBytes = sizes.artifacts
-                worktree.codeBytes = sizes.code
+        scanner.measuresSizes = true
+        // Every step goes to the ticker: a check takes seconds, so these are
+        // few, and "12/48" tells a long scan from a stuck one.
+        let onPath = self.onPath
+        let reports = await scanner.scan { step in
+            switch step {
+            case .discovering(let path):
+                onPath?(path)
+            case .inspecting(let path, let position, let total):
+                onPath?("\(position)/\(total) · \(path)")
             }
+        }
+        var items: [CleanableItem] = []
+        for worktree in reports {
+            if Task.isCancelled { break }
             var item = CleanableItem(
                 name: worktree.displayName,
                 path: worktree.path,

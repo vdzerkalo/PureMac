@@ -81,6 +81,41 @@ final class GitWorktreeSupportTests: XCTestCase {
 
     // MARK: - Classification rules
 
+    func testEarlyProtectedStatusIsFinalWhateverTheSkippedChecksFind() {
+        let early: [(String, (inout Support.Signals) -> Void)] = [
+            ("tracked", { $0.status.trackedChanges = 1 }),
+            ("unique", { $0.uniqueCommits = 2 }),
+            ("stash", { $0.hasAttributedStash = true }),
+            ("locked", { $0.listed.lockReason = "" }),
+            ("inUse", { $0.inUse = true }),
+        ]
+        // What the skipped steps (ignored-folder walk, merge-base, cherry,
+        // reflog) could have reported, in every combination.
+        let skipped: [(inout Support.Signals) -> Void] = [
+            { $0.nestedRepositoryInIgnored = true },
+            { $0.envFilesInIgnoredFolders = 3 },
+            { $0.ignoredFoldersNotFullyChecked = true },
+            { $0.status.harmlessIgnored = ["vendor/"]; $0.status.ignored = ["vendor/", "notes/"] },
+            { $0.isAncestorOfBase = false; $0.cherryAllApplied = false },
+            { $0.hadOwnWork = false },
+            { $0.baseRef = nil },
+        ]
+        for (name, apply) in early {
+            let base = signals(apply)
+            XCTAssertTrue(Support.isProtectedBeforeWalk(base), name)
+            for mask in 0..<(1 << skipped.count) {
+                var full = base
+                for (bit, change) in skipped.enumerated() where mask & (1 << bit) != 0 { change(&full) }
+                XCTAssertEqual(Support.classify(full).status, .protected, "\(name), mask \(mask)")
+            }
+        }
+        XCTAssertFalse(Support.isProtectedBeforeWalk(signals { _ in }), "a clean merged worktree is walked")
+        XCTAssertFalse(Support.isProtectedBeforeWalk(signals { $0.status.untracked = ["a.txt"] }), "untracked files only need review")
+        var prunable = signals { $0.status.trackedChanges = 1 }
+        prunable.listed.prunableReason = "gone"
+        XCTAssertFalse(Support.isProtectedBeforeWalk(prunable))
+    }
+
     private func signals(_ change: (inout Support.Signals) -> Void) -> Support.Signals {
         var s = Support.Signals(listed: .init(path: "/r/wt/x", head: "aaaa", branch: "x"))
         s.baseRef = "origin/main"
@@ -762,6 +797,58 @@ final class GitWorktreeScannerTests: XCTestCase {
         measured.artifactBytes = 0
         XCTAssertEqual(measured.sizeBreakdownText, String(localized: "no build folders · code \(ByteCountFormatter.string(fromByteCount: sizes.code, countStyle: .file))"))
         XCTAssertFalse(measured.sizeBreakdownText?.contains("Zero") ?? true)
+    }
+
+    func testProtectedWorktreeIsNotWalkedButAMergedOneStillIs() async throws {
+        // Both hide a nested repository in an ignored folder; only the
+        // walk finds it.
+        let dirty = try makeMerged("early-dirty")
+        try git(["init", "-q", "\(dirty)/node_modules/pkg"], in: dirty)
+        try write("edit\n", to: "\(dirty)/README.md")
+        let clean = try makeMerged("early-clean")
+        try git(["init", "-q", "\(clean)/node_modules/pkg"], in: clean)
+
+        let dirtyVerdict = try await inspect(dirty).verdict
+        let cleanVerdict = try await inspect(clean).verdict
+        XCTAssertEqual(dirtyVerdict.status, .protected)
+        XCTAssertEqual(dirtyVerdict.reasons, [.trackedChanges(1)], "git's reason alone; the walk was skipped")
+        XCTAssertEqual(cleanVerdict, .init(status: .protected, reasons: [.nestedRepositoryInIgnored]))
+    }
+
+    func testParallelScanKeepsOrderReportsProgressAndMeasures() async throws {
+        var made: [String] = []
+        for index in 0..<(GitWorktreeScanner.concurrentInspections * 2 + 1) {
+            let path = try makeMerged("parallel-\(index)")
+            try write(String(repeating: "n", count: 40_000), to: "\(path)/node_modules/a/index.js")
+            try age(path)
+            made.append(GitWorktreeScanner.canonical(path))
+        }
+        final class Steps: @unchecked Sendable {
+            private let lock = NSLock()
+            private var list: [GitWorktreeScanner.Progress] = []
+            func add(_ step: GitWorktreeScanner.Progress) { lock.lock(); list.append(step); lock.unlock() }
+            var all: [GitWorktreeScanner.Progress] { lock.lock(); defer { lock.unlock() }; return list }
+        }
+        let steps = Steps()
+        var measuring = scanner()
+        measuring.measuresSizes = true
+
+        let reports = await measuring.scan { steps.add($0) }
+
+        XCTAssertEqual(reports.map { GitWorktreeScanner.canonical($0.path) }, made, "git's order, not completion order")
+        XCTAssertTrue(reports.allSatisfy { $0.verdict.status == .safeToDelete })
+        XCTAssertTrue(reports.allSatisfy { $0.artifactBytes >= 40_000 && $0.codeBytes > 0 }, "sizes are measured in the same pass")
+        let positions = steps.all.compactMap { step -> Int? in
+            guard case .inspecting(_, let position, let total) = step else { return nil }
+            XCTAssertEqual(total, made.count)
+            return position
+        }
+        XCTAssertEqual(positions.sorted(), Array(1...made.count))
+        XCTAssertTrue(steps.all.contains(.discovering(path: repo)))
+
+        let unmeasured = await scanner().scan()
+        XCTAssertEqual(unmeasured.map(\.verdict), reports.map(\.verdict))
+        XCTAssertTrue(unmeasured.allSatisfy { $0.totalBytes == 0 }, "tests that only need verdicts skip the size walk")
     }
 
     func testInactiveDaysSettingIsHonoured() async throws {

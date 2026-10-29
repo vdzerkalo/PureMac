@@ -71,7 +71,23 @@ struct GitWorktreeScanner {
 
     // MARK: - Scan
 
-    func scan() async -> [GitWorktreeReport] {
+    /// What `scan` is working on, for the scanning ticker: a search path or
+    /// repository being resolved, then each worktree being checked.
+    enum Progress: Equatable {
+        case discovering(path: String)
+        case inspecting(path: String, position: Int, total: Int)
+    }
+
+    /// Worktrees checked at the same time. Each check walks the worktree's
+    /// files and runs a few read-only git commands, so the scan is bound by
+    /// disk reads, which an SSD serves in parallel.
+    static let concurrentInspections = 4
+
+    /// Also measure each report's sizes (`measure`) inside the parallel
+    /// check. ScanEngine sets it; tests that only need verdicts leave it off.
+    var measuresSizes = false
+
+    func scan(progress: (@Sendable (Progress) -> Void)? = nil) async -> [GitWorktreeReport] {
         let cwdPaths = (workingDirectories ?? Self.processWorkingDirectories)()
         let agentCandidates = agentWorktreeCandidates()
         var hints = GitWorktreeSupport.claudeProjectPaths(fromClaudeJSON: claudeJSON()) + repositoryHints
@@ -81,36 +97,82 @@ struct GitWorktreeScanner {
         var repositories: [String] = []
         for hint in hints where fileManager.fileExists(atPath: hint) {
             if Task.isCancelled { return [] }
+            progress?(.discovering(path: hint))
             guard let repo = await mainRepository(containing: hint), !repositories.contains(repo) else { continue }
             repositories.append(repo)
         }
 
-        var reports: [GitWorktreeReport] = []
+        var pending: [(worktree: GitWorktreeSupport.ListedWorktree, repository: String, baseRef: String?)] = []
         var listedPaths: Set<String> = []
         var orphanCandidates = Set(agentCandidates.map(Self.canonical))
         for repo in repositories {
-            if Task.isCancelled { return reports }
+            if Task.isCancelled { return [] }
+            progress?(.discovering(path: repo))
             let listed = await listWorktrees(in: repo)
             listedPaths.formUnion(listed.map { Self.canonical($0.path) })
             orphanCandidates.formUnion(claudeWorktreeFolders(in: repo))
             let base = await resolveBaseRef(in: repo)
-            for worktree in listed.dropFirst() where !worktree.isBare {
-                if Task.isCancelled { return reports }
-                reports.append(await inspect(worktree, repository: repo, baseRef: base, cwdPaths: cwdPaths))
-            }
+            pending += listed.dropFirst().filter { !$0.isBare }.map { ($0, repo, base) }
         }
 
+        let total = pending.count
+        let inspected = await Self.concurrentMap(pending, limit: Self.concurrentInspections) { index, entry in
+            progress?(.inspecting(path: entry.worktree.path, position: index + 1, total: total))
+            return withSizes(await inspect(entry.worktree, repository: entry.repository, baseRef: entry.baseRef, cwdPaths: cwdPaths))
+        }
+        var reports = inspected.compactMap { $0 }
+        if Task.isCancelled { return reports }
+
         for orphan in orphanCandidates.subtracting(listedPaths).sorted() {
-            reports.append(GitWorktreeReport(
+            reports.append(withSizes(GitWorktreeReport(
                 path: orphan,
                 repositoryPath: nil,
                 branch: nil,
                 head: nil,
                 verdict: GitWorktreeSupport.Verdict(status: .orphan, reasons: [.notListedByGit]),
                 lastActivity: Self.modificationDate(orphan)
-            ))
+            )))
         }
         return reports
+    }
+
+    private func withSizes(_ report: GitWorktreeReport) -> GitWorktreeReport {
+        guard measuresSizes, !Task.isCancelled, Self.pathExists(report.path) else { return report }
+        // Sizes never follow symlinks and are split into ignored build
+        // artifacts and everything else.
+        var measured = report
+        let sizes = Self.measure(path: report.path, artifactDirectories: report.artifactDirectories)
+        measured.artifactBytes = sizes.artifacts
+        measured.codeBytes = sizes.code
+        return measured
+    }
+
+    /// `transform` over `items`, at most `limit` at a time; the results keep
+    /// the order of `items`. An item not started before cancellation is nil.
+    static func concurrentMap<T: Sendable, R: Sendable>(
+        _ items: [T],
+        limit: Int,
+        _ transform: @escaping @Sendable (Int, T) async -> R
+    ) async -> [R?] {
+        await withTaskGroup(of: (Int, R?).self) { group in
+            var results = [R?](repeating: nil, count: items.count)
+            var next = 0
+            func add(_ index: Int) {
+                group.addTask { Task.isCancelled ? (index, nil) : (index, await transform(index, items[index])) }
+            }
+            while next < min(max(limit, 1), items.count) {
+                add(next)
+                next += 1
+            }
+            while let (index, result) = await group.next() {
+                results[index] = result
+                if next < items.count {
+                    add(next)
+                    next += 1
+                }
+            }
+            return results
+        }
     }
 
     /// Fresh verdict for one worktree right before it is removed, so a
@@ -340,6 +402,23 @@ struct GitWorktreeScanner {
                 signals.uniqueCommits = 1
             }
             signals.baseRef = baseRef
+            // Protected already: every check below only adds review reasons
+            // or another Protected reason, so none can make the worktree
+            // removable. Skip them, above all the walk of its ignored
+            // folders (node_modules, .venv), the slowest step of a scan.
+            // Removal always re-inspects the worktree first.
+            if GitWorktreeSupport.isProtectedBeforeWalk(signals) {
+                signals.lastActivity = await lastActivity(of: path)
+                return GitWorktreeReport(
+                    path: path,
+                    repositoryPath: repository,
+                    branch: listed.branch,
+                    head: listed.head,
+                    verdict: GitWorktreeSupport.classify(signals, inactiveDays: inactiveDays),
+                    lastActivity: signals.lastActivity,
+                    artifactDirectories: GitWorktreeSupport.artifactDirectories(inIgnored: signals.status.ignored)
+                )
+            }
             if let baseRef {
                 let ancestor = await git(["merge-base", "--is-ancestor", "HEAD", baseRef], in: path)
                 signals.isAncestorOfBase = ancestor?.status == 0
