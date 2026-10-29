@@ -206,6 +206,19 @@ struct CategoryResult: Identifiable {
     }
 
     var itemCount: Int { items.count }
+
+    /// The result left after a clean removed `cleanedPaths`, keeping the
+    /// note; nil when nothing remains.
+    func removingItems(at cleanedPaths: Set<String>) -> CategoryResult? {
+        let remaining = items.filter { !cleanedPaths.contains($0.path) }
+        guard !remaining.isEmpty else { return nil }
+        return CategoryResult(
+            category: category,
+            items: remaining,
+            totalSize: remaining.reduce(0) { $0 + $1.size },
+            note: note
+        )
+    }
 }
 
 // MARK: - Schedule Settings

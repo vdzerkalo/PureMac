@@ -134,6 +134,33 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.isItemSelected(volumes))
     }
 
+    func testRemovingCleanedItemsKeepsCategoryNote() throws {
+        let pruned = CleanableItem(
+            name: "Docker build cache",
+            path: DockerSupport.actionPath(for: .buildCache),
+            size: 100,
+            category: .dockerCache,
+            isSelected: false,
+            lastModified: nil
+        )
+        let kept = CleanableItem(
+            name: "log",
+            path: "/Users/test/Library/Containers/com.docker.docker/Data/log",
+            size: 50,
+            category: .dockerCache,
+            isSelected: true,
+            lastModified: nil
+        )
+        let result = CategoryResult(category: .dockerCache, items: [pruned, kept], totalSize: 150, note: "Docker.raw note")
+
+        let remaining = try XCTUnwrap(result.removingItems(at: [pruned.path]))
+        XCTAssertEqual(remaining.items.map(\.id), [kept.id])
+        XCTAssertEqual(remaining.totalSize, 50)
+        XCTAssertEqual(remaining.note, "Docker.raw note")
+
+        XCTAssertNil(result.removingItems(at: [pruned.path, kept.path]))
+    }
+
     func testScheduledScanWaitsForReviewToLeaveForeground() {
         let state = AppState(performStartupTasks: false)
         let item = cleanupItem(selected: true)

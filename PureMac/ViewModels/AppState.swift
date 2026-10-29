@@ -845,21 +845,12 @@ final class AppState: ObservableObject {
         if result.itemsCleaned > 0 { lastCleanedDate = Date() }
 
         for (cat, catResult) in categoryResults {
-            let remaining = catResult.items.filter { !result.cleanedPaths.contains($0.path) }
             let cleared = catResult.items.filter { result.cleanedPaths.contains($0.path) }
             for item in cleared {
                 selectedCleanupItems.remove(item.id)
                 deselectedItems.remove(item.id)
             }
-            if remaining.isEmpty {
-                categoryResults.removeValue(forKey: cat)
-            } else {
-                categoryResults[cat] = CategoryResult(
-                    category: cat,
-                    items: remaining,
-                    totalSize: remaining.reduce(0) { $0 + $1.size }
-                )
-            }
+            categoryResults[cat] = catResult.removingItems(at: result.cleanedPaths)
         }
         totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
 
@@ -993,21 +984,12 @@ final class AppState: ObservableObject {
             let survivors = survivingItems(from: itemsToClean, result: result)
 
             for (cat, catResult) in categoryResults {
-                let remaining = catResult.items.filter { !result.cleanedPaths.contains($0.path) }
                 let cleared = catResult.items.filter { result.cleanedPaths.contains($0.path) }
                 for item in cleared {
                     selectedCleanupItems.remove(item.id)
                     deselectedItems.remove(item.id)
                 }
-                if remaining.isEmpty {
-                    categoryResults.removeValue(forKey: cat)
-                } else {
-                    categoryResults[cat] = CategoryResult(
-                        category: cat,
-                        items: remaining,
-                        totalSize: remaining.reduce(0) { $0 + $1.size }
-                    )
-                }
+                categoryResults[cat] = catResult.removingItems(at: result.cleanedPaths)
             }
             totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
 
@@ -1052,21 +1034,12 @@ final class AppState: ObservableObject {
             if cleanResult.itemsCleaned > 0 { lastCleanedDate = Date() }
 
             if let existing = categoryResults[category] {
-                let remaining = existing.items.filter { !cleanResult.cleanedPaths.contains($0.path) }
                 let cleared = existing.items.filter { cleanResult.cleanedPaths.contains($0.path) }
                 for item in cleared {
                     selectedCleanupItems.remove(item.id)
                     deselectedItems.remove(item.id)
                 }
-                if remaining.isEmpty {
-                    categoryResults.removeValue(forKey: category)
-                } else {
-                    categoryResults[category] = CategoryResult(
-                        category: category,
-                        items: remaining,
-                        totalSize: remaining.reduce(0) { $0 + $1.size }
-                    )
-                }
+                categoryResults[category] = existing.removingItems(at: cleanResult.cleanedPaths)
             }
             totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
 
