@@ -1,11 +1,12 @@
 # Git Worktrees
 
-> The "Git Worktrees" cleanup category: finds leftover git worktrees (AI agents, old branches), judges each by what git reports, removes only through git. Code: `PureMac/Logic/Utilities/GitWorktreeSupport.swift` (`GitWorktreeSupport.classify`), `PureMac/Services/GitWorktreeScanner.swift` (`GitWorktreeScanner`), `PureMac/Services/GitWorktreeSettings.swift`, `PureMac/Services/CleaningEngine.swift` (`removeGitWorktree`), `PureMac/Services/ScanEngine.swift` (`scanGitWorktrees`). Tests: `PureMacTests/GitWorktreeSupportTests.swift`.
+> The "Git Worktrees" cleanup category: finds leftover git worktrees (AI agents, old branches), judges each by what git reports, removes only through git. Code: `PureMac/Logic/Utilities/GitWorktreeSupport.swift` (`GitWorktreeSupport.classify`), `PureMac/Services/GitWorktreeScanner.swift` (`GitWorktreeScanner`), `PureMac/Services/GitWorktreeSettings.swift`, `PureMac/Logic/Utilities/WorktreeArtifactSupport.swift`, `PureMac/Services/CleaningEngine.swift` (`removeGitWorktree`, `removeWorktreeArtifacts`), `PureMac/Services/ScanEngine.swift` (`scanGitWorktrees`). Tests: `PureMacTests/GitWorktreeSupportTests.swift`.
 
 ## Contents
 - [What it finds](#what-it-finds)
 - [How it decides](#how-it-decides)
 - [How it removes](#how-it-removes)
+- [Build artifacts inside worktrees](#build-artifacts-inside-worktrees)
 - [Settings](#settings)
 - [Safety invariants](#safety-invariants)
 - [Failure modes and logs](#failure-modes-and-logs)
@@ -86,6 +87,33 @@ Never touched: the main worktree, branches (unless the setting is on), anything 
 
 Worktrees are not part of Smart Scan, scheduled scans or scheduled cleaning. The review sheet lists each risk for the user to tick, offers a copyable agent brief (`RemovalRisk.agentPrompt`), and a final alert follows.
 
+## Build artifacts inside worktrees
+
+A worktree that is Needs review or Protected cannot be removed as a whole, but its ignored build folders (`node_modules`, `.next`, `build`, `dist`, `DerivedData`, `.build`, `target`, `.venv`, `venv`, `__pycache__`; `GitWorktreeSupport.artifactDirectoryNames`) are usually most of its size. For each such worktree that has qualifying folders the category shows a second row, **Artifacts in <repo · branch>** (box icon, "Artifacts" badge, indented). It deletes only those folders; the worktree, its tracked and untracked files, its stash and its branch stay, and no git command that writes is run. Code: `PureMac/Logic/Utilities/WorktreeArtifactSupport.swift`, `GitWorktreeScanner.checkArtifactFolder` / `artifactReport`, `CleaningEngine.removeWorktreeArtifacts`. Scope is worktrees only; project-level `node_modules` / Rust `target` cleanup elsewhere in the app (upstream PR #197) is separate and not duplicated here.
+
+Candidates (`WorktreeArtifactSupport.candidates`): a bounded walk of the worktree, at most 4 levels (`a/b/c/node_modules` is the deepest), `.git` skipped, symlinks not followed, a found artifact folder not entered, a folder with its own `.git` (nested repository or nested worktree) not entered, at most 100,000 entries.
+
+Every candidate must pass all of these, at scan time and again right before it is deleted (`checkArtifactFolder`, then `WorktreeArtifactSupport.check` once more immediately before the delete):
+
+| Check | How | Refusal text |
+|---|---|---|
+| plain relative path, ≤ 4 components, none empty, `.`, `..` or `.git`, last one an artifact name | string rules in `check` | `not a build folder path` |
+| a real directory | `lstat`: not a symlink, is a directory | `is a symlink`, `is not a folder` |
+| nothing resolves elsewhere | `realpath(<worktree>/<path>)` equals `realpath(<worktree>)` + `/` + path, so no component is a symlink and nothing escapes the worktree | `resolves outside the worktree` |
+| same volume | `st_dev` equals the worktree root's | `is on another volume` |
+| not a repository | no `.git` in the folder or in a folder between it and the worktree root | `contains a repository`, `is inside a nested repository` |
+| git ignores it | `git -C <worktree> check-ignore -q -- <path>` exits 0 | `is not ignored by git`, `git check-ignore failed (exit N)` |
+| nothing tracked inside | `git -C <worktree> ls-files -- <path>` prints nothing. `check-ignore` already answers "not ignored" for a folder with tracked content (it consults the index), so a tracked `build/` is normally refused by the row above; this check is the second line of defence | `contains files tracked by git` |
+| not excluded | `CleanupExclusions` for the worktree and for the folder | `excluded from cleanup` |
+
+Blocked rows: when the worktree is in use (a process's current directory is inside it), is an agent worktree active in the last 24 hours, or is locked, the row is listed with a red "blocked" reason and cannot be selected (`WorktreeArtifactSupport.blocker`). The same check runs on a fresh `reinspect` before any deletion, so a dev server started after the scan also blocks it. Locked is blocked in addition to the two required cases because a lock means someone asked for the worktree to be left alone.
+
+Selection: artifact rows are never preselected, are skipped by "Select visible" and the category-wide selection (`CleanableItem.requiresExplicitSelection`), and are outside Smart Scan, scheduled scans and scheduled cleaning like every worktree row. The review sheet lists each folder with its size, and the risk list gains two entries (permanent delete of regenerable folders; stop dev servers and builds first).
+
+Removal: `CleaningEngine.removeWorktreeArtifacts` is a dedicated route; the generic allow-list is not widened and the row's path (`worktree-artifacts:<worktree path>`) is not a filesystem path, so the generic delete route cannot act on it. Order: exclusion check → worktree still exists (if it is gone, for example removed in the same batch, the row counts as done) → `reinspect` (must still be a worktree git lists, not busy) → per folder `checkArtifactFolder` → `WorktreeArtifactSupport.check` again → bytes measured (`allocatedBytes`, symlinks not counted) → `FileManager.removeItem` on the resolved path → confirm it is gone. Deletion is permanent. A folder that fails a check is left alone and reported; the row counts as cleaned only when every listed folder is gone or already missing. Like all path-based deletion the last check and the delete are not atomic; the repeated filesystem check right before the delete narrows that window.
+
+The artifact row is a part of its worktree's row, so it adds nothing to the category total (`CleanableItem.sizeInCategoryTotal`).
+
 ## Settings
 
 Settings → Cleaning → Git Worktrees (`GitWorktreeSettings`, UserDefaults, read at scan time and again at clean time):
@@ -111,6 +139,13 @@ Settings → Cleaning → Git Worktrees (`GitWorktreeSettings`, UserDefaults, re
 10. Prune only acts on a row scanned as prunable, only while git lists it as prunable and the folder is missing, and not across an unmounted volume. `GitWorktreeScanner.swift` → `prune`, `unmountedVolume`; `CleaningEngine.swift` → `removeGitWorktree`. Tests: `testPrunableOrphanIsPrunedThroughTheEngine`, `testPruneIsRefusedWhenTheFolderReappeared`, `testPruneRefusedWhenAnotherMissingWorktreeLiesOnAnUnmountedVolume`, `testPruneIsOnlyForTheRowScannedAsPrunable`.
 11. The base-branch setting is validated before it reaches git (no leading `-`, no whitespace or revision syntax). `GitWorktreeSupport.swift` → `isValidRevisionName`. Tests: `GitWorktreeSupportTests.testRevisionNamesCannotInjectGitOptions`, `GitWorktreeScannerTests.testBaseBranchOverrideIsHonoured`.
 12. The artifact list lives in one place and stays inside the CLI's `Purger.artifactNames` (plus `build`, `dist`). `GitWorktreeSupport.swift` → `artifactDirectoryNames`, `artifactNamesOnlyHere`. Test: `GitWorktreeSupportTests.testArtifactNamesMatchTheCommandLineTool`.
+13. Artifact cleaning deletes only folders that are real directories (never symlinks), whose realpath is the worktree's realpath plus the relative path, on the worktree's volume. `WorktreeArtifactSupport.swift` → `check`. Tests: `GitWorktreeScannerTests.testSymlinkedAndEscapingArtifactFoldersAreRefused` (symlinked folder, folder behind a symlinked parent and a symlink into the worktree itself are refused; outside files survive), `testPathsThatAreNotPlainBuildFoldersAreRefused`.
+14. Artifact cleaning requires git to ignore the folder and no tracked file inside, re-checked right before the delete. `GitWorktreeScanner.swift` → `checkArtifactFolder`. Tests: `testTrackedOrUnignoredBuildFoldersAreRefused` (tracked `build/`, unignored `dist/`), `testFolderBecomingTrackedAfterTheScanIsLeftAlone`. The `ls-files` check has no test of its own: git's `check-ignore` refuses first.
+15. Artifact rows of a worktree in use, locked or active as an agent worktree are blocked, at scan time and at clean time. `WorktreeArtifactSupport.swift` → `blocker`; `CleaningEngine.swift` → `removeWorktreeArtifacts`. Tests: `testBusyWorktreesBlockArtifactRows`, `testEngineRefusesWorktreesThatBecameBusyAfterTheScan` (a real child process with its working directory in the worktree).
+16. The worktree, its tracked files and its uncommitted edits are untouched by artifact cleaning, and a folder is removed without its parents. `CleaningEngine.swift` → `removeWorktreeArtifacts`. Test: `testIgnoredBuildFoldersAreRemovedAndTheWorktreeStaysIntact` (compares `git status --porcelain` and file contents before and after, for a Needs review and a Protected worktree).
+17. Nested repositories and nested worktrees are neither walked nor deleted into. `WorktreeArtifactSupport.swift` → `candidates`, `check`. Tests: `testCandidateWalkIsBoundedAndDoesNotCrossRepositories`, `testNestedRepositoriesInsideAWorktreeAreNotWalkedOrDeleted`.
+18. Artifact rows are never preselected, never bulk-selected, never scheduled, and their path cannot reach the generic delete route. `Models.swift` → `CleanableItem.requiresExplicitSelection`, `isActionItem`; `AppState.swift` → `cleanAll(scheduled:)`. Tests: `WorktreeScheduledCleanupTests.testArtifactRowsAreNeverPreselectedBulkSelectedOrScheduled`, `testIgnoredBuildFoldersAreRemovedAndTheWorktreeStaysIntact`.
+19. A row whose worktree git does not list is not cleaned. `CleaningEngine.swift` → `removeWorktreeArtifacts` (`reinspect`). Test: `testArtifactRowsFollowTheirWorktreeAndAreAnOrphanOnlyWhenGone`.
 
 ## Failure modes and logs
 
@@ -130,6 +165,12 @@ Logs go to the unified log (subsystem `com.puremac.app`, category `general`) thr
 | Merged branch kept | not Safe to delete, checked out elsewhere, base branch, or `git branch -d` refused | note and log `<name>: branch <b> kept: <reason>` (`checked out in <path>`, `it is the base branch`, git's `error: the branch '<b>' is not fully merged`); shown under the category header |
 | Success | | log `Removed worktree <path> (~<bytes> bytes)`, `Pruned missing worktree <path> in <repo>`, `Deleted merged branch <b> in <repo>` |
 | Orphan row cannot be removed | not listed by git | error `Not a git worktree PureMac can remove: <name>` |
+| Artifact row not cleaned, worktree busy | in use, locked, or active agent worktree | log `Skipped artifacts in <worktree>: <reason>`; error `<row name>: <reason>` (reasons: `open in a running process`, `locked by git`, `agent worktree active in the last 24 hours`) |
+| Artifact row not cleaned, worktree not listed | git no longer lists the worktree | error `<row name>: <worktree> is no longer a worktree of <repo>` |
+| Artifact folder left alone | a check failed | log `Left artifact folder <path>: <refusal>`; error `<row name>: <relative path>: <refusal>; …` with the refusal texts from the table above |
+| Artifact folder not deleted | filesystem error or changed under us | log `Could not delete artifact folder <path>: <error>`; error entries `<relative path>: <error>`, `<relative path>: changed while being checked`, `<relative path>: still there after deleting`, `<relative path>: excluded from cleanup` |
+| Artifact success | | log `Deleted artifact folder <path> (~<bytes> bytes)` |
+| Artifact row refused up front | excluded worktree, or not an artifact row | error `Excluded from cleanup: <row name>`, `Not a worktree artifact row: <row name>` |
 
 ## Testing
 
@@ -153,6 +194,7 @@ Never point it at a real repository.
 
 ## Related
 
+- `PureMac/Logic/Utilities/WorktreeArtifactSupport.swift`: build-folder rules ([section above](#build-artifacts-inside-worktrees))
 - `PureMac/Logic/Utilities/RemovalRisk.swift`: risk text and agent brief for the review sheet
 - `PureMac/Views/CategoryDetailView.swift`: rows, review sheet
 - `PureMac/Views/Settings/SettingsView.swift`: Settings section
