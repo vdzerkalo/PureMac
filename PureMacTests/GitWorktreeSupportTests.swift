@@ -2019,22 +2019,50 @@ final class SmartScanOptInTests: XCTestCase {
         XCTAssertFalse(CleaningCategory.smartScannable.contains(.gitWorktrees), "scheduled scans keep skipping worktrees")
     }
 
-    func testOverviewOffersWorktreesUntilAddedAndNeverSelectsThem() {
+    func testAddingKeepsTheChoiceAndNeverSelectsWorktrees() {
         let state = AppState(performStartupTasks: false, settingsDefaults: defaults)
-        XCTAssertEqual(state.smartScanAdditionOffers, [.gitWorktrees])
+        XCTAssertFalse(state.isAddedToSmartScan(.gitWorktrees))
 
         state.setAddedToSmartScan(.gitWorktrees, true)
         XCTAssertTrue(state.isAddedToSmartScan(.gitWorktrees))
         XCTAssertTrue(defaults.bool(forKey: GitWorktreeSettings.includeInSmartScanKey))
         XCTAssertTrue(state.smartScanCategories.contains(.gitWorktrees))
-        XCTAssertEqual(state.smartScanAdditionOffers, [])
         XCTAssertTrue(state.isReviewedInCategoryOnly(.gitWorktrees), "adding the scan does not open the Overview's Clean button")
 
-        state.setAddedToSmartScan(.gitWorktrees, false)
         let item = CleanableItem(name: "r · x", path: "/r/wt/x", size: 4_096, category: .gitWorktrees, isSelected: true, lastModified: nil)
         state.categoryResults[.gitWorktrees] = CategoryResult(category: .gitWorktrees, items: [item], totalSize: 4_096)
-        XCTAssertEqual(state.smartScanAdditionOffers, [], "scanned on its own screen: the row is already in the plan")
         XCTAssertEqual(state.totalSelectedSize, 0)
+
+        state.setAddedToSmartScan(.gitWorktrees, false)
         XCTAssertFalse(state.smartScanCategories.contains(.gitWorktrees))
+    }
+
+    func testAddingFromTheOverviewScansInItsRowUntilStopped() {
+        let state = AppState(performStartupTasks: false, settingsDefaults: defaults)
+        state.addToSmartScan(.trashBins)
+        XCTAssertNil(state.categoryBeingAdded, "only optional categories are added")
+        XCTAssertFalse(state.scanState.isActive)
+
+        state.addToSmartScan(.gitWorktrees)
+        XCTAssertEqual(state.categoryBeingAdded, .gitWorktrees)
+        XCTAssertTrue(state.scanState.isActive)
+        XCTAssertTrue(state.isAddedToSmartScan(.gitWorktrees), "the choice is saved before the scan ends")
+
+        state.cancelScan()
+        XCTAssertNil(state.categoryBeingAdded)
+        XCTAssertFalse(state.scanState.isActive)
+        XCTAssertTrue(state.isAddedToSmartScan(.gitWorktrees), "stopping the scan keeps the choice")
+    }
+
+    func testScanProgressMovesForwardOnlyByWholePercents() {
+        let state = AppState(performStartupTasks: false, settingsDefaults: defaults)
+        state.advanceScanProgress(to: 0.004)
+        XCTAssertEqual(state.scanProgress, 0)
+        state.advanceScanProgress(to: 0.42)
+        XCTAssertEqual(state.scanProgress, 0.42)
+        state.advanceScanProgress(to: 0.30)
+        XCTAssertEqual(state.scanProgress, 0.42, "a check reported late does not move the bar back")
+        state.advanceScanProgress(to: 3)
+        XCTAssertEqual(state.scanProgress, 1)
     }
 }
