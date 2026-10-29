@@ -147,6 +147,7 @@ Smart Scan checks each category in sequence and reports progress as files are fo
 - **Brew Cache** - Homebrew download caches within approved cache locations
 - **Node Cache** - npm, yarn classic, pnpm content-addressable store
 - **Docker Cache** - images, containers, build cache
+- **AI Agent Data** - review-only list of large, regenerable data of Claude Desktop, Codex, Antigravity, and Cursor (VM disk image, simulator build output, plugin backups, caches). Never selected, never in Smart Scan or scheduled cleaning; moves to the Trash only while the app is not running. See [AI agent data](docs/AI-AGENT-DATA.md)
 
 > **On "purgeable space":** PureMac shows your APFS purgeable space in the storage breakdown for transparency, but it deliberately does **not** list it as junk to delete. Purgeable space is reserved and reclaimed by macOS itself - no third-party app can reliably free it, and even the Finder's purgeable figure is known to be inaccurate. Cleaners that claim to "reclaim purgeable space" are overpromising. We'd rather be honest than impressive.
 
