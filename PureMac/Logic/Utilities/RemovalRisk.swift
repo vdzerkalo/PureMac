@@ -42,8 +42,9 @@ enum RemovalRisk {
             return risks
         case .gitWorktrees:
             let pruneOnly = items.filter { $0.gitWorktree?.verdict.isPrunableOrphan == true }
+            let artifactRows = items.filter { $0.worktreeArtifacts != nil }
             var risks: [String] = []
-            if items.isEmpty || pruneOnly.count < items.count {
+            if items.isEmpty || pruneOnly.count + artifactRows.count < items.count {
                 risks.append(String(localized: "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash."))
                 risks.append(worktreeSettings.deleteMergedBranch
                     ? String(localized: "Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing.")
@@ -52,6 +53,10 @@ enum RemovalRisk {
             }
             if !pruneOnly.isEmpty {
                 risks.append(String(localized: "git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not."))
+            }
+            if !artifactRows.isEmpty {
+                risks.append(String(localized: "Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders."))
+                risks.append(String(localized: "Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool."))
             }
             return risks
         default:
@@ -63,6 +68,13 @@ enum RemovalRisk {
     /// paths are written relative to their repository (see `repositories`)
     /// so long absolute paths are not repeated on every row.
     static func action(for item: CleanableItem, repositories: [String: String] = [:]) -> String {
+        if let artifacts = item.worktreeArtifacts {
+            let name = repositories[artifacts.repositoryPath] ?? artifacts.repositoryPath
+            let relative = GitWorktreeSupport.isInside(artifacts.worktreePath, root: artifacts.repositoryPath)
+                ? String(artifacts.worktreePath.dropFirst(artifacts.repositoryPath.count + 1))
+                : abbreviate(artifacts.worktreePath)
+            return "delete ignored folders \(name):\(relative)/{" + artifacts.folders.map(\.relativePath).joined(separator: ",") + "}"
+        }
         if let worktree = item.gitWorktree {
             guard let repository = worktree.repositoryPath else { return "none (display only): \(abbreviate(item.path))" }
             let name = repositories[repository] ?? repository
@@ -80,7 +92,7 @@ enum RemovalRisk {
     /// Short names for the repositories of the found worktrees: the folder
     /// name, or the full path when two repositories share one.
     static func repositoryNames(_ items: [CleanableItem]) -> [String: String] {
-        let paths = Set(items.compactMap { $0.gitWorktree?.repositoryPath })
+        let paths = Set(items.compactMap { $0.gitWorktree?.repositoryPath ?? $0.worktreeArtifacts?.repositoryPath })
         let counts = Dictionary(grouping: paths) { URL(fileURLWithPath: $0).lastPathComponent }.mapValues(\.count)
         return Dictionary(uniqueKeysWithValues: paths.map { path in
             let name = URL(fileURLWithPath: path).lastPathComponent
@@ -118,6 +130,9 @@ enum RemovalRisk {
             if found.contains(where: { $0.gitWorktree?.verdict.isPrunableOrphan == true }) {
                 lines.append("`worktree prune R` = `git -C R worktree prune` (folder already gone; git records only).")
             }
+            if found.contains(where: { $0.worktreeArtifacts != nil }) {
+                lines.append("`delete ignored folders R:P/{…}` = delete only those build folders inside worktree P (each git-ignored, none tracked, no symlinks); the worktree stays.")
+            }
         }
         lines += [
             "✔ = proposed for removal, · = found only.",
@@ -129,7 +144,7 @@ enum RemovalRisk {
             let mark = proposed.contains(item.id) ? "✔" : "·"
             let verdict = item.gitWorktree?.verdict.englishSummary ?? note(for: item)
             let cells = [
-                "\(index + 1)", mark, item.gitWorktree?.branch ?? item.name,
+                "\(index + 1)", mark, item.gitWorktree?.branch ?? item.worktreeArtifacts.map { "artifacts: " + ($0.branch ?? $0.displayName) } ?? item.name,
                 ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file),
                 "`\(action(for: item, repositories: repositories))`", verdict,
             ].map { $0.replacingOccurrences(of: "|", with: "\\|") }
@@ -147,6 +162,15 @@ enum RemovalRisk {
     }
 
     private static func note(for item: CleanableItem) -> String {
+        if let artifacts = item.worktreeArtifacts {
+            let worktree = artifacts.worktreeVerdict.englishSummary
+            if let nested = artifacts.nestedRepository {
+                return "BLOCKED (a build folder contains a git repository: \(nested)); worktree is \(worktree)"
+            }
+            return artifacts.blocker == nil
+                ? "opt-in; regenerable build folders only; worktree is \(worktree)"
+                : "BLOCKED (worktree busy); worktree is \(worktree)"
+        }
         if item.requiresExplicitSelection { return "opt-in only; erases data" }
         return item.isSelected ? "selected by default" : "opt-in"
     }

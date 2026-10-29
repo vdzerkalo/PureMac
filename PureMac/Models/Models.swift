@@ -202,17 +202,24 @@ struct CleanableItem: Identifiable, Hashable {
         path.isEmpty
             || path.hasPrefix(Self.simctlRuntimePathPrefix)
             || path.hasPrefix(DockerSupport.actionPathPrefix)
+            || path.hasPrefix(WorktreeArtifactSupport.rowPathPrefix)
     }
 
     /// Set on Git Worktrees rows: what git reported at scan time, including
     /// the repository the clean step runs `git worktree remove` in.
     var gitWorktree: GitWorktreeReport?
 
+    /// Set on "Artifacts in <repo · branch>" rows: the ignored build folders
+    /// of one worktree that stays in place. Never set together with
+    /// `gitWorktree`.
+    var worktreeArtifacts: WorktreeArtifactsReport?
+
     /// Protected worktrees and orphans git does not know about are listed so
     /// the user sees why they stay, but they can never be selected. Prunable
-    /// orphans can: their action is `git worktree prune`.
+    /// orphans can: their action is `git worktree prune`. Artifact rows of a
+    /// worktree in use, locked or active as an agent worktree are blocked too.
     var isSelectionBlocked: Bool {
-        gitWorktree?.verdict.blocksSelection ?? false
+        (gitWorktree?.verdict.blocksSelection ?? false) || (worktreeArtifacts?.blocker != nil)
     }
 
     var simctlRuntimeIdentifier: String? {
@@ -232,11 +239,18 @@ struct CleanableItem: Identifiable, Hashable {
         category == .dockerCache ? DockerSupport.commandLine(forPath: path) : nil
     }
 
-    /// Rows whose removal cannot be undone by any download or rebuild.
-    /// Bulk selection (Select visible, the category checkbox) skips them;
-    /// only a click on the row itself selects one.
+    /// What the row adds to its category's total. An artifact row is a part
+    /// of its worktree's row, which already counts those bytes.
+    var sizeInCategoryTotal: Int64 {
+        worktreeArtifacts == nil ? size : 0
+    }
+
+    /// Rows whose removal cannot be undone by any download or rebuild, and
+    /// worktree artifact rows (a bulk selection must not delete build
+    /// folders next to whole worktrees). Bulk selection (Select visible, the
+    /// category checkbox) skips them; only a click on the row itself selects one.
     var requiresExplicitSelection: Bool {
-        dockerPruneAction?.requiresExplicitSelection ?? false
+        worktreeArtifacts != nil || (dockerPruneAction?.requiresExplicitSelection ?? false)
     }
 
     func hash(into hasher: inout Hasher) {
@@ -273,7 +287,7 @@ struct CategoryResult: Identifiable {
         return CategoryResult(
             category: category,
             items: remaining,
-            totalSize: remaining.reduce(0) { $0 + $1.size },
+            totalSize: remaining.reduce(0) { $0 + $1.sizeInCategoryTotal },
             note: note
         )
     }

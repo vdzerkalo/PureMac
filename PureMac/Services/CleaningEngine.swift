@@ -120,7 +120,11 @@ actor CleaningEngine {
                 // Worktrees are removed through git, never unlinked or moved
                 // to the Trash: that would leave git's metadata pointing at a
                 // missing folder and keep the bytes on the same volume.
-                let outcome = await removeGitWorktree(item)
+                // Artifact rows (build folders inside a worktree that stays)
+                // have their own validated route.
+                let outcome = item.worktreeArtifacts != nil
+                    ? await removeWorktreeArtifacts(item)
+                    : await removeGitWorktree(item)
                 result.freedSpace += outcome.freed
                 if outcome.cleaned {
                     result.itemsCleaned += 1
@@ -685,6 +689,99 @@ actor CleaningEngine {
             }
         }
         return (item.size, true, nil, note)
+    }
+
+    /// Deletes the ignored build folders (node_modules, .next, …) of one
+    /// worktree and nothing else: the worktree, its tracked files and its
+    /// branch stay. Dedicated route, outside the generic allow-list: the
+    /// worktree is re-inspected first (still listed by git, not in use, not
+    /// locked, not an active agent worktree), then every folder is checked
+    /// again (`checkArtifactFolder`: real directory, no symlink, inside the
+    /// worktree, same volume, ignored by git, no tracked file) and checked
+    /// once more on the filesystem right before it is removed. A folder that
+    /// fails any check is left alone and reported; the row counts as cleaned
+    /// only when every folder is gone.
+    func removeWorktreeArtifacts(_ item: CleanableItem) async -> (freed: Int64, cleaned: Bool, error: String?, note: String?) {
+        guard let report = item.worktreeArtifacts else {
+            return (0, false, "Not a worktree artifact row: \(item.name)", nil)
+        }
+        let exclusions = CleanupExclusions.paths()
+        guard !CleanupExclusions.excludes(report.worktreePath, paths: exclusions) else {
+            return (0, false, "Excluded from cleanup: \(item.name)", nil)
+        }
+        // The worktree was removed after the scan (for example in the same
+        // batch): its build folders went with it.
+        guard GitWorktreeScanner.pathExists(report.worktreePath) else { return (0, true, nil, nil) }
+        guard let gitPath = GitWorktreeScanner.locateGit() else {
+            return (0, false, "git not found — install Homebrew git or the Xcode command-line tools", nil)
+        }
+        let settings = worktreeSettings()
+        var scanner = GitWorktreeScanner(homeDirectory: homeDirectory.path, gitPath: gitPath)
+        scanner.inactiveDays = settings.inactiveDays
+        scanner.baseBranchOverride = settings.baseBranch
+        guard let fresh = await scanner.reinspect(path: report.worktreePath, repository: report.repositoryPath) else {
+            return (0, false, "\(item.name): \(report.worktreePath) is no longer a worktree of \(report.repositoryPath)", nil)
+        }
+        if let blocker = WorktreeArtifactSupport.blocker(for: fresh.verdict) {
+            Logger.shared.log("Skipped artifacts in \(report.worktreePath): \(blocker.localizedDescription)", level: .warning)
+            return (0, false, "\(item.name): \(blocker.localizedDescription)", nil)
+        }
+
+        var freed: Int64 = 0
+        var problems: [String] = []
+        for folder in report.folders {
+            let relative = folder.relativePath
+            let absolute = report.worktreePath + "/" + relative
+            if CleanupExclusions.excludes(absolute, paths: exclusions) {
+                problems.append("\(relative): excluded from cleanup")
+                continue
+            }
+            let check = await scanner.checkArtifactFolder(worktree: report.worktreePath, relative: relative)
+            switch check {
+            case .missing:
+                continue
+            case .refused(let reason):
+                Logger.shared.log("Left artifact folder \(absolute): \(reason)", level: .warning)
+                problems.append("\(relative): \(reason)")
+                continue
+            case .nestedRepository(_, let at):
+                Logger.shared.log("Left artifact folder \(absolute): contains a repository at \(at)", level: .warning)
+                problems.append("\(relative): contains a repository (\(at))")
+                continue
+            case .ok:
+                break
+            }
+            // Narrow the window between the last check and the delete.
+            guard case .ok(let resolved) = WorktreeArtifactSupport.check(worktree: report.worktreePath, relative: relative) else {
+                problems.append("\(relative): changed while being checked")
+                continue
+            }
+            // Same rule as the generic route (issue #142): never delete inside
+            // iCloud Drive or a file provider.
+            if ProviderPaths.isProviderOwned(resolved, homeDirectory: homeDirectory) {
+                Logger.shared.log("Left artifact folder \(resolved): cloud provider storage", level: .warning)
+                problems.append("\(relative): in iCloud Drive or another cloud-synced folder")
+                continue
+            }
+            let bytes = GitWorktreeScanner.allocatedBytes(under: URL(fileURLWithPath: resolved))
+            do {
+                try fileManager.removeItem(atPath: resolved)
+            } catch {
+                Logger.shared.log("Could not delete artifact folder \(resolved): \(error.localizedDescription)", level: .warning)
+                problems.append("\(relative): \(error.localizedDescription)")
+                continue
+            }
+            guard !GitWorktreeScanner.pathExists(resolved) else {
+                problems.append("\(relative): still there after deleting")
+                continue
+            }
+            freed += bytes
+            Logger.shared.log("Deleted artifact folder \(resolved) (~\(bytes) bytes)", level: .info)
+        }
+        guard problems.isEmpty else {
+            return (freed, false, "\(item.name): " + problems.joined(separator: "; "), nil)
+        }
+        return (freed, true, nil, nil)
     }
 
     // MARK: - Simulator Runtimes

@@ -982,6 +982,7 @@
 "Remove from Smart Scan" = "Remove from Smart Scan";
 "Include in Smart Scan" = "Include in Smart Scan";
 "Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen." = "Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen.";
+"Build folders %lld/%lld · %@" = "Build folders %lld/%lld · %@";
 "Delete the merged branch after removing a worktree" = "Delete the merged branch after removing a worktree";
 "Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged." = "Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged.";
 "Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep." = "Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep.";
@@ -994,6 +995,15 @@
 "Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Permanent · git worktree prune (forgets the missing folder, deletes no files)";
 "Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Permanent · git worktree remove (merged branch is deleted with git branch -d)";
 
+/* Git Worktrees build artifacts */
+"Artifacts in %@" = "Artifacts in %@";
+"blocked: %@" = "blocked: %@";
+"Artifacts" = "Artifacts";
+"The worktree is busy, so PureMac will not touch its build folders." = "The worktree is busy, so PureMac will not touch its build folders.";
+"Only git-ignored build folders are deleted. The worktree stays." = "Only git-ignored build folders are deleted. The worktree stays.";
+"Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay" = "Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay";
+"Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders." = "Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders.";
+"Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool." = "Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool.";
 /* Docker polish */
 "Dangling Docker images (untagged leftovers)" = "Dangling Docker images (untagged leftovers)";
 "Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling Docker images (untagged leftovers, size not estimated)";
@@ -1013,3 +1023,6 @@
 "nested repository in ignored folder" = "nested repository in ignored folder";
 "ignored folders too large to check completely" = "ignored folders too large to check completely";
 "Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted." = "Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted.";
+
+/* Git Worktrees artifacts safety review */
+"A build folder contains a git repository, so PureMac will not delete build folders here." = "A build folder contains a git repository, so PureMac will not delete build folders here.";

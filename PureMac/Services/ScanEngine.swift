@@ -939,17 +939,27 @@ actor ScanEngine {
         // few, and "12/48" tells a long scan from a stuck one.
         let onPath = self.onPath
         let onFraction = self.onFraction
+        // The bar: checks fill the first three quarters, build folders the rest.
+        let checksShare = 0.75
         let reports = await scanner.scan { step in
             switch step {
             case .discovering(let path):
                 onPath?(path)
             case .inspecting(let path, let position, let total):
                 onPath?("\(position)/\(total) · \(path)")
-                onFraction?(Double(position - 1) / Double(max(total, 1)))
+                onFraction?(checksShare * Double(position - 1) / Double(max(total, 1)))
             }
         }
+        // Build folders of the worktrees that cannot be removed whole: one
+        // more bounded walk each, also four at a time.
+        let total = reports.count
+        let artifactReports = await GitWorktreeScanner.concurrentMap(reports, limit: GitWorktreeScanner.concurrentInspections) { [scanner] index, worktree in
+            onPath?(String(localized: "Build folders \(index + 1)/\(total) · \(worktree.path)"))
+            onFraction?(checksShare + (1 - checksShare) * Double(index) / Double(max(total, 1)))
+            return await scanner.artifactReport(for: worktree)
+        }
         var items: [CleanableItem] = []
-        for worktree in reports {
+        for (index, worktree) in reports.enumerated() {
             if Task.isCancelled { break }
             var item = CleanableItem(
                 name: worktree.displayName,
@@ -961,8 +971,24 @@ actor ScanEngine {
             )
             item.gitWorktree = worktree
             items.append(item)
+
+            // A worktree that cannot be removed whole still has build
+            // folders git ignores: offer them as their own row, never
+            // preselected, blocked while the worktree is in use.
+            if let artifacts = artifactReports[index] ?? nil {
+                var artifactItem = CleanableItem(
+                    name: String(localized: "Artifacts in \(artifacts.displayName)"),
+                    path: WorktreeArtifactSupport.rowPath(forWorktree: artifacts.worktreePath),
+                    size: artifacts.totalBytes,
+                    category: .gitWorktrees,
+                    isSelected: false,
+                    lastModified: worktree.lastActivity
+                )
+                artifactItem.worktreeArtifacts = artifacts
+                items.append(artifactItem)
+            }
         }
-        let totalSize = items.reduce(0) { $0 + $1.size }
+        let totalSize = items.reduce(0) { $0 + $1.sizeInCategoryTotal }
         return CategoryResult(category: .gitWorktrees, items: items, totalSize: totalSize)
     }
 

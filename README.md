@@ -147,7 +147,7 @@ Smart Scan checks each category in sequence and reports progress as files are fo
 - **Brew Cache** - Homebrew download caches within approved cache locations
 - **Node Cache** - npm, yarn classic, pnpm content-addressable store
 - **Docker Cache** - dangling and unused images, stopped containers, build cache, and volumes (opt-in); each row runs its own `docker ... prune` and shows the exact command ([details](docs/DOCKER.md))
-- **Git Worktrees** - leftover worktrees from AI agents and old branches, judged only by what git reports. Removed with `git worktree remove` (never `--force`); worktrees with uncommitted changes, unpushed commits, a stash, a lock or an open process are protected. Not part of Smart Scan or scheduled cleaning; only merged, idle worktrees start selected. See [docs/GIT-WORKTREES.md](docs/GIT-WORKTREES.md)
+- **Git Worktrees** - leftover worktrees from AI agents and old branches, judged only by what git reports. Removed with `git worktree remove` (never `--force`); worktrees with uncommitted changes, unpushed commits, a stash, a lock, an open process or a nested repository in an ignored folder are protected. Not part of Smart Scan, the Overview or scheduled cleaning; only merged, idle worktrees start selected. Worktrees that cannot be removed also get an opt-in "Artifacts" row that deletes only their git-ignored build folders (`node_modules`, `.next`, `dist`, …) and leaves the worktree intact. See [docs/GIT-WORKTREES.md](docs/GIT-WORKTREES.md)
 
 > **On "purgeable space":** PureMac shows your APFS purgeable space in the storage breakdown for transparency, but it deliberately does **not** list it as junk to delete. Purgeable space is reserved and reclaimed by macOS itself - no third-party app can reliably free it, and even the Finder's purgeable figure is known to be inaccurate. Cleaners that claim to "reclaim purgeable space" are overpromising. We'd rather be honest than impressive.
 
@@ -267,7 +267,7 @@ Key components:
 - Admin escalation is gated by its own explicit allow-list; root-owned items outside those permitted roots are refused.
 - System app protection: Apple's bundles cannot be uninstalled, regardless of selection.
 - Manual destructive workflows require confirmation. Exact duplicates retain one protected copy and recheck files before moving extras to the Trash. Scheduled auto-clean remains unattended after enablement.
-- Git worktree cleanup removes only through git: signals come from git commands, the worktree is re-inspected right before removal, `git worktree remove` runs without `--force`, symlinks are never followed, merged branches are deleted only with `git branch -d` and only if enabled, and nothing else in `.claude` is touched. Details and tests: [docs/GIT-WORKTREES.md](docs/GIT-WORKTREES.md).
+- Git worktree cleanup removes only through git: signals come from git commands, the worktree is re-inspected right before removal, `git worktree remove` runs without `--force`, symlinks are never followed, merged branches are deleted only with `git branch -d` and only if enabled, build-folder cleanup inside a kept worktree refuses symlinks, tracked files and busy worktrees, and nothing else in `.claude` is touched. Details and tests: [docs/GIT-WORKTREES.md](docs/GIT-WORKTREES.md).
 
 If you find a vulnerability, please open a private security advisory rather than a public issue.
 

@@ -986,6 +986,7 @@
 "Remove from Smart Scan" = "Прибрати з розумного сканування";
 "Include in Smart Scan" = "Включати в розумне сканування";
 "Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen." = "Тоді розумне сканування також показує worktree. Воно лише читає ваші репозиторії і з великою кількістю worktree може тривати кілька хвилин; сканування за розкладом їх пропускає, а видаляються worktree лише з їхнього екрана.";
+"Build folders %lld/%lld · %@" = "Папки збірки %lld/%lld · %@";
 "Delete the merged branch after removing a worktree" = "Видаляти злиту гілку після видалення worktree";
 "Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged." = "Виконує git branch -d, ніколи -D, лише для worktree, які можна видалити, і лише якщо git згоден, що гілку злито.";
 "Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep." = "Окрім списку проєктів Claude Code і папок worktree Cursor та Codex, у цих папках шукають репозиторії на три рівні вглиб.";
@@ -998,6 +999,15 @@
 "Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Назавжди · git worktree prune (забуває відсутню папку, файли не видаляє)";
 "Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Назавжди · git worktree remove (злиту гілку видаляє git branch -d)";
 
+/* Git Worktrees build artifacts */
+"Artifacts in %@" = "Артефакти в %@";
+"blocked: %@" = "заблоковано: %@";
+"Artifacts" = "Артефакти";
+"The worktree is busy, so PureMac will not touch its build folders." = "Worktree зайнятий, тому PureMac не чіпатиме його папки збірки.";
+"Only git-ignored build folders are deleted. The worktree stays." = "Видаляються лише папки збірки, які ігнорує git. Worktree лишається.";
+"Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay" = "Назавжди · видалити лише папки збірки, які ігнорує git; worktree і його відстежувані файли лишаються";
+"Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders." = "Папки збірки, як-от node_modules, .next, dist чи target, у цих worktree видаляються назавжди, а не переміщуються в Кошик. Git їх ігнорує, відстежуваних файлів усередині немає; worktree і їхні файли лишаються, а наступне встановлення чи збірка створить папки знову.";
+"Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool." = "Спершу зупиніть dev-сервери, спостерігачі та збірки, що працюють із цих worktree. PureMac пропускає worktree, які бачить у використанні, але не бачить кожен інструмент.";
 /* Docker polish */
 "Dangling Docker images (untagged leftovers)" = "Dangling-образи Docker (залишки без тегів)";
 "Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling-образи Docker (залишки без тегів, розмір не оцінено)";
@@ -1017,3 +1027,6 @@
 "nested repository in ignored folder" = "вкладений репозиторій в ігнорованій папці";
 "ignored folders too large to check completely" = "ігноровані папки завеликі для повної перевірки";
 "Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted." = "Вкажіть назву гілки, наприклад main або origin/main. HEAD, теги та хеші комітів не приймаються.";
+
+/* Git Worktrees artifacts safety review */
+"A build folder contains a git repository, so PureMac will not delete build folders here." = "Папка збірки містить git-репозиторій, тому PureMac не видалятиме тут папки збірки.";

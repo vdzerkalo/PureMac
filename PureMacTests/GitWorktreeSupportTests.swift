@@ -1117,6 +1117,387 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(ghost)/work.txt"))
     }
 
+    // MARK: Build artifacts inside worktrees
+
+    /// Merged-looking worktree that has an untracked file, so it is Needs review.
+    private func makeNeedsReview(_ name: String) throws -> String {
+        let path = try addWorktree("wt/\(name)", branch: name)
+        try commit(in: path, file: "\(name).txt")
+        try mergeIntoMain(name)
+        try write("notes\n", to: "\(path)/notes.md")
+        return path
+    }
+
+    private func artifactItem(_ worktree: String, folders: [String], verdict: GitWorktreeSupport.Verdict? = nil) -> CleanableItem {
+        let report = WorktreeArtifactsReport(
+            worktreePath: worktree,
+            repositoryPath: repo,
+            branch: "x",
+            head: nil,
+            worktreeVerdict: verdict ?? .init(status: .needsReview, reasons: [.untrackedFiles(1)]),
+            folders: folders.map { WorktreeArtifactFolder(relativePath: $0, bytes: 1_000) }
+        )
+        var item = CleanableItem(
+            name: "Artifacts in \(report.displayName)",
+            path: WorktreeArtifactSupport.rowPath(forWorktree: worktree),
+            size: report.totalBytes,
+            category: .gitWorktrees,
+            isSelected: false,
+            lastModified: nil
+        )
+        item.worktreeArtifacts = report
+        return item
+    }
+
+    /// `git status` without refreshing the index, which would bump the
+    /// worktree's activity time.
+    private func status(_ path: String) throws -> String {
+        try git(["--no-optional-locks", "status", "--porcelain"], in: path)
+    }
+
+    func testIgnoredBuildFoldersAreRemovedAndTheWorktreeStaysIntact() async throws {
+        let review = try makeNeedsReview("artifacts-review")
+        try write(String(repeating: "n", count: 200_000), to: "\(review)/node_modules/pkg/index.js")
+        try write(String(repeating: "n", count: 120_000), to: "\(review)/apps/web/node_modules/dep/index.js")
+        let protected = try addWorktree("wt/artifacts-protected", branch: "artifacts-protected")
+        try write("uncommitted edit\n", to: "\(protected)/README.md")
+        try write(String(repeating: "n", count: 90_000), to: "\(protected)/node_modules/pkg/index.js")
+        for path in [review, protected] { try age(path) }
+        let reviewReadme = try Data(contentsOf: URL(fileURLWithPath: "\(review)/README.md"))
+        let protectedStatusBefore = try status(protected)
+        let reviewStatusBefore = try status(review)
+
+        let reviewReport = try await inspect(review)
+        let protectedReport = try await inspect(protected)
+        XCTAssertEqual(reviewReport.verdict, .init(status: .needsReview, reasons: [.untrackedFiles(1)]))
+        XCTAssertEqual(protectedReport.verdict.status, .protected)
+        let reviewArtifacts = await scanner().artifactReport(for: reviewReport)
+        let protectedArtifacts = await scanner().artifactReport(for: protectedReport)
+        let a = try XCTUnwrap(reviewArtifacts)
+        let b = try XCTUnwrap(protectedArtifacts)
+        XCTAssertEqual(a.folders.map(\.relativePath), ["apps/web/node_modules", "node_modules"])
+        XCTAssertGreaterThanOrEqual(a.totalBytes, 320_000)
+        XCTAssertEqual(b.folders.map(\.relativePath), ["node_modules"])
+        XCTAssertNil(a.blocker)
+        XCTAssertNil(b.blocker)
+
+        var rows: [CleanableItem] = []
+        for report in [a, b] {
+            var row = CleanableItem(name: report.displayName, path: WorktreeArtifactSupport.rowPath(forWorktree: report.worktreePath),
+                                    size: report.totalBytes, category: .gitWorktrees, isSelected: false, lastModified: nil)
+            row.worktreeArtifacts = report
+            XCTAssertFalse(row.isSelectionBlocked)
+            XCTAssertTrue(row.requiresExplicitSelection, "never swept up by a bulk selection")
+            XCTAssertTrue(row.isActionItem, "the generic delete route never sees this path")
+            rows.append(row)
+        }
+        let result = await engine().cleanItems(rows) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 2, "\(result.errors)")
+        XCTAssertTrue(result.errors.isEmpty, "\(result.errors)")
+        XCTAssertGreaterThanOrEqual(result.freedSpace, 410_000)
+        XCTAssertEqual(result.cleanedPaths, Set(rows.map(\.path)))
+        for path in [review, protected] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: "\(path)/node_modules"))
+            XCTAssertTrue(try git(["worktree", "list", "--porcelain"], in: repo).contains(path), "the worktree itself stays")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(review)/apps/web/node_modules"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(review)/apps/web"), "only the artifact folder goes, not its parents")
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: "\(review)/README.md")), reviewReadme)
+        XCTAssertEqual(try status(review), reviewStatusBefore, "tracked and untracked files are as they were")
+        XCTAssertEqual(try status(protected), protectedStatusBefore, "the uncommitted edit survives")
+        XCTAssertEqual(try String(contentsOfFile: "\(protected)/README.md", encoding: .utf8), "uncommitted edit\n")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(review)/notes.md"))
+        XCTAssertTrue(try git(["branch", "--list", "artifacts-review"], in: repo).contains("artifacts-review"))
+    }
+
+    func testTrackedOrUnignoredBuildFoldersAreRefused() async throws {
+        let path = try makeNeedsReview("tracked-build")
+        // `build/` is ignored by the repository's exclude file but one file in it is tracked.
+        try write("build/\n", to: "\(repo!)/.git/info/exclude")
+        try write("artifact\n", to: "\(path)/build/out.txt")
+        try git(["add", "-f", "build/out.txt"], in: path)
+        try git(["commit", "-q", "-m", "track build output"], in: path)
+        // `dist/` is not ignored at all.
+        try write("bundle\n", to: "\(path)/dist/app.js")
+        try age(path)
+
+        let scanner = scanner()
+        let tracked = await scanner.checkArtifactFolder(worktree: path, relative: "build")
+        let unignored = await scanner.checkArtifactFolder(worktree: path, relative: "dist")
+        // `git check-ignore` already reports a folder with tracked content as
+        // not ignored; `ls-files` is the second line of defence behind it.
+        XCTAssertEqual(tracked, .refused("is not ignored by git"))
+        XCTAssertEqual(unignored, .refused("is not ignored by git"))
+        let listed = try git(["ls-files", "--", "build"], in: path)
+        XCTAssertEqual(listed, "build/out.txt\n", "the file really is tracked")
+        let report = try await inspect(path)
+        let artifacts = await scanner.artifactReport(for: report)
+        XCTAssertNil(artifacts, "neither folder is offered")
+
+        // Even a stale row that lists them cannot delete them.
+        let result = await engine().cleanItems([artifactItem(path, folders: ["build", "dist"])]) { _ in }
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.errors.joined().contains("build: is not ignored by git"), "\(result.errors)")
+        XCTAssertTrue(result.errors.joined().contains("dist: is not ignored by git"), "\(result.errors)")
+        XCTAssertEqual(try String(contentsOfFile: "\(path)/build/out.txt", encoding: .utf8), "artifact\n")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/dist/app.js"))
+    }
+
+    func testArtifactFoldersInCloudProviderStorageAreLeftAlone() async throws {
+        // A `com~apple~` component marks iCloud state wherever it appears.
+        let path = try addWorktree("com~apple~CloudDocs/artifacts", branch: "cloud-artifacts")
+        try commit(in: path, file: "c.txt")
+        try mergeIntoMain("cloud-artifacts")
+        try write("notes\n", to: "\(path)/notes.md")
+        try write("x\n", to: "\(path)/node_modules/pkg/index.js")
+        try age(path)
+        let report = try await inspect(path)
+        let artifacts = await scanner().artifactReport(for: report)
+        let row = artifactItem(path, folders: try XCTUnwrap(artifacts).folders.map(\.relativePath))
+
+        let result = await engine().cleanItems([row]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.errors.joined().contains("node_modules: in iCloud Drive"), "\(result.errors)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/node_modules/pkg/index.js"))
+    }
+
+    func testFolderBecomingTrackedAfterTheScanIsLeftAlone() async throws {
+        let path = try makeNeedsReview("tracked-later")
+        try write("x\n", to: "\(path)/node_modules/pkg/index.js")
+        try age(path)
+        let report = try await inspect(path)
+        let artifacts = await scanner().artifactReport(for: report)
+        let row = artifactItem(path, folders: try XCTUnwrap(artifacts).folders.map(\.relativePath))
+
+        // After the scan someone force-adds a file inside the folder.
+        try git(["add", "-f", "node_modules/pkg/index.js"], in: path)
+        let result = await engine().cleanItems([row]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.errors.joined().contains("node_modules: is not ignored by git"), "\(result.errors)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/node_modules/pkg/index.js"))
+    }
+
+    func testSymlinkedAndEscapingArtifactFoldersAreRefused() async throws {
+        let outside = root.appendingPathComponent("outside-artifacts").path
+        try write("outside file\n", to: "\(outside)/node_modules/keep.txt")
+        try write("other file\n", to: "\(outside)/apps-target/web/node_modules/keep.txt")
+        let path = try makeNeedsReview("escaping")
+        // `node_modules` is itself a symlink to a folder elsewhere.
+        try FileManager.default.createSymbolicLink(atPath: "\(path)/node_modules", withDestinationPath: "\(outside)/node_modules")
+        // `apps` is a symlink, so "apps/web/node_modules" resolves outside the worktree.
+        try FileManager.default.createSymbolicLink(atPath: "\(path)/apps", withDestinationPath: "\(outside)/apps-target")
+        // `.venv` is a symlink to a folder inside the worktree: still not a real folder.
+        try write("v\n", to: "\(path)/real-venv/keep.txt")
+        try FileManager.default.createSymbolicLink(atPath: "\(path)/.venv", withDestinationPath: "\(path)/real-venv")
+        try age(path)
+
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: "node_modules"), .refused("is a symlink"))
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: "apps/web/node_modules"), .refused("resolves outside the worktree"))
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: ".venv"), .refused("is a symlink"))
+        XCTAssertEqual(WorktreeArtifactSupport.candidates(in: path), [], "symlinks are never walked or listed")
+
+        let result = await engine().cleanItems([artifactItem(path, folders: ["node_modules", "apps/web/node_modules", ".venv"])]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertEqual(result.freedSpace, 0)
+        XCTAssertTrue(result.errors.joined().contains("is a symlink"), "\(result.errors)")
+        XCTAssertTrue(result.errors.joined().contains("resolves outside the worktree"), "\(result.errors)")
+        XCTAssertEqual(try String(contentsOfFile: "\(outside)/node_modules/keep.txt", encoding: .utf8), "outside file\n")
+        XCTAssertEqual(try String(contentsOfFile: "\(outside)/apps-target/web/node_modules/keep.txt", encoding: .utf8), "other file\n")
+        XCTAssertEqual(try String(contentsOfFile: "\(path)/real-venv/keep.txt", encoding: .utf8), "v\n")
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: "\(path)/node_modules"), "\(outside)/node_modules")
+    }
+
+    func testPathsThatAreNotPlainBuildFoldersAreRefused() {
+        let tmp = root.path
+        for bad in ["", "/etc", "../outside", "a/../node_modules", "node_modules/../src", ".git", "src", "a/b/c/d/node_modules",
+                    "node_modules//x", "./node_modules", ".git/node_modules"] {
+            guard case .refused = WorktreeArtifactSupport.check(worktree: tmp, relative: bad) else {
+                XCTFail("\(bad) should be refused")
+                continue
+            }
+        }
+    }
+
+    func testCandidateWalkIsBoundedAndDoesNotCrossRepositories() throws {
+        let tree = root.appendingPathComponent("walk").path
+        try write("x", to: "\(tree)/node_modules/inner/node_modules/deep.js")
+        try write("x", to: "\(tree)/a/b/c/node_modules/x.js")
+        try write("x", to: "\(tree)/a/b/c/d/node_modules/x.js")
+        try write("x", to: "\(tree)/packages/app/.next/x.js")
+        try write("x", to: "\(tree)/.git/node_modules/x.js")
+        try write("gitdir: /elsewhere\n", to: "\(tree)/nested/.git")
+        try write("x", to: "\(tree)/nested/node_modules/x.js")
+        try write("x", to: "\(tree)/plain-file/target")
+        try FileManager.default.createDirectory(atPath: "\(tree)/real-target", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(tree)/linked", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: "\(tree)/linked/dist", withDestinationPath: "\(tree)/real-target")
+
+        XCTAssertEqual(WorktreeArtifactSupport.candidates(in: tree), ["a/b/c/node_modules", "node_modules", "packages/app/.next"])
+    }
+
+    func testBusyWorktreesBlockArtifactRows() async throws {
+        // In use (injected process list), recent agent activity and a lock.
+        let inUse = try makeNeedsReview("busy-in-use")
+        try write("x\n", to: "\(inUse)/node_modules/a.js")
+        let agent = try addWorktree(".claude/worktrees/busy-agent", branch: "busy-agent")
+        try write("x\n", to: "\(agent)/node_modules/a.js")
+        let locked = try addWorktree("wt/busy-locked", branch: "busy-locked")
+        try write("x\n", to: "\(locked)/node_modules/a.js")
+        try write("edit\n", to: "\(locked)/README.md")
+        try git(["worktree", "lock", "--reason", "agent", locked], in: repo)
+        let free = try makeNeedsReview("not-busy")
+        try write("x\n", to: "\(free)/node_modules/a.js")
+        for path in [inUse, locked, free] { try age(path) }
+
+        let busyScanner = scanner(inUse: ["\(inUse)/Sources"])
+        var blockers: [String: GitWorktreeSupport.Reason?] = [:]
+        for path in [inUse, agent, locked, free] {
+            let report = try await inspect(path, with: busyScanner)
+            let artifacts = await busyScanner.artifactReport(for: report)
+            blockers[path] = try XCTUnwrap(artifacts, path).blocker
+            let row = artifactItem(path, folders: ["node_modules"], verdict: report.verdict)
+            XCTAssertEqual(row.isSelectionBlocked, artifacts?.blocker != nil)
+            XCTAssertFalse(row.isSelected)
+        }
+
+        XCTAssertEqual(blockers[inUse] ?? nil, .inUse)
+        XCTAssertEqual(blockers[agent] ?? nil, .recentAgentActivity)
+        XCTAssertEqual(blockers[locked] ?? nil, .locked)
+        XCTAssertNil(blockers[free] ?? nil)
+    }
+
+    func testEngineRefusesWorktreesThatBecameBusyAfterTheScan() async throws {
+        let locked = try makeNeedsReview("locked-later")
+        try write("x\n", to: "\(locked)/node_modules/a.js")
+        try age(locked)
+        let row = artifactItem(locked, folders: ["node_modules"])
+        try git(["worktree", "lock", "--reason", "agent started", locked], in: repo)
+
+        let lockedResult = await engine().cleanItems([row]) { _ in }
+        XCTAssertEqual(lockedResult.itemsCleaned, 0)
+        XCTAssertEqual(lockedResult.errors.count, 1)
+        XCTAssertTrue(lockedResult.errors.first?.hasPrefix(row.name) == true, "\(lockedResult.errors)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(locked)/node_modules/a.js"))
+        try git(["worktree", "unlock", locked], in: repo)
+
+        // A real process working inside the worktree (a dev server, say).
+        let sleeper = Process()
+        sleeper.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        sleeper.arguments = ["60"]
+        sleeper.currentDirectoryURL = URL(fileURLWithPath: locked)
+        try sleeper.run()
+        let busyResult = await engine().cleanItems([row]) { _ in }
+        sleeper.terminate()
+        for _ in 0..<100 where sleeper.isRunning { try await Task.sleep(nanoseconds: 30_000_000) }
+
+        XCTAssertEqual(busyResult.itemsCleaned, 0)
+        XCTAssertEqual(busyResult.errors.count, 1)
+        XCTAssertTrue(busyResult.errors.first?.hasPrefix(row.name) == true, "\(busyResult.errors)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(locked)/node_modules/a.js"))
+    }
+
+    func testArtifactRowsFollowTheirWorktreeAndAreAnOrphanOnlyWhenGone() async throws {
+        // The worktree vanished (removed in the same batch): its folders went with it.
+        let gone = try makeNeedsReview("gone-first")
+        try write("x\n", to: "\(gone)/node_modules/a.js")
+        let row = artifactItem(gone, folders: ["node_modules"])
+        try git(["worktree", "remove", "--force", gone], in: repo)
+        let after = await engine().cleanItems([row]) { _ in }
+        XCTAssertEqual(after.itemsCleaned, 1, "\(after.errors)")
+        XCTAssertEqual(after.freedSpace, 0)
+
+        // A folder git does not list as a worktree is never touched.
+        let ghost = "\(repo!)/.claude/worktrees/ghost-artifacts"
+        try write("gitdir: /nonexistent/worktrees/ghost\n", to: "\(ghost)/.git")
+        try write("x\n", to: "\(ghost)/node_modules/a.js")
+        let ghostResult = await engine().cleanItems([artifactItem(ghost, folders: ["node_modules"])]) { _ in }
+        XCTAssertEqual(ghostResult.itemsCleaned, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(ghost)/node_modules/a.js"))
+    }
+
+    func testNestedRepositoriesInsideAWorktreeAreNotWalkedOrDeleted() async throws {
+        let path = try makeNeedsReview("nested-repo")
+        // An agent worktree nested inside this worktree (its own .git file).
+        try write("gitdir: /elsewhere/.git/worktrees/inner\n", to: "\(path)/.claude/worktrees/inner/.git")
+        try write("x\n", to: "\(path)/.claude/worktrees/inner/node_modules/a.js")
+        // An ignored folder that is itself a repository.
+        try write("gitdir: /elsewhere\n", to: "\(path)/dist/.git")
+        try write("x\n", to: "\(path)/dist/a.js")
+        try age(path)
+
+        XCTAssertEqual(WorktreeArtifactSupport.candidates(in: path), ["dist"], "the nested worktree is not entered")
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: "dist"),
+                       .nestedRepository(resolved: GitWorktreeScanner.canonical(path) + "/dist", at: "dist/.git"))
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: ".claude/worktrees/inner/node_modules"),
+                       .refused("is inside a nested repository"))
+    }
+
+    // MARK: Safety review 6: a repository deep inside a build folder
+
+    func testRepositoryDeepInsideABuildFolderBlocksTheRowAndIsNeverDeleted() async throws {
+        try exclude([".venv/"])
+        let path = try makeNeedsReview("deep-repo")
+        // `pip install -e git+https://…` clones into .venv/src/<pkg>.
+        try write("[core]\n", to: "\(path)/.venv/src/pkg/.git/config")
+        try write("def work(): pass\n", to: "\(path)/.venv/src/pkg/code.py")
+        try write("x\n", to: "\(path)/.venv/lib/site.py")
+        try write(String(repeating: "n", count: 50_000), to: "\(path)/node_modules/pkg/index.js")
+        // A deeper one, and a .git that is a file (a worktree or submodule pointer).
+        try write("gitdir: /elsewhere/.git/modules/m\n", to: "\(path)/node_modules/mod/vendor/.git")
+        try age(path)
+        let resolved = GitWorktreeScanner.canonical(path)
+
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: ".venv"),
+                       .nestedRepository(resolved: resolved + "/.venv", at: ".venv/src/pkg/.git"))
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: "node_modules"),
+                       .nestedRepository(resolved: resolved + "/node_modules", at: "node_modules/mod/vendor/.git"))
+
+        // At scan: the folders are listed, the row is blocked and cannot be selected.
+        let report = try await inspect(path)
+        XCTAssertEqual(report.verdict, .init(status: .protected, reasons: [.nestedRepositoryInIgnored]))
+        let scanned = await scanner().artifactReport(for: report)
+        let artifacts = try XCTUnwrap(scanned)
+        XCTAssertEqual(artifacts.folders.map(\.relativePath), [".venv", "node_modules"])
+        XCTAssertNotNil(artifacts.nestedRepository)
+        XCTAssertEqual(artifacts.blocker, .nestedRepositoryInIgnored)
+        var row = artifactItem(path, folders: [])
+        row.worktreeArtifacts = artifacts
+        XCTAssertTrue(row.isSelectionBlocked)
+
+        // At clean: a stale row from before the repository existed still deletes neither folder.
+        let result = await engine().cleanItems([artifactItem(path, folders: [".venv", "node_modules"])]) { _ in }
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertEqual(result.freedSpace, 0)
+        XCTAssertTrue(result.errors.joined().contains(".venv: contains a repository (.venv/src/pkg/.git)"), "\(result.errors)")
+        XCTAssertTrue(result.errors.joined().contains("node_modules: contains a repository"), "\(result.errors)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/.venv/src/pkg/code.py"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/.venv/src/pkg/.git/config"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/node_modules/mod/vendor/.git"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/node_modules/pkg/index.js"))
+    }
+
+    func testBuildFolderWithoutRepositoriesIsStillRemoved() async throws {
+        let path = try makeNeedsReview("no-deep-repo")
+        try write(String(repeating: "n", count: 50_000), to: "\(path)/node_modules/pkg/.gitignore")
+        try write("x\n", to: "\(path)/node_modules/pkg/.github/workflows/ci.yml")
+        try age(path)
+        let report = try await inspect(path)
+        XCTAssertEqual(report.verdict, .init(status: .needsReview, reasons: [.untrackedFiles(1)]), "names like .gitignore and .github are not repositories")
+        let scanned = await scanner().artifactReport(for: report)
+        let artifacts = try XCTUnwrap(scanned)
+        XCTAssertNil(artifacts.nestedRepository)
+        XCTAssertNil(artifacts.blocker)
+
+        let result = await engine().cleanItems([artifactItem(path, folders: ["node_modules"])]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 1, "\(result.errors)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(path)/node_modules"))
+    }
+
     // MARK: Safety review 1: the Overview never removes worktrees
 
     @MainActor
@@ -1490,6 +1871,41 @@ final class WorktreeScheduledCleanupTests: XCTestCase {
         XCTAssertEqual(state.scanState, .completed, "a scheduled run must not start cleaning worktrees")
         XCTAssertEqual(state.categoryResults[.gitWorktrees]?.items.map(\.id), [item.id])
     }
+
+    func testArtifactRowsAreNeverPreselectedBulkSelectedOrScheduled() {
+        func artifactRow(_ verdict: GitWorktreeSupport.Verdict) -> CleanableItem {
+            let report = WorktreeArtifactsReport(
+                worktreePath: "/nonexistent/r/wt/x", repositoryPath: "/nonexistent/r", branch: "x", head: nil,
+                worktreeVerdict: verdict, folders: [WorktreeArtifactFolder(relativePath: "node_modules", bytes: 8_192)]
+            )
+            var row = CleanableItem(name: "Artifacts in r · x", path: WorktreeArtifactSupport.rowPath(forWorktree: report.worktreePath),
+                                    size: report.totalBytes, category: .gitWorktrees, isSelected: false, lastModified: nil)
+            row.worktreeArtifacts = report
+            return row
+        }
+        let open = artifactRow(.init(status: .needsReview, reasons: [.untrackedFiles(1)]))
+        let busy = artifactRow(.init(status: .protected, reasons: [.trackedChanges(1), .inUse]))
+        XCTAssertFalse(open.isSelected)
+        XCTAssertFalse(open.isSelectionBlocked)
+        XCTAssertTrue(open.requiresExplicitSelection)
+        XCTAssertTrue(busy.isSelectionBlocked)
+        XCTAssertEqual(open.sizeInCategoryTotal, 0, "the worktree row already counts these bytes")
+
+        let state = AppState(performStartupTasks: false)
+        state.categoryResults[.gitWorktrees] = CategoryResult(category: .gitWorktrees, items: [open, busy], totalSize: 8_192)
+        state.scanState = .completed
+
+        state.selectAllInCategory(.gitWorktrees)
+        XCTAssertFalse(state.isItemSelected(open), "a category-wide selection skips artifact rows")
+        state.toggleItem(busy)
+        XCTAssertFalse(state.isItemSelected(busy), "a blocked row cannot be toggled on")
+        state.toggleItem(open)
+        XCTAssertTrue(state.isItemSelected(open), "a click on the row itself selects it")
+
+        state.cleanAll(scheduled: true)
+        XCTAssertEqual(state.scanState, .completed, "scheduled cleaning never touches worktree artifacts")
+        XCTAssertEqual(state.categoryResults[.gitWorktrees]?.items.count, 2)
+    }
 }
 
 final class WorktreeRemovalRiskTests: XCTestCase {
@@ -1524,6 +1940,34 @@ final class WorktreeRemovalRiskTests: XCTestCase {
         let prompt = RemovalRisk.agentPrompt(category: .gitWorktrees, found: [removable, prunable], proposed: [], worktreeSettings: on)
         XCTAssertTrue(prompt.contains("`worktree prune r`") || prompt.contains("`worktree prune /r`"), prompt)
         XCTAssertTrue(prompt.contains("then `git branch -d` for safe rows"))
+    }
+
+    func testArtifactRowsHaveTheirOwnRisksAndPromptAction() {
+        let report = WorktreeArtifactsReport(
+            worktreePath: "/r/.claude/worktrees/wip", repositoryPath: "/r", branch: "wip", head: nil,
+            worktreeVerdict: .init(status: .protected, reasons: [.trackedChanges(2)]),
+            folders: [WorktreeArtifactFolder(relativePath: "node_modules", bytes: 4_096), WorktreeArtifactFolder(relativePath: "apps/web/.next", bytes: 4_096)]
+        )
+        var artifacts = CleanableItem(name: "Artifacts in r · wip", path: WorktreeArtifactSupport.rowPath(forWorktree: report.worktreePath),
+                                      size: 8_192, category: .gitWorktrees, isSelected: false, lastModified: nil)
+        artifacts.worktreeArtifacts = report
+        var removable = CleanableItem(name: "done", path: "/r/wt/done", size: 1_024, category: .gitWorktrees, isSelected: true, lastModified: nil)
+        removable.gitWorktree = GitWorktreeReport(path: removable.path, repositoryPath: "/r", branch: "done", head: nil,
+                                                  verdict: .init(status: .safeToDelete, reasons: [.mergedAndIdle(days: 9)]), lastActivity: nil)
+        let settings = GitWorktreeSettings()
+
+        let onlyArtifacts = RemovalRisk.risks(for: .gitWorktrees, items: [artifacts], worktreeSettings: settings)
+        XCTAssertEqual(onlyArtifacts.count, 2, "no worktree-removal risks when no worktree is removed")
+        XCTAssertTrue(onlyArtifacts[0].contains("node_modules"))
+        let both = RemovalRisk.risks(for: .gitWorktrees, items: [artifacts, removable], worktreeSettings: settings)
+        XCTAssertEqual(both.count, 5)
+
+        let prompt = RemovalRisk.agentPrompt(category: .gitWorktrees, found: [artifacts, removable], proposed: [artifacts.id], worktreeSettings: settings)
+        let rows = prompt.split(separator: "\n").filter { $0.hasPrefix("| ") && !$0.hasPrefix("| #") }
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertTrue(rows[0].contains("`delete ignored folders r:.claude/worktrees/wip/{node_modules,apps/web/.next}`"), "\(rows[0])")
+        XCTAssertTrue(rows[0].contains("| ✔ |") && rows[0].contains("artifacts: wip") && rows[0].contains("PROTECTED; uncommitted changes (2)"), "\(rows[0])")
+        XCTAssertTrue(prompt.contains("the worktree stays"))
     }
 
     func testAgentPromptListsEveryFoundItemAndMarksProposedOnes() {
