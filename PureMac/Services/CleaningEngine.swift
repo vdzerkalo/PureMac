@@ -6,9 +6,51 @@ actor CleaningEngine {
     /// XcodeBuildMCPDerivedDataSupport path checks on symlinked homes.
     private let homeDirectory: URL
     private let binaryThinner = BinaryThinner()
+    /// Reports whether an AI agent app is running. Injected by tests; the
+    /// default inspects the real process list.
+    private let isAIAgentOwnerRunning: AIAgentDataSupport.OwnerRunningCheck
+    /// Moves a URL to the Trash and returns where it went. Used by every Move
+    /// to Trash route (XcodeBuildMCP DerivedData, AI agent data). Injected by
+    /// tests so they never touch the real Trash.
+    typealias TrashOperation = (URL) throws -> URL?
+    private let trashOperation: TrashOperation
 
-    init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
-        self.homeDirectory = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+    static let systemTrash: TrashOperation = { url in
+        var resulting: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
+        return resulting as URL?
+    }
+
+    /// Read at clean time so the re-check before a worktree removal uses the
+    /// settings in force now, not those of the scan.
+    private let worktreeSettings: @Sendable () -> GitWorktreeSettings
+    /// Tests point this at a fake CLI script so no real docker ever runs;
+    /// nil in the app, which searches DockerSupport.candidateBinaryPaths.
+    private let dockerBinaryPath: String?
+    /// Search directories, process list and timeouts for the developer tool
+    /// caches (uv, go, Gradle). Tests inject fakes; the app uses `.live`.
+    private let devTools: DevToolCacheEnvironment
+    /// Ollama API and CLI, `hf` and the model folders. Tests inject fakes.
+    private let localAIModels: LocalAIModels
+
+    init(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        dockerBinaryPath: String? = nil,
+        worktreeSettings: @escaping @Sendable () -> GitWorktreeSettings = { GitWorktreeSettings.current() },
+        devToolEnvironment: DevToolCacheEnvironment = .live,
+        localAIModels: LocalAIModels? = nil,
+        isAIAgentOwnerRunning: AIAgentDataSupport.OwnerRunningCheck? = nil,
+        trashOperation: @escaping TrashOperation = CleaningEngine.systemTrash
+    ) {
+        let canonicalHome = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        self.homeDirectory = canonicalHome
+        self.dockerBinaryPath = dockerBinaryPath
+        self.worktreeSettings = worktreeSettings
+        self.devTools = devToolEnvironment
+        self.localAIModels = localAIModels ?? LocalAIModels(context: .live(homeDirectory: canonicalHome))
+        self.isAIAgentOwnerRunning = isAIAgentOwnerRunning
+            ?? AIAgentDataSupport.liveOwnerRunningCheck(homeDirectory: homeDirectory)
+        self.trashOperation = trashOperation
     }
 
     struct CleaningResult {
@@ -30,12 +72,23 @@ actor CleaningEngine {
         // "Couldn't clean everything" alert.
         var protectedPaths: Set<String> = []
         var skippedProtected: Int { protectedPaths.count }
+        /// Things worth telling the user about a clean that still counted as
+        /// done, e.g. a merged branch git refused to delete.
+        var notes: [String] = []
+        // Paths deliberately left alone because the owning tool is busy (uv
+        // cache locked, Gradle running). The reason is in `errors`; unlike a
+        // survivor, Full Disk Access cannot fix these, so they must not raise
+        // the Grant Access prompt.
+        var skippedPaths: Set<String> = []
     }
 
     // MARK: - Public API
 
-    func cleanItems(_ items: [CleanableItem], progressHandler: @Sendable (Double) -> Void) async -> CleaningResult {
+    func cleanItems(_ selectedItems: [CleanableItem], progressHandler: @Sendable (Double) -> Void) async -> CleaningResult {
         var result = CleaningResult()
+        // Docker prune rows run in DockerSupport.PruneAction.cleanOrder, not
+        // in the order they were selected.
+        let items = DockerSupport.orderedForCleaning(selectedItems)
         let total = items.count
         let exclusions = CleanupExclusions.paths()
 
@@ -49,6 +102,43 @@ actor CleaningEngine {
 
             if item.category == .aiApps, !isSupportedAIAppPath(item.path) {
                 result.errors.append("Unsupported AI app cleanup path: \(item.path)")
+                continue
+            }
+
+            if item.category == .localAIModels {
+                // Models are removed only through LocalAIModels: the Ollama API
+                // (or `ollama rm` when the API is unreachable), and `hf cache rm` or one validated folder delete
+                // for Hugging Face. This never reaches the generic allow-list
+                // below, and never the admin pass.
+                if !item.isActionItem, isDockerDiskState(item.path) {
+                    result.errors.append(Self.dockerDiskStateRefusal(item.path))
+                    continue
+                }
+                let outcome = await localAIModels.remove(item)
+                result.freedSpace += outcome.freed
+                if outcome.cleaned {
+                    result.itemsCleaned += 1
+                    result.cleanedPaths.insert(item.path)
+                }
+                if let error = outcome.error {
+                    result.errors.append(error)
+                }
+                continue
+            }
+
+            if item.category == .aiAgentData {
+                // Dedicated route: exact allowlisted paths only, Move to Trash
+                // only, never while the owning app runs. The generic allowlist
+                // (which contains all of Application Support) is not consulted.
+                let outcome = trashAIAgentDataItem(item)
+                if outcome.alreadyGone { result.cleanedPaths.insert(item.path) }
+                if outcome.cleaned {
+                    result.freedSpace += item.size
+                    result.itemsCleaned += 1
+                    result.cleanedPaths.insert(item.path)
+                    if let trashed = outcome.trashedPath { result.trashedPaths.insert(trashed) }
+                }
+                if let error = outcome.error { result.errors.append(error) }
                 continue
             }
 
@@ -98,14 +188,59 @@ actor CleaningEngine {
                 continue
             }
 
-            if item.category == .dockerCache && item.path.isEmpty {
-                // The virtual "Docker prune" entry (empty path, like
-                // purgeableSpace) reclaims space inside the Docker/OrbStack VM
-                // via `docker system prune -f` — there is no file to unlink.
-                let pruneOutcome = await pruneDockerSystem()
+            if item.category == .devToolCaches {
+                // Developer tool caches never take the generic unlink path:
+                // each root is validated by exact match, and tools that manage
+                // their own cache (uv, go) are cleaned through their CLI.
+                let outcome = await cleanDevToolCache(item)
+                result.freedSpace += outcome.freed
+                if outcome.removed { result.itemsCleaned += 1 }
+                if outcome.handled { result.cleanedPaths.insert(item.path) }
+                if outcome.skipped { result.skippedPaths.insert(item.path) }
+                if let error = outcome.error { result.errors.append(error) }
+                continue
+            }
+
+            if item.category == .gitWorktrees {
+                // Worktrees are removed through git, never unlinked or moved
+                // to the Trash: that would leave git's metadata pointing at a
+                // missing folder and keep the bytes on the same volume.
+                // Artifact rows (build folders inside a worktree that stays)
+                // have their own validated route.
+                let outcome = item.worktreeArtifacts != nil
+                    ? await removeWorktreeArtifacts(item)
+                    : await removeGitWorktree(item)
+                result.freedSpace += outcome.freed
+                if outcome.cleaned {
+                    result.itemsCleaned += 1
+                    result.cleanedPaths.insert(item.path)
+                }
+                if let error = outcome.error {
+                    result.errors.append(error)
+                }
+                if let note = outcome.note {
+                    result.notes.append(note)
+                }
+                continue
+            }
+
+            if let action = item.dockerPruneAction {
+                // Virtual Docker Cache rows reclaim space inside the
+                // Docker/OrbStack VM through their own prune command — there
+                // is no file to unlink.
+                // Volumes are removed by the names recorded at scan time,
+                // never pruned (see removeDockerVolumes).
+                let pruneOutcome: (freed: Int64, error: String?)
+                if action == .unusedVolumes {
+                    pruneOutcome = await removeDockerVolumes(DockerSupport.volumeEntries(forPath: item.path))
+                } else {
+                    pruneOutcome = await pruneDocker(action)
+                }
                 result.freedSpace += pruneOutcome.freed
-                if pruneOutcome.freed > 0 { result.itemsCleaned += 1 }
-                result.cleanedPaths.insert(item.path)
+                if pruneOutcome.error == nil {
+                    result.itemsCleaned += 1
+                    result.cleanedPaths.insert(item.path)
+                }
                 if let error = pruneOutcome.error {
                     result.errors.append(error)
                 }
@@ -205,9 +340,7 @@ actor CleaningEngine {
                     }
                     // PureMac's safety contract is Trash-only for recoverable
                     // cleanup. XcodeBuildMCP DerivedData must not be unlinked.
-                    var resulting: NSURL?
-                    try fileManager.trashItem(at: resolvedURL, resultingItemURL: &resulting)
-                    if let trashedPath = resulting?.path {
+                    if let trashedPath = try trashOperation(resolvedURL)?.path {
                         result.trashedPaths.insert(trashedPath)
                     }
                 } else {
@@ -285,8 +418,16 @@ actor CleaningEngine {
         // refuses to escalate.
         let exclusions = CleanupExclusions.paths()
         let validated: [(item: CleanableItem, resolved: String)] = items.compactMap { item in
-            guard item.category != .aiApps else {
+            guard item.category != .localAIModels else {
+                result.errors.append("Administrator cleanup is unavailable for local AI models: \(item.name)")
+                return nil
+            }
+            guard item.category != .aiApps, item.category != .aiAgentData else {
                 result.errors.append("Administrator cleanup is unavailable for AI app data: \(item.name)")
+                return nil
+            }
+            guard item.category != .devToolCaches else {
+                result.errors.append("Administrator cleanup is unavailable for developer tool caches: \(item.name)")
                 return nil
             }
             guard !CleanupExclusions.excludes(item.path, paths: exclusions) else { return nil }
@@ -413,59 +554,582 @@ actor CleaningEngine {
         return result
     }
 
+    // MARK: - AI agent data
+
+    /// Moves one review-only AI agent data item to the Trash. Validates right
+    /// before the move (shape, symlinks, real path, rule requirements, owning
+    /// app not running), using the process list as it is now, not as it was at
+    /// scan time. The remaining window between that check and the move is a
+    /// same-user race; see docs/AI-AGENT-DATA.md.
+    private func trashAIAgentDataItem(
+        _ item: CleanableItem
+    ) -> (cleaned: Bool, alreadyGone: Bool, trashedPath: String?, error: String?) {
+        func refuse(
+            _ refusal: AIAgentDataSupport.Refusal
+        ) -> (cleaned: Bool, alreadyGone: Bool, trashedPath: String?, error: String?) {
+            // Gone since the scan: nothing to remove, nothing to report.
+            if refusal == .missing { return (false, true, nil, nil) }
+            let msg: String
+            if case .ownerRunning(let owner) = refusal {
+                msg = "Skipped AI agent data: \(owner.displayName) is running: \(item.path)"
+            } else {
+                msg = "Skipped AI agent data: \(refusal): \(item.path)"
+            }
+            Logger.shared.log(msg, level: .warning)
+            return (false, false, nil, msg)
+        }
+
+        if isDockerDiskState(item.path) {
+            let msg = Self.dockerDiskStateRefusal(item.path)
+            return (false, false, nil, msg)
+        }
+        let validation = AIAgentDataSupport.validateForRemoval(
+            path: item.path,
+            homeDirectory: homeDirectory,
+            isOwnerRunning: isAIAgentOwnerRunning,
+            fileManager: fileManager
+        )
+        let validated: AIAgentDataSupport.Validated
+        switch validation {
+        case .failure(let refusal): return refuse(refusal)
+        case .success(let value): validated = value
+        }
+
+        if isDockerDiskState(validated.url.path) {
+            return (false, false, nil, Self.dockerDiskStateRefusal(validated.url.path))
+        }
+        do {
+            let resulting = try trashOperation(validated.url)
+            return (true, false, resulting?.path, nil)
+        } catch {
+            let detail = "\(item.name) at \(item.path): \(error.localizedDescription)"
+            Logger.shared.log("Clean failed: \(detail)", level: .error)
+            return (false, false, nil, detail)
+        }
+    }
+
     // MARK: - Docker
 
-    /// Runs `docker system prune -f` (no -a: tagged images and running
-    /// containers survive) and reports the bytes Docker says it reclaimed.
-    /// This is the clean action behind the virtual "Docker prune" item —
-    /// with a VM-based runtime (Docker Desktop, OrbStack) the junk lives
-    /// inside the VM disk, unreachable by any file unlink from the host.
-    /// Returns a friendly error when no CLI is installed or the daemon is
-    /// not running — common with OrbStack, which only runs on demand.
-    func pruneDockerSystem() async -> (freed: Int64, error: String?) {
-        let dockerBinPaths = ["/usr/local/bin/docker", "/opt/homebrew/bin/docker"]
-        guard let dockerBin = dockerBinPaths.first(where: { fileManager.isExecutableFile(atPath: $0) }) else {
-            return (0, "Docker CLI not found — install Docker Desktop or OrbStack")
-        }
+    /// Result of one docker invocation: it ran (any exit status) or it could
+    /// not, with the message the review sheet shows.
+    private enum DockerRun {
+        case finished(status: Int32, stdout: String, stderr: String)
+        case failed(String)
+    }
 
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: dockerBin)
-        task.arguments = ["system", "prune", "-f"]
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        task.standardOutput = stdoutPipe
-        task.standardError = stderrPipe
+    /// Runs the docker CLI with a timeout. BrewProcessRunner drains both
+    /// pipes while waiting and kills the process on timeout, so a wedged
+    /// daemon can't hang the clean forever. `keepOutputTail` is for prunes:
+    /// they list every deleted object, can print far more than the default
+    /// 4 MB cap, and put the "Total reclaimed space" summary last.
+    private func runDocker(
+        _ arguments: [String],
+        label: String,
+        timeout: TimeInterval,
+        keepOutputTail: Bool = false
+    ) async -> DockerRun {
+        guard let dockerBin = dockerBinaryPath ?? DockerSupport.locateBinary(homeDirectory: homeDirectory.path) else {
+            return .failed("Docker CLI not found — install Docker Desktop or OrbStack")
+        }
         do {
-            try task.run()
+            let result = try await BrewProcessRunner.run(
+                executableURL: URL(fileURLWithPath: dockerBin),
+                arguments: arguments,
+                timeout: timeout,
+                keepOutputTail: keepOutputTail
+            )
+            return .finished(
+                status: result.status,
+                stdout: String(data: result.stdout, encoding: .utf8) ?? "",
+                stderr: String(data: result.stderr, encoding: .utf8) ?? ""
+            )
+        } catch is CancellationError {
+            // The process is terminated, but the daemon may have finished part
+            // of the work: not a success, so the row is not marked cleaned.
+            Logger.shared.log("\(label) was cancelled", level: .warning)
+            return .failed("\(label) was cancelled before it finished — some objects may already be removed; scan again")
+        } catch ApplicationUpdaterError.timedOut {
+            Logger.shared.log("\(label) timed out after \(Int(timeout))s", level: .error)
+            return .failed("\(label) did not finish in time — check Docker Desktop or OrbStack, then clean again")
+        } catch ApplicationUpdaterError.outputLimitExceeded {
+            Logger.shared.log("\(label) printed more output than PureMac can read", level: .error)
+            return .failed("\(label) printed more output than PureMac can read — run it in Terminal to see the result")
         } catch {
-            Logger.shared.log("docker system prune failed to launch: \(error.localizedDescription)", level: .error)
-            return (0, "Couldn't run docker system prune: \(error.localizedDescription)")
+            Logger.shared.log("\(label) failed to launch: \(error.localizedDescription)", level: .error)
+            return .failed("Couldn't run \(label): \(error.localizedDescription)")
         }
-        // Drain both pipes BEFORE waiting: prune lists every deleted object
-        // and can overflow the 64 KB pipe buffer, deadlocking waitUntilExit.
-        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        task.waitUntilExit()
+    }
 
-        guard task.terminationStatus == 0 else {
-            let stderrText = String(data: errData, encoding: .utf8) ?? ""
-            if stderrText.contains("Cannot connect") || stderrText.contains("dial unix")
-                || stderrText.contains("daemon") {
-                return (0, "Docker isn't running — start Docker Desktop or OrbStack, then clean again")
+    /// Maps a non-zero exit to a row error. The stderr is logged first, so
+    /// the friendly "isn't running" text never hides what Docker said.
+    private func dockerFailure(status: Int32, stderr: String, label: String) -> String {
+        Logger.shared.log("\(label) exited \(status): \(stderr)", level: .error)
+        if DockerSupport.isDaemonUnavailable(stderr: stderr) {
+            return "Docker isn't running — start Docker Desktop or OrbStack, then clean again"
+        }
+        return "\(label) failed (exit \(status))"
+    }
+
+    /// Runs the prune behind one Docker Cache row (see
+    /// DockerSupport.PruneAction) and reports the bytes Docker says it
+    /// reclaimed. Each command prints only what it removed itself, so the
+    /// freed bytes of several rows add up without overlap. Running
+    /// containers and the images they use are never removed by any of these
+    /// commands. With a VM-based runtime (Docker Desktop, OrbStack) the junk
+    /// lives inside the VM disk, unreachable by any file unlink from the
+    /// host. Returns a friendly error when no CLI is installed or the daemon
+    /// is not running — common with OrbStack, which only runs on demand.
+    /// Volumes are not pruned: see removeDockerVolumes.
+    func pruneDocker(_ action: DockerSupport.PruneAction) async -> (freed: Int64, error: String?) {
+        guard action != .unusedVolumes else {
+            return (0, "Volumes are removed by name only — scan again")
+        }
+        let label = action.commandLine
+        switch await runDocker(action.arguments, label: label, timeout: DockerSupport.pruneTimeout, keepOutputTail: true) {
+        case .failed(let message):
+            return (0, message)
+        case .finished(let status, let stdout, let stderr):
+            guard status == 0 else {
+                return (0, dockerFailure(status: status, stderr: stderr, label: label))
             }
-            Logger.shared.log("docker system prune exited \(task.terminationStatus): \(stderrText)", level: .error)
-            return (0, "docker system prune failed (exit \(task.terminationStatus))")
-        }
-
-        // Final line reads "Total reclaimed space: 1.234GB" ("0B" when idle).
-        let output = String(data: outData, encoding: .utf8) ?? ""
-        if let line = output.split(separator: "\n").last(where: { $0.contains("Total reclaimed space:") }),
-           let raw = line.split(separator: ":").last?.trimmingCharacters(in: .whitespaces),
-           let bytes = parseDockerBytes(raw) {
-            Logger.shared.log("docker system prune reclaimed \(bytes) bytes", level: .info)
+            let bytes = DockerSupport.parseReclaimedSpace(stdout) ?? 0
+            Logger.shared.log("\(label) reclaimed \(bytes) bytes", level: .info)
             return (bytes, nil)
         }
-        return (0, nil)
+    }
+
+    /// Removes the volumes a volumes row recorded at scan time, and nothing
+    /// else. `docker volume prune -a` would also erase volumes freed by a
+    /// container prune in the same run; this removes only volumes that were
+    /// unused when the user saw the list.
+    ///
+    /// 1. Re-check, right before acting, which recorded volumes are still
+    ///    unused (`volume ls --filter dangling=true`). A volume that vanished
+    ///    or became in use is skipped silently.
+    /// 2. `docker volume rm <names>` WITHOUT `-f`: the daemon itself refuses
+    ///    a volume that is in use, so a race after step 1 cannot erase one.
+    ///    Per-volume failures are reported; the rest are still removed.
+    ///
+    /// Freed bytes are the scan-time sizes of the volumes Docker printed as
+    /// removed (`volume rm` prints names, not sizes).
+    func removeDockerVolumes(_ recorded: [DockerSupport.VolumeEntry]) async -> (freed: Int64, error: String?) {
+        guard !recorded.isEmpty else {
+            return (0, "No unused volumes were recorded for this row — scan again")
+        }
+        let listLabel = "docker volume ls"
+        let listing = await runDocker(DockerSupport.unusedVolumeNamesArguments, label: listLabel, timeout: DockerSupport.danglingLookupTimeout)
+        let unusedNow: Set<String>
+        switch listing {
+        case .failed(let message):
+            return (0, message)
+        case .finished(let status, let stdout, let stderr):
+            guard status == 0 else {
+                return (0, dockerFailure(status: status, stderr: stderr, label: listLabel))
+            }
+            unusedNow = Set(DockerSupport.parseVolumeNames(stdout))
+        }
+        let targets = recorded.filter { unusedNow.contains($0.name) }
+        if targets.count < recorded.count {
+            Logger.shared.log("docker volume rm: \(recorded.count - targets.count) recorded volume(s) no longer exist or are in use now, skipped", level: .info)
+        }
+        guard !targets.isEmpty else { return (0, nil) }
+
+        let label = "docker volume rm"
+        let arguments = DockerSupport.PruneAction.unusedVolumes.arguments + targets.map(\.name)
+        switch await runDocker(arguments, label: label, timeout: DockerSupport.pruneTimeout, keepOutputTail: true) {
+        case .failed(let message):
+            return (0, message)
+        case .finished(let status, let stdout, let stderr):
+            let outcome = DockerSupport.parseVolumeRemoval(stdout: stdout, stderr: stderr, requested: targets)
+            if status != 0, outcome.removed.isEmpty, outcome.problems.isEmpty, outcome.vanished == 0 {
+                return (0, dockerFailure(status: status, stderr: stderr, label: label))
+            }
+            if status != 0, outcome.removed.isEmpty, DockerSupport.isDaemonUnavailable(stderr: stderr) {
+                return (0, dockerFailure(status: status, stderr: stderr, label: label))
+            }
+            let freed = outcome.removed.reduce(Int64(0)) { $0 + $1.bytes }
+            if outcome.vanished > 0 {
+                Logger.shared.log("\(label): \(outcome.vanished) volume(s) vanished before removal, skipped", level: .info)
+            }
+            Logger.shared.log("\(label) removed \(outcome.removed.count) of \(targets.count) volume(s), \(freed) bytes (scan-time sizes)", level: .info)
+            for problem in outcome.problems { Logger.shared.log(problem, level: .warning) }
+            return (freed, outcome.problems.isEmpty ? nil : outcome.problems.joined(separator: "; "))
+        }
+    }
+
+    // MARK: - Git Worktrees
+
+    /// Re-checks a worktree right before removing it (status, lock, in-use
+    /// and unpushed work can all change after the scan), then runs
+    /// `git worktree remove` without --force. Protected or orphan verdicts,
+    /// and anything git itself refuses, leave the worktree untouched.
+    ///
+    /// A row scanned as a prunable orphan (folder already gone) gets
+    /// `git worktree prune` instead, and only while it is still one; a row
+    /// scanned as anything else is never pruned. With the "delete merged
+    /// branch" setting on, a worktree whose fresh verdict is Safe to delete
+    /// also loses its branch via `git branch -d`; a refusal is returned as
+    /// a note and does not undo the removal.
+    func removeGitWorktree(_ item: CleanableItem) async -> (freed: Int64, cleaned: Bool, error: String?, note: String?) {
+        guard let report = item.gitWorktree, let repository = report.repositoryPath else {
+            return (0, false, "Not a git worktree PureMac can remove: \(item.name)", nil)
+        }
+        if isDockerDiskState(item.path) {
+            return (0, false, Self.dockerDiskStateRefusal(item.path), nil)
+        }
+        guard let gitPath = GitWorktreeScanner.locateGit() else {
+            return (0, false, "git not found — install Homebrew git or the Xcode command-line tools", nil)
+        }
+        let settings = worktreeSettings()
+        var scanner = GitWorktreeScanner(homeDirectory: homeDirectory.path, gitPath: gitPath)
+        scanner.inactiveDays = settings.inactiveDays
+        scanner.baseBranchOverride = settings.baseBranch
+        guard let fresh = await scanner.reinspect(path: item.path, repository: repository) else {
+            return (0, false, "\(item.name) is no longer a worktree of \(repository)", nil)
+        }
+        if report.verdict.isPrunableOrphan || fresh.verdict.isPrunableOrphan {
+            guard report.verdict.isPrunableOrphan, fresh.verdict.isPrunableOrphan else {
+                Logger.shared.log("Skipped worktree \(item.path): its state changed since the scan", level: .warning)
+                return (0, false, "\(item.name): the folder appeared or disappeared since the scan; rescan first", nil)
+            }
+            if let error = await scanner.prune(path: item.path, repository: repository) {
+                Logger.shared.log("git worktree prune for \(item.path) refused: \(error)", level: .warning)
+                return (0, false, "\(item.name): \(error)", nil)
+            }
+            Logger.shared.log("Pruned missing worktree \(item.path) in \(repository)", level: .info)
+            return (0, true, nil, nil)
+        }
+        // Worse than what the user was shown (a new reason, or a more severe
+        // status) means the worktree changed since the scan: the choice was
+        // made on stale information, so nothing is removed.
+        if fresh.verdict.isWorse(than: report.verdict) {
+            let added = fresh.verdict.reasonsAdded(since: report.verdict)
+            let why = (added.isEmpty ? fresh.verdict.reasons : added).map(\.localizedDescription).joined(separator: ", ")
+            Logger.shared.log("Skipped worktree \(item.path): worse than at the scan (\(fresh.verdict.status.rawValue): \(why))", level: .warning)
+            return (0, false, "\(item.name): changed since the scan (\(fresh.verdict.status.label): \(why)); rescan first", nil)
+        }
+        guard !fresh.verdict.status.blocksSelection else {
+            let why = fresh.verdict.reasons.map(\.localizedDescription).joined(separator: ", ")
+            Logger.shared.log("Skipped worktree \(item.path): \(fresh.verdict.status.rawValue) (\(why))", level: .warning)
+            return (0, false, "\(fresh.verdict.status.label): \(why) — \(item.name)", nil)
+        }
+        // Same rule as the generic route (issue #142): deleting inside iCloud
+        // Drive or a file provider deletes the synced copy on every device.
+        if ProviderPaths.isProviderOwned(item.path, homeDirectory: homeDirectory) {
+            Logger.shared.log("Refusing to remove worktree in cloud provider storage: \(item.path)", level: .warning)
+            return (0, false, "\(item.name) is in iCloud Drive or another cloud-synced folder; PureMac does not remove it", nil)
+        }
+        if let error = await scanner.remove(path: item.path, repository: repository) {
+            Logger.shared.log("git worktree remove \(item.path) refused: \(error)", level: .warning)
+            return (0, false, "\(item.name): \(error)", nil)
+        }
+        guard !fileManager.fileExists(atPath: item.path) else {
+            return (0, false, "\(item.name): git reported success but the folder is still there", nil)
+        }
+        Logger.shared.log("Removed worktree \(item.path) (~\(item.size) bytes)", level: .info)
+        var note: String?
+        if settings.deleteMergedBranch, fresh.verdict.status == .safeToDelete, fresh.branch != nil {
+            if let kept = await scanner.deleteMergedBranch(of: fresh, repository: repository) {
+                Logger.shared.log("\(item.name): \(kept)", level: .warning)
+                note = "\(item.name): \(kept)"
+            } else {
+                Logger.shared.log("Deleted merged branch \(fresh.branch ?? "") in \(repository)", level: .info)
+            }
+        }
+        return (item.size, true, nil, note)
+    }
+
+    /// Deletes the ignored build folders (node_modules, .next, …) of one
+    /// worktree and nothing else: the worktree, its tracked files and its
+    /// branch stay. Dedicated route, outside the generic allow-list: the
+    /// worktree is re-inspected first (still listed by git, not in use, not
+    /// locked, not an active agent worktree), then every folder is checked
+    /// again (`checkArtifactFolder`: real directory, no symlink, inside the
+    /// worktree, same volume, ignored by git, no tracked file) and checked
+    /// once more on the filesystem right before it is removed. A folder that
+    /// fails any check is left alone and reported; the row counts as cleaned
+    /// only when every folder is gone.
+    func removeWorktreeArtifacts(_ item: CleanableItem) async -> (freed: Int64, cleaned: Bool, error: String?, note: String?) {
+        guard let report = item.worktreeArtifacts else {
+            return (0, false, "Not a worktree artifact row: \(item.name)", nil)
+        }
+        let exclusions = CleanupExclusions.paths()
+        guard !CleanupExclusions.excludes(report.worktreePath, paths: exclusions) else {
+            return (0, false, "Excluded from cleanup: \(item.name)", nil)
+        }
+        if isDockerDiskState(report.worktreePath) {
+            return (0, false, Self.dockerDiskStateRefusal(report.worktreePath), nil)
+        }
+        // The worktree was removed after the scan (for example in the same
+        // batch): its build folders went with it.
+        guard GitWorktreeScanner.pathExists(report.worktreePath) else { return (0, true, nil, nil) }
+        guard let gitPath = GitWorktreeScanner.locateGit() else {
+            return (0, false, "git not found — install Homebrew git or the Xcode command-line tools", nil)
+        }
+        let settings = worktreeSettings()
+        var scanner = GitWorktreeScanner(homeDirectory: homeDirectory.path, gitPath: gitPath)
+        scanner.inactiveDays = settings.inactiveDays
+        scanner.baseBranchOverride = settings.baseBranch
+        guard let fresh = await scanner.reinspect(path: report.worktreePath, repository: report.repositoryPath) else {
+            return (0, false, "\(item.name): \(report.worktreePath) is no longer a worktree of \(report.repositoryPath)", nil)
+        }
+        if let blocker = WorktreeArtifactSupport.blocker(for: fresh.verdict) {
+            Logger.shared.log("Skipped artifacts in \(report.worktreePath): \(blocker.localizedDescription)", level: .warning)
+            return (0, false, "\(item.name): \(blocker.localizedDescription)", nil)
+        }
+
+        var freed: Int64 = 0
+        var problems: [String] = []
+        for folder in report.folders {
+            let relative = folder.relativePath
+            let absolute = report.worktreePath + "/" + relative
+            if CleanupExclusions.excludes(absolute, paths: exclusions) {
+                problems.append("\(relative): excluded from cleanup")
+                continue
+            }
+            let check = await scanner.checkArtifactFolder(worktree: report.worktreePath, relative: relative)
+            switch check {
+            case .missing:
+                continue
+            case .refused(let reason):
+                Logger.shared.log("Left artifact folder \(absolute): \(reason)", level: .warning)
+                problems.append("\(relative): \(reason)")
+                continue
+            case .nestedRepository(_, let at):
+                Logger.shared.log("Left artifact folder \(absolute): contains a repository at \(at)", level: .warning)
+                problems.append("\(relative): contains a repository (\(at))")
+                continue
+            case .ok:
+                break
+            }
+            // Narrow the window between the last check and the delete.
+            guard case .ok(let resolved) = WorktreeArtifactSupport.check(worktree: report.worktreePath, relative: relative) else {
+                problems.append("\(relative): changed while being checked")
+                continue
+            }
+            if isDockerDiskState(resolved) {
+                problems.append("\(relative): \(Self.dockerDiskStateRefusal(resolved))")
+                continue
+            }
+            // Same rule as the generic route (issue #142): never delete inside
+            // iCloud Drive or a file provider.
+            if ProviderPaths.isProviderOwned(resolved, homeDirectory: homeDirectory) {
+                Logger.shared.log("Left artifact folder \(resolved): cloud provider storage", level: .warning)
+                problems.append("\(relative): in iCloud Drive or another cloud-synced folder")
+                continue
+            }
+            let bytes = GitWorktreeScanner.allocatedBytes(under: URL(fileURLWithPath: resolved))
+            do {
+                try fileManager.removeItem(atPath: resolved)
+            } catch {
+                Logger.shared.log("Could not delete artifact folder \(resolved): \(error.localizedDescription)", level: .warning)
+                problems.append("\(relative): \(error.localizedDescription)")
+                continue
+            }
+            guard !GitWorktreeScanner.pathExists(resolved) else {
+                problems.append("\(relative): still there after deleting")
+                continue
+            }
+            freed += bytes
+            Logger.shared.log("Deleted artifact folder \(resolved) (~\(bytes) bytes)", level: .info)
+        }
+        guard problems.isEmpty else {
+            return (freed, false, "\(item.name): " + problems.joined(separator: "; "), nil)
+        }
+        return (freed, true, nil, nil)
+    }
+
+    // MARK: - Developer Tool Caches
+
+    private struct DevToolOutcome {
+        /// Bytes removed (the scan-time size) when `removed`.
+        var freed: Int64 = 0
+        /// The cache was emptied by this call.
+        var removed = false
+        /// Nothing is left to do for this row (removed, or already gone).
+        var handled = false
+        /// Left alone on purpose because the tool is busy; not a failure.
+        var skipped = false
+        var error: String?
+    }
+
+    /// Cleans one `.devToolCaches` row. The path must equal a root in
+    /// `DevToolCaches.roots`; symlinked roots are refused; tools that manage
+    /// their cache (uv, go) are cleaned through their own CLI; nothing here
+    /// escalates to administrator rights.
+    private func cleanDevToolCache(_ item: CleanableItem) async -> DevToolOutcome {
+        let home = homeDirectory.path
+        guard let root = DevToolCaches.root(forPath: item.path, home: home) else {
+            let msg = "Unsupported developer tool cache path: \(item.path)"
+            Logger.shared.log(msg, level: .warning)
+            return DevToolOutcome(error: msg)
+        }
+        guard !DevToolCaches.hasSymlinkBelowHome(item.path, home: home),
+              URL(fileURLWithPath: item.path).resolvingSymlinksInPath().path == item.path,
+              isSafeToDelete(resolvedPath: item.path) else {
+            let msg = "Skipped symlink or unsafe path: \(item.path)"
+            Logger.shared.log(msg, level: .warning)
+            return DevToolOutcome(error: msg)
+        }
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: item.path, isDirectory: &isDirectory) else {
+            return DevToolOutcome(handled: true)
+        }
+        guard isDirectory.boolValue else {
+            let msg = "Skipped \(item.name): \(item.path) is not a directory"
+            Logger.shared.log(msg, level: .warning)
+            return DevToolOutcome(error: msg)
+        }
+
+        switch root.removal {
+        case .unlink:
+            return unlinkDevToolCache(item)
+        case .unlinkUnlessGradleRunning:
+            if devTools.isGradleRunning() {
+                let msg = "Skipped \(item.name): a Gradle daemon or build is running. Run `gradle --stop`, then clean again."
+                Logger.shared.log(msg, level: .info)
+                return DevToolOutcome(skipped: true, error: msg)
+            }
+            return unlinkDevToolCache(item)
+        case .uvCacheClean:
+            guard let uv = devTools.locate("uv", home: home, fileManager: fileManager) else {
+                return unlinkDevToolCache(item)
+            }
+            return await runUVCacheClean(uv: uv, item: item)
+        case .goCleanCache:
+            guard let go = devTools.locate("go", home: home, fileManager: fileManager) else {
+                return unlinkDevToolCache(item)
+            }
+            return await runGoClean(go: go, flag: "-cache", envName: "GOCACHE", item: item)
+        case .goCleanModcache:
+            guard let go = devTools.locate("go", home: home, fileManager: fileManager) else {
+                // Module files are read-only; a plain removal would fail midway.
+                let msg = "Skipped \(item.name): `go` was not found, so the module cache was left untouched"
+                Logger.shared.log(msg, level: .info)
+                return DevToolOutcome(skipped: true, error: msg)
+            }
+            return await runGoClean(go: go, flag: "-modcache", envName: "GOMODCACHE", item: item)
+        }
+    }
+
+    private func unlinkDevToolCache(_ item: CleanableItem) -> DevToolOutcome {
+        // Narrow the TOCTOU window: the root must still be a real directory
+        // right before the unlink. A same-user process can still swap a link
+        // in between this check and removeItem (see docs/DEV-TOOL-CACHES.md).
+        devTools.beforeUnlinkRecheck(item.path)
+        guard isUnchangedDevToolRoot(item.path) else {
+            let msg = "Aborting delete: path resolution changed between check and unlink for \(item.path)"
+            Logger.shared.log(msg, level: .warning)
+            return DevToolOutcome(error: msg)
+        }
+        do {
+            try fileManager.removeItem(atPath: item.path)
+            return DevToolOutcome(freed: item.size, removed: true, handled: true)
+        } catch {
+            let msg = "\(item.name) at \(item.path): \(error.localizedDescription)"
+            Logger.shared.log("Clean failed: \(msg)", level: .error)
+            return DevToolOutcome(error: msg)
+        }
+    }
+
+    /// True while `path` is still a real directory chain below the home
+    /// directory: no symlink on the way and the resolved path equals the path.
+    private func isUnchangedDevToolRoot(_ path: String) -> Bool {
+        !DevToolCaches.hasSymlinkBelowHome(path, home: homeDirectory.path)
+            && URL(fileURLWithPath: path).resolvingSymlinksInPath().path == path
+    }
+
+    /// `uv cache clean --cache-dir <root>`. Never `--force`. uv waits for a
+    /// lock another uv process holds instead of failing, so only a run that
+    /// outlives the timeout counts as busy. Any non-zero exit is a real error
+    /// and its stderr is logged and shown.
+    private func runUVCacheClean(uv: String, item: CleanableItem) async -> DevToolOutcome {
+        let busy = "Skipped \(item.name): uv did not finish in time; the cache may be locked by another uv process. Close it, then clean again."
+        guard isUnchangedDevToolRoot(item.path) else {
+            let msg = "Aborting uv cache clean: path resolution changed for \(item.path)"
+            Logger.shared.log(msg, level: .warning)
+            return DevToolOutcome(error: msg)
+        }
+        do {
+            let output = try await BrewProcessRunner.run(
+                executableURL: URL(fileURLWithPath: uv),
+                arguments: ["cache", "clean", "--cache-dir", item.path],
+                timeout: devTools.commandTimeout
+            )
+            if output.status == 0 {
+                Logger.shared.log("uv cache clean removed \(item.path)", level: .info)
+                return DevToolOutcome(freed: item.size, removed: true, handled: true)
+            }
+            let stderr = String(decoding: output.stderr, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            Logger.shared.log("uv cache clean exited \(output.status): \(stderr)", level: .error)
+            let detail = stderr.isEmpty ? "" : ": \(String(stderr.prefix(300)))"
+            return DevToolOutcome(error: "Couldn't clean \(item.name): uv cache clean failed (exit \(output.status))\(detail)")
+        } catch ApplicationUpdaterError.timedOut {
+            Logger.shared.log("uv cache clean timed out; treating the cache as busy (\(item.path))", level: .info)
+            return DevToolOutcome(skipped: true, error: busy)
+        } catch {
+            Logger.shared.log("uv cache clean failed to run: \(error.localizedDescription)", level: .error)
+            return DevToolOutcome(error: "Couldn't run uv: \(error.localizedDescription)")
+        }
+    }
+
+    /// `go clean -cache` / `go clean -modcache`. `go` cleans whatever
+    /// GOCACHE / GOMODCACHE currently point at, which can differ from the row
+    /// the user reviewed (an exported variable, `go env -w`). The variable is
+    /// read first and the clean runs only when it names exactly this row.
+    private func runGoClean(go: String, flag: String, envName: String, item: CleanableItem) async -> DevToolOutcome {
+        var environment = ProcessInfo.processInfo.environment
+        environment["GOTOOLCHAIN"] = "local"
+        do {
+            let probe = try await BrewProcessRunner.run(
+                executableURL: URL(fileURLWithPath: go),
+                arguments: ["env", envName],
+                timeout: 60,
+                environment: environment
+            )
+            let reported = String(decoding: probe.stdout, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard probe.status == 0, !reported.isEmpty else {
+                let msg = "Couldn't clean \(item.name): `go env \(envName)` failed"
+                Logger.shared.log(msg, level: .error)
+                return DevToolOutcome(error: msg)
+            }
+            // `go env` may have taken a while: compare go's directory in
+            // canonical form and re-check the root right before `go clean`.
+            let canonicalReported = URL(fileURLWithPath: (reported as NSString).standardizingPath)
+                .resolvingSymlinksInPath().path
+            guard reported.hasPrefix("/"), canonicalReported == item.path else {
+                let msg = "Skipped \(item.name): go uses \(reported), not \(item.path)"
+                Logger.shared.log(msg, level: .warning)
+                return DevToolOutcome(skipped: true, error: msg)
+            }
+            guard isUnchangedDevToolRoot(item.path) else {
+                let msg = "Aborting go clean: path resolution changed for \(item.path)"
+                Logger.shared.log(msg, level: .warning)
+                return DevToolOutcome(error: msg)
+            }
+            let output = try await BrewProcessRunner.run(
+                executableURL: URL(fileURLWithPath: go),
+                arguments: ["clean", flag],
+                timeout: devTools.commandTimeout,
+                environment: environment
+            )
+            guard output.status == 0 else {
+                let stderr = String(decoding: output.stderr, as: UTF8.self)
+                Logger.shared.log("go clean \(flag) exited \(output.status): \(stderr)", level: .error)
+                return DevToolOutcome(error: "Couldn't clean \(item.name): go clean \(flag) failed (exit \(output.status))")
+            }
+            Logger.shared.log("go clean \(flag) removed \(item.path)", level: .info)
+            return DevToolOutcome(freed: item.size, removed: true, handled: true)
+        } catch ApplicationUpdaterError.timedOut {
+            let msg = "Couldn't clean \(item.name): go did not finish in time"
+            Logger.shared.log(msg, level: .warning)
+            return DevToolOutcome(error: msg)
+        } catch {
+            Logger.shared.log("go failed to run: \(error.localizedDescription)", level: .error)
+            return DevToolOutcome(error: "Couldn't run go: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Simulator Runtimes
@@ -496,29 +1160,6 @@ actor CleaningEngine {
 
         Logger.shared.log("Deleted simulator runtime \(identifier) (~\(reportedSize) bytes)", level: .info)
         return (reportedSize, true, nil)
-    }
-
-    /// Parse Docker's compact size format ("1.23GB", "456MB", "789kB", "0B").
-    private func parseDockerBytes(_ s: String) -> Int64? {
-        let trimmed = s.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        let units: [(String, Double)] = [
-            ("TB", 1_000_000_000_000),
-            ("GB", 1_000_000_000),
-            ("MB", 1_000_000),
-            ("kB", 1_000),
-            ("KB", 1_000),
-            ("B", 1),
-        ]
-        for (suffix, multiplier) in units {
-            if trimmed.hasSuffix(suffix) {
-                let numberPart = String(trimmed.dropLast(suffix.count))
-                if let value = Double(numberPart) {
-                    return Int64(value * multiplier)
-                }
-            }
-        }
-        return nil
     }
 
     // MARK: - Purgeable Space
@@ -572,13 +1213,42 @@ actor CleaningEngine {
 
     // MARK: - Helpers
 
-    private func isSafeToDelete(
+    /// The Docker/OrbStack deny list (`DockerSupport.isProtectedDiskPath`: VM
+    /// disks, their containers, and every parent folder that would take them
+    /// along). The one entry point every deletion route calls BEFORE its own
+    /// allow-list or validation: the generic user and admin passes
+    /// (`isSafeToDelete`), developer tool caches, Local AI Models, AI Agent
+    /// Data (Trash), worktree removal and worktree artifact folders. Tests pin
+    /// each route (`DeletionDenyListTests`). Internal for tests.
+    func isDockerDiskState(_ path: String) -> Bool {
+        guard DockerSupport.isProtectedDiskPath(path, homeDirectory: homeDirectory) else { return false }
+        Logger.shared.log("Refusing to delete Docker/OrbStack disk state: \(path)", level: .warning)
+        return true
+    }
+
+    /// Error text of a route that refused a Docker/OrbStack location.
+    static func dockerDiskStateRefusal(_ path: String) -> String {
+        "Skipped Docker/OrbStack disk state: \(path)"
+    }
+
+    /// Internal so tests can prove what both the user pass and the admin pass refuse.
+    func isSafeToDelete(
         item: CleanableItem,
         resolvedPath: String,
         includeUninstallPaths: Bool = false
     ) -> Bool {
+        // Docker/OrbStack VM disks sit under allow-listed roots; refuse them
+        // first, for every category and in both the user and admin pass.
+        if isDockerDiskState(item.path) || isDockerDiskState(resolvedPath) {
+            return false
+        }
         if item.category == .aiApps {
             return item.path == resolvedPath && isSupportedAIAppPath(resolvedPath)
+        }
+        // Local AI Models rows have their own validated route in cleanItems;
+        // if one ever reaches the generic path it must not be deletable here.
+        if item.category == .localAIModels {
+            return false
         }
         let originalIsManaged = XcodeBuildMCPDerivedDataSupport.isManagedDerivedDataPath(
             item.path,
@@ -638,8 +1308,27 @@ actor CleaningEngine {
             )
             return false
         }
+        // Same for Docker/OrbStack disks (also checked per item above).
+        if isDockerDiskState(resolvedPath) {
+            return false
+        }
 
-        let allowedRoots = [
+        let allowedRoots = Self.allowedDeletionRoots(home: home)
+        // Either the path equals an allow-listed root (whole-subtree wipe by
+        // the scanner that emits the root itself, e.g. DerivedData) or it
+        // sits strictly inside one. The trailing "/" on the prefix match
+        // prevents siblings like "/tmpfoo" from sneaking past "/tmp".
+        let normalized = (resolvedPath as NSString).standardizingPath
+        return allowedRoots.contains { root in
+            if normalized == root { return true }
+            let rootWithSeparator = root.hasSuffix("/") ? root : root + "/"
+            return normalized.hasPrefix(rootWithSeparator)
+        }
+    }
+
+    /// Roots under which the generic delete path may remove items.
+    nonisolated static func allowedDeletionRoots(home: String) -> [String] {
+        [
             "\(home)/Library/Caches",
             "\(home)/Library/Logs",
             "\(home)/Library/Saved Application State",
@@ -666,7 +1355,11 @@ actor CleaningEngine {
             "\(home)/.pnpm-store",
             "\(home)/.cache",
             "\(home)/.local/share/pnpm/store",
-            "\(home)/Library/Containers/com.docker.docker",
+            // Docker Desktop: only the folders scanDockerCache surfaces, never
+            // the container as a whole (it holds vms/…/Docker.raw).
+            "\(home)/Library/Containers/com.docker.docker/Data/cache",
+            "\(home)/Library/Containers/com.docker.docker/Data/log",
+            "\(home)/Library/Containers/com.docker.docker/Data/tmp",
             // Docker/OrbStack cache + log roots surfaced by scanDockerCache.
             // Without these the items scan fine but every delete is refused
             // as "unsafe path" — the category looked broken. Narrow roots
@@ -688,17 +1381,12 @@ actor CleaningEngine {
             "/var/log",
             "/var/tmp",
             "/tmp",
-        ]
-        // Either the path equals an allow-listed root (whole-subtree wipe by
-        // the scanner that emits the root itself, e.g. DerivedData) or it
-        // sits strictly inside one. The trailing "/" on the prefix match
-        // prevents siblings like "/tmpfoo" from sneaking past "/tmp".
-        let normalized = (resolvedPath as NSString).standardizingPath
-        return allowedRoots.contains { root in
-            if normalized == root { return true }
-            let rootWithSeparator = root.hasSuffix("/") ? root : root + "/"
-            return normalized.hasPrefix(rootWithSeparator)
-        }
+            // Developer tool cache roots surfaced by scanDevToolCaches: exact
+            // directories only (see DevToolCaches.roots). Without them roots
+            // outside ~/Library/Caches and ~/.cache, such as ~/.bun and
+            // ~/.cargo/registry/cache, would be refused as unsafe. Parents
+            // (~/.cargo, ~/.gradle, ~/.m2, ~/go) are never allow-listed.
+        ] + DevToolCaches.absolutePaths(home: home)
     }
 
     /// A removable localization folder inside an installed app bundle:

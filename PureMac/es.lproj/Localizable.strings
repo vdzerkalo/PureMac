@@ -270,7 +270,9 @@
 "pnpm content-addressable store" = "Almacén direccionable de pnpm";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Limpieza de Docker (contenedores detenidos, imágenes sin usar y caché de compilación)";
+"Docker build cache" = "Caché de compilación de Docker";
+"Stopped Docker containers" = "Contenedores de Docker detenidos";
+"Unused Docker volumes (may contain data such as databases)" = "Volúmenes de Docker sin usar (pueden contener datos, como bases de datos)";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "Cada hora";
@@ -490,6 +492,7 @@
 "%lld files totaling %@ were moved. Every protected copy remains in place." = "%lld files totaling %@ were moved. Every protected copy remains in place.";
 "%lld files totaling %@ will be moved to Trash. The protected copy in every group stays in place." = "%lld files totaling %@ will be moved to Trash. The protected copy in every group stays in place.";
 "%lld folders" = "%lld folders";
+
 /* Additional interface strings. */
 "%lld found" = "%lld found";
 "%lld inaccessible" = "%lld inaccessible";
@@ -927,3 +930,193 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* Git Worktrees and risky removals */
+"Git Worktrees" = "Git Worktrees";
+"Leftover git worktrees from AI agents and old branches" = "Leftover git worktrees from AI agents and old branches";
+"Safe to delete" = "Safe to delete";
+"Needs review" = "Needs review";
+"Protected" = "Protected";
+"Orphan" = "Orphan";
+"uncommitted changes (%lld)" = "uncommitted changes (%lld)";
+"commits not on any remote or other branch (%lld)" = "commits not on any remote or other branch (%lld)";
+"stashed changes" = "stashed changes";
+"locked by git" = "locked by git";
+"open in a running process" = "open in a running process";
+"agent worktree active in the last 24 hours" = "agent worktree active in the last 24 hours";
+"folder is gone; git still lists it" = "folder is gone; git still lists it";
+"not a worktree its repository knows about" = "not a worktree its repository knows about";
+"untracked files (%lld)" = "untracked files (%lld)";
+"ignored .env files would be deleted" = "ignored .env files would be deleted";
+"no main branch to compare with" = "no main branch to compare with";
+"not merged into the main branch" = "not merged into the main branch";
+"no commits of its own" = "no commits of its own";
+"active %lld days ago" = "active %lld days ago";
+"merged, no recent activity" = "merged, no recent activity";
+"merged, idle for %lld days" = "merged, idle for %lld days";
+"Nothing goes to the Trash: Docker deletes these objects permanently." = "Nothing goes to the Trash: Docker deletes these objects permanently.";
+"Stopped containers and the files inside them are deleted; running containers are kept." = "Stopped containers and the files inside them are deleted; running containers are kept.";
+"Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash." = "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash.";
+"Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing.";
+"Close any agent, editor or terminal still using these folders: they lose their working directory." = "Close any agent, editor or terminal still using these folders: they lose their working directory.";
+"Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back.";
+"Confirm each risk before removing" = "Confirm each risk before removing";
+"Remove %lld items permanently?" = "Remove %lld items permanently?";
+"Remove permanently" = "Remove permanently";
+"This cannot be undone. Nothing is moved to the Trash." = "This cannot be undone. Nothing is moved to the Trash.";
+"Copy agent prompt" = "Copy agent prompt";
+"Copied" = "Copied";
+"Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Copy a short brief with every found item so an AI agent can check the risks with you before removal.";
+"Permanent · git worktree remove (branch is kept)" = "Permanent · git worktree remove (branch is kept)";
+"PureMac will not remove this worktree." = "PureMac will not remove this worktree.";
+
+/* Git Worktrees settings, prune and size breakdown */
+"Idle after: %lld days" = "Idle after: %lld days";
+"A merged worktree without activity for this long is Safe to delete; a more recent one needs review." = "A merged worktree without activity for this long is Safe to delete; a more recent one needs review.";
+"Base branch" = "Base branch";
+"origin/HEAD, origin/main, origin/master, main, master" = "origin/HEAD, origin/main, origin/master, main, master";
+"Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged." = "Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged.";
+"Optional in Smart Scan" = "Optional in Smart Scan";
+"Off until you add them" = "Off until you add them";
+"Scanning only reads. Removal stays on the category screen." = "Scanning only reads. Removal stays on the category screen.";
+"Add to Smart Scan" = "Add to Smart Scan";
+"In Smart Scan from the next scan" = "In Smart Scan from the next scan";
+"In Smart Scan · scanned after the current category" = "In Smart Scan · scanned after the current category";
+"In Smart Scan · nothing found" = "In Smart Scan · nothing found";
+"In Smart Scan · %@ found, listed in the plan" = "In Smart Scan · %@ found, listed in the plan";
+"Remove from Smart Scan" = "Remove from Smart Scan";
+"Include in Smart Scan" = "Include in Smart Scan";
+"Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen." = "Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen.";
+"Build folders %lld/%lld · %@" = "Build folders %lld/%lld · %@";
+"Smart Scan then also lists Ollama models and Hugging Face downloads. It only reads; scheduled scans skip them, and models are removed only from their own screen." = "Smart Scan then also lists Ollama models and Hugging Face downloads. It only reads; scheduled scans skip them, and models are removed only from their own screen.";
+"Delete the merged branch after removing a worktree" = "Delete the merged branch after removing a worktree";
+"Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged." = "Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged.";
+"Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep." = "Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep.";
+"Remove folder" = "Remove folder";
+"Add Search Folder…" = "Add Search Folder…";
+"Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing.";
+"git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not." = "git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not.";
+"artifacts %@ · code %@" = "artifacts %@ · code %@";
+"no build folders · code %@" = "no build folders · code %@";
+"Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Permanent · git worktree prune (forgets the missing folder, deletes no files)";
+"Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Permanent · git worktree remove (merged branch is deleted with git branch -d)";
+
+/* Git Worktrees build artifacts */
+"Artifacts in %@" = "Artifacts in %@";
+"blocked: %@" = "blocked: %@";
+"Artifacts" = "Artifacts";
+"The worktree is busy, so PureMac will not touch its build folders." = "The worktree is busy, so PureMac will not touch its build folders.";
+"Only git-ignored build folders are deleted. The worktree stays." = "Only git-ignored build folders are deleted. The worktree stays.";
+"Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay" = "Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay";
+"Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders." = "Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders.";
+"Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool." = "Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool.";
+
+/* Docker polish */
+"Dangling Docker images (untagged leftovers)" = "Dangling Docker images (untagged leftovers)";
+"Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling Docker images (untagged leftovers, size not estimated)";
+"All unused Docker images (pulled or rebuilt when needed)" = "All unused Docker images (pulled or rebuilt when needed)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself." = "Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself.";
+"Build cache is deleted; the next build recreates it and is slower." = "Build cache is deleted; the next build recreates it and is slower.";
+"All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded." = "All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded.";
+"Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source." = "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source.";
+
+/* Docker review fixes */
+"Unused Docker volumes (may contain data such as databases, size not estimated)" = "Unused Docker volumes (may contain data such as databases, size not estimated)";
+"The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back.";
+"Reviewed inside the category before removal" = "Reviewed inside the category before removal";
+
+/* Git Worktrees safety review */
+"ignored files outside build folders (%lld)" = "ignored files outside build folders (%lld)";
+"nested repository in ignored folder" = "nested repository in ignored folder";
+"ignored folders too large to check completely" = "ignored folders too large to check completely";
+"Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted." = "Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted.";
+
+/* Git Worktrees artifacts safety review */
+"A build folder contains a git repository, so PureMac will not delete build folders here." = "A build folder contains a git repository, so PureMac will not delete build folders here.";
+
+/* Dev Tool Caches */
+"Dev Tool Caches" = "Dev Tool Caches";
+"Package, build, and download caches of developer tools" = "Package, build, and download caches of developer tools";
+"Bun cache" = "Bun cache";
+"uv cache" = "uv cache";
+"pip cache" = "pip cache";
+"Poetry cache" = "Poetry cache";
+"CocoaPods cache" = "CocoaPods cache";
+"Swift Package Manager cache" = "Swift Package Manager cache";
+"Gradle caches" = "Gradle caches";
+"Gradle wrapper distributions" = "Gradle wrapper distributions";
+"Cargo registry cache" = "Cargo registry cache";
+"Cargo registry index" = "Cargo registry index";
+"Cargo git database" = "Cargo git database";
+"Cargo git checkouts" = "Cargo git checkouts";
+"Go build cache" = "Go build cache";
+"Go module cache" = "Go module cache";
+"Deno cache" = "Deno cache";
+"Dart pub packages" = "Dart pub packages";
+"Dart pub git packages" = "Dart pub git packages";
+"Playwright browsers" = "Playwright browsers";
+"Puppeteer browsers" = "Puppeteer browsers";
+"node-gyp headers" = "node-gyp headers";
+"Electron download cache" = "Electron download cache";
+"Electron Builder cache" = "Electron Builder cache";
+"Maven repository (may hold local installs)" = "Maven repository (may hold local installs)";
+"NuGet packages (may hold local packages)" = "NuGet packages (may hold local packages)";
+"NuGet HTTP cache" = "NuGet HTTP cache";
+"%@ (Gradle is running)" = "%@ (Gradle is running)";
+
+/* Local AI Models */
+"Local AI Models" = "Local AI Models";
+"Ollama models and Hugging Face downloads. Removed models must be downloaded again." = "Ollama models and Hugging Face downloads. Removed models must be downloaded again.";
+"OLLAMA_HOST points to another machine. PureMac only manages models on this Mac." = "OLLAMA_HOST points to another machine. PureMac only manages models on this Mac.";
+"Ollama is not running or the ollama command was not found. Start Ollama and scan again to list its models." = "Ollama is not running or the ollama command was not found. Start Ollama and scan again to list its models.";
+"Ollama model · freed space can be smaller when models share files" = "Ollama model · freed space can be smaller when models share files";
+"Non-standard folder in the Hugging Face cache · review before removing" = "Non-standard folder in the Hugging Face cache · review before removing";
+"Model files in Application Support/huggingface · review before removing" = "Model files in Application Support/huggingface · review before removing";
+"%lld Hugging Face repo(s) keep their files in a shared store outside the repo folder and are not listed. Removing them would not free space." = "%lld Hugging Face repo(s) keep their files in a shared store outside the repo folder and are not listed. Removing them would not free space.";
+"Hugging Face last-used dates are approximate: the newest change among a repo's refs and snapshots." = "Hugging Face last-used dates are approximate: the newest change among a repo's refs and snapshots.";
+"Hugging Face model" = "Hugging Face model";
+"Hugging Face dataset" = "Hugging Face dataset";
+"Hugging Face space" = "Hugging Face space";
+"%@ · %lld revision(s)" = "%@ · %lld revision(s)";
+"Ollama models are removed through Ollama itself. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them." = "Ollama models are removed through Ollama itself. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them.";
+"Permanent · Remove through Ollama" = "Permanent · Remove through Ollama";
+"Permanent · Delete model files" = "Permanent · Delete model files";
+
+/* Local AI Models: links and unrecognised files */
+"Linked from %@ · cannot be removed" = "Linked from %@ · cannot be removed";
+"%lld item(s) in Application Support/huggingface were not listed because they do not look like model data." = "%lld item(s) in Application Support/huggingface were not listed because they do not look like model data.";
+"Files linked from outside the cache are not detected." = "Files linked from outside the cache are not detected.";
+
+/* AI Agent Data */
+"AI Agent Data" = "AI Agent Data";
+"Large, regenerable data of AI agent apps. Review each item before removal." = "Large, regenerable data of AI agent apps. Review each item before removal.";
+"Claude iOS Simulator build output" = "Claude iOS Simulator build output";
+"Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build." = "Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build.";
+"Claude Desktop web cache" = "Claude Desktop web cache";
+"Chromium HTTP cache of Claude Desktop. Rebuilt automatically." = "Chromium HTTP cache of Claude Desktop. Rebuilt automatically.";
+"Claude Desktop code cache" = "Claude Desktop code cache";
+"Chromium compiled-script cache of Claude Desktop. Rebuilt automatically." = "Chromium compiled-script cache of Claude Desktop. Rebuilt automatically.";
+"Codex plugin backup %@" = "Codex plugin backup %@";
+"Old copy of Codex's plugin folder left by a plugin sync. The current plugins are kept elsewhere." = "Old copy of Codex's plugin folder left by a plugin sync. The current plugins are kept elsewhere.";
+"Antigravity backup: browser recordings" = "Antigravity backup: browser recordings";
+"Frames of agent browser sessions inside the one-time backup. The live recordings stay in ~/.gemini/antigravity. Backup settings are not touched." = "Frames of agent browser sessions inside the one-time backup. The live recordings stay in ~/.gemini/antigravity. Backup settings are not touched.";
+"Cursor extension download cache" = "Cursor extension download cache";
+"Downloaded extension packages (.vsix). Downloaded again when needed." = "Downloaded extension packages (.vsix). Downloaded again when needed.";
+"%@ is running. Quit it to remove this." = "%@ is running. Quit it to remove this.";
+
+/* Space Explorer treemap */
+"List" = "List";
+"Treemap" = "Treemap";
+"Result view" = "Result view";
+"Other (%lld items)" = "Other (%lld items)";
+"Items too small to draw individually are grouped into this tile." = "Items too small to draw individually are grouped into this tile.";
+"Treemap of allocated space" = "Treemap of allocated space";
+"Folder" = "Folder";
+"Hover a tile to see its name and size. Click a folder to open it." = "Hover a tile to see its name and size. Click a folder to open it.";
+"Skipped and inaccessible items are not included in these sizes." = "Skipped and inaccessible items are not included in these sizes.";
+
+/* Local AI Models removal risks */
+"Nothing goes to the Trash: models are deleted permanently." = "Nothing goes to the Trash: models are deleted permanently.";
+"Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again.";
+"Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection.";
+"Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working.";

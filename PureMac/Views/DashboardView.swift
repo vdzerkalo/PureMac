@@ -70,6 +70,9 @@ struct DashboardView: View {
         case .idle:
             idleContent
                 .transition(stateTransition)
+        case .scanning where appState.categoryBeingAdded != nil:
+            // Added from the plan: the plan stays, the scan runs in its row.
+            resultsContent
         case .scanning:
             scanningContent
                 .transition(stateTransition)
@@ -143,6 +146,9 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 20) {
             diskOverview
             scanIntroduction
+            VStack(alignment: .leading, spacing: 10) {
+                smartScanOptionsSection
+            }
 
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -226,7 +232,7 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Review cleanup")
                         .font(.system(size: 16, weight: .semibold))
-                    Text("Check \(CleaningCategory.scannable.count) categories for caches, logs, and other removable files. Review the results before deleting anything.")
+                    Text("Check \(appState.smartScanCategories.count) categories for caches, logs, and other removable files. Review the results before deleting anything.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -425,6 +431,8 @@ struct DashboardView: View {
                 dashboardSection("Found so far", detail: "\(appState.totalItemCount) items")
                 resultRows(results: Array(appState.allResults.sorted { $0.totalSize > $1.totalSize }.prefix(6)))
             }
+
+            smartScanOptionsSection
         }
     }
 
@@ -474,6 +482,7 @@ struct DashboardView: View {
                         }
                         .buttonStyle(.borderless)
                     }
+                    .disabled(appState.scanState.isActive)
                 }
             }
 
@@ -485,6 +494,27 @@ struct DashboardView: View {
                     detail: "Open a category to review individual items"
                 )
                 resultRows(results: appState.allResults.sorted { $0.totalSize > $1.totalSize })
+            }
+
+            smartScanOptionsSection
+        }
+    }
+
+    /// Before, during and after a scan: adding never waits for one to end.
+    /// Header and card stay siblings, so the parent's spacing applies.
+    @ViewBuilder
+    private var smartScanOptionsSection: some View {
+        let options = CleaningCategory.smartScanOptional
+        dashboardSection("Optional in Smart Scan", detail: "Off until you add them")
+        CardSurface(padding: 0, elevation: .flat) {
+            VStack(spacing: 0) {
+                ForEach(Array(options.enumerated()), id: \.element) { index, category in
+                    SmartScanOptionRow(category: category)
+                    if index < options.count - 1 {
+                        Divider()
+                            .padding(.leading, 58)
+                    }
+                }
             }
         }
     }
@@ -499,7 +529,9 @@ struct DashboardView: View {
         if appState.scanWasCancelled {
             return String(format: String(localized: "%@ found before the scan stopped. Results may be incomplete."), size)
         }
-        return String(format: String(localized: "%@ found across %lld categories."), size, Int64(appState.allResults.count))
+        // The size is set (a) only (`totalJunkSize`), so the count is too.
+        let junkCategories = appState.allResults.filter { CleaningCategory.smartScannable.contains($0.category) }.count
+        return String(format: String(localized: "%@ found across %lld categories."), size, Int64(junkCategories))
     }
 
     private var emptyResults: some View {
@@ -531,6 +563,7 @@ struct DashboardView: View {
                     CategoryResultRow(
                         result: result,
                         selectedCount: appState.selectedCountInCategory(result.category),
+                        reviewedInCategory: appState.isReviewedInCategoryOnly(result.category),
                         selection: appState.categoryBinding(for: result.category)
                     ) {
                         onNavigate(.cleaning(result.category))
@@ -614,9 +647,7 @@ struct DashboardView: View {
     }
 
     private func prepareCleanupConfirmation() {
-        pendingCleanItems = appState.allResults
-            .flatMap(\.items)
-            .filter(appState.isItemSelected)
+        pendingCleanItems = appState.overviewSelectedItems
         showConfirmation = !pendingCleanItems.isEmpty
     }
 
@@ -684,9 +715,100 @@ private struct DashboardToolCard: View {
     }
 }
 
+/// A category Smart Scan leaves out until the user adds it. The row stays
+/// once added, showing the scan, then what it found, and how to undo.
+private struct SmartScanOptionRow: View {
+    @EnvironmentObject var appState: AppState
+    let category: CleaningCategory
+
+    private var isAdded: Bool { appState.isAddedToSmartScan(category) }
+    private var isScanningNow: Bool {
+        if case .scanning = appState.scanState { return appState.currentScanCategory == category.rawValue }
+        return false
+    }
+    private var isQueued: Bool { appState.queuedScanCategories.contains(category) }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            IconTile(systemName: category.icon, tint: category.color, size: 30, corner: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(LocalizedStringKey(category.rawValue))
+                    .font(.system(size: 13, weight: .semibold))
+                if isScanningNow {
+                    ScanPathTicker(ticker: appState.scanTicker)
+                } else {
+                    Text(status)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            trailing
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+    }
+
+    private var status: String {
+        guard isAdded else {
+            return String(localized: "Scanning only reads. Removal stays on the category screen.")
+        }
+        if isQueued {
+            return String(localized: "In Smart Scan · scanned after the current category")
+        }
+        guard let result = appState.categoryResults[category] else {
+            return String(localized: "In Smart Scan from the next scan")
+        }
+        guard result.totalSize > 0 else {
+            return String(localized: "In Smart Scan · nothing found")
+        }
+        return String(format: String(localized: "In Smart Scan · %@ found, listed in the plan"), result.formattedSize)
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if isScanningNow, appState.categoryBeingAdded == category {
+            // Its own scan, started from the plan: the only progress shown.
+            HStack(spacing: 10) {
+                Text(appState.scanProgress, format: .percent.precision(.fractionLength(0)))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .monospacedDigit()
+                ProgressView(value: appState.scanProgress)
+                    .progressViewStyle(.linear)
+                    .tint(Tint.accent)
+                    .frame(width: 90)
+                Button("Stop", role: .cancel) {
+                    appState.cancelScan()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        } else if isScanningNow {
+            ProgressView()
+                .controlSize(.small)
+        } else if isAdded {
+            Button("Remove from Smart Scan") {
+                appState.setAddedToSmartScan(category, false)
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .disabled(appState.scanState.isActive)
+        } else {
+            Button("Add to Smart Scan") {
+                appState.addToSmartScan(category)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(!appState.canAddToSmartScan)
+        }
+    }
+}
+
 private struct CategoryResultRow: View {
     let result: CategoryResult
     let selectedCount: Int
+    /// Docker: removed only from its own screen, after the risk review.
+    let reviewedInCategory: Bool
     @Binding var selection: Bool
     let open: () -> Void
 
@@ -695,6 +817,7 @@ private struct CategoryResultRow: View {
             Toggle("", isOn: $selection)
                 .labelsHidden()
                 .toggleStyle(AnimatedCheckboxStyle(tint: Tint.accent))
+                .disabled(reviewedInCategory)
             IconTile(systemName: result.category.icon, tint: result.category.color, size: 30, corner: 8)
             Button(action: open) {
                 HStack {
@@ -702,7 +825,9 @@ private struct CategoryResultRow: View {
                         Text(LocalizedStringKey(result.category.rawValue))
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.primary)
-                        Text("\(selectedCount) of \(result.itemCount) selected")
+                        Text(reviewedInCategory
+                             ? String(localized: "Reviewed inside the category before removal")
+                             : String(localized: "\(selectedCount) of \(result.itemCount) selected"))
                             .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
                     }
@@ -724,7 +849,7 @@ private struct CategoryResultRow: View {
     }
 }
 
-private struct ScanPathTicker: View {
+struct ScanPathTicker: View {
     @ObservedObject var ticker: ScanProgressTicker
 
     var body: some View {

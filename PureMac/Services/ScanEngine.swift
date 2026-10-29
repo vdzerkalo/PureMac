@@ -3,15 +3,28 @@ import Foundation
 actor ScanEngine {
     private let fileManager = FileManager.default
     private let home: String
+    private let devTools: DevToolCacheEnvironment
+    private let localAIModels: LocalAIModels
 
-    init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
-        home = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory).path
+    init(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        devToolEnvironment: DevToolCacheEnvironment = .live,
+        localAIModels: LocalAIModels? = nil
+    ) {
+        let canonicalHome = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        home = canonicalHome.path
+        devTools = devToolEnvironment
+        self.localAIModels = localAIModels ?? LocalAIModels(context: .live(homeDirectory: canonicalHome))
     }
 
     /// Live path reporter for the dashboard's scanning ticker. Throttled so
     /// a directory with thousands of entries doesn't flood the main actor.
     private var onPath: (@Sendable (String) -> Void)?
     private var lastReport = Date.distantPast
+    /// Share of the current category done (0...1), for categories that can
+    /// tell (Git Worktrees). Others report nothing and the bar moves per
+    /// category.
+    private var onFraction: (@Sendable (Double) -> Void)?
 
     /// `path` is an autoclosure so the String is only materialized after the
     /// throttle gate passes — a deep home-directory walk enumerates hundreds
@@ -48,10 +61,15 @@ actor ScanEngine {
 
     func scanCategory(
         _ category: CleaningCategory,
-        onPath: (@Sendable (String) -> Void)? = nil
+        onPath: (@Sendable (String) -> Void)? = nil,
+        onFraction: (@Sendable (Double) -> Void)? = nil
     ) async -> CategoryResult {
         self.onPath = onPath
-        defer { self.onPath = nil }
+        self.onFraction = onFraction
+        defer {
+            self.onPath = nil
+            self.onFraction = nil
+        }
         switch category {
         case .smartScan:
             return CategoryResult(category: category, items: [], totalSize: 0)
@@ -61,6 +79,8 @@ actor ScanEngine {
             return scanUserCache()
         case .aiApps:
             return scanAIApps()
+        case .aiAgentData:
+            return scanAIAgentData()
         case .mailAttachments:
             return scanMailAttachments()
         case .trashBins:
@@ -75,8 +95,14 @@ actor ScanEngine {
             return await scanBrewCache()
         case .nodeCache:
             return await scanNodeCache()
+        case .devToolCaches:
+            return scanDevToolCaches()
         case .dockerCache:
             return await scanDockerCache()
+        case .gitWorktrees:
+            return await scanGitWorktrees()
+        case .localAIModels:
+            return await scanLocalAIModels()
         case .universalBinaries:
             return scanUniversalBinaries()
         case .languageFiles:
@@ -152,7 +178,7 @@ actor ScanEngine {
             "\(home)/Library/Caches/npm",
             "\(home)/Library/Caches/Yarn",
             "\(home)/Library/Caches/dev.kdrag0n.MacVirt",
-        ] + ProviderPaths.deniedRoots(homeDirectory: URL(fileURLWithPath: home, isDirectory: true))).map(normalizePath))
+        ] + DevToolCaches.absolutePaths(home: home) + ProviderPaths.deniedRoots(homeDirectory: URL(fileURLWithPath: home, isDirectory: true))).map(normalizePath))
 
         // Dynamically enumerate ~/Library/Caches/ so every subdirectory is visible
         let cachePath = "\(home)/Library/Caches"
@@ -165,21 +191,8 @@ actor ScanEngine {
         )
         items.append(contentsOf: scanned)
 
-        // Also scan for npm/pip/yarn caches
-        let devCaches = [
-            "\(home)/.cache/pip",
-            "\(home)/Library/Caches/pip",
-        ]
-
-        for path in devCaches {
-            if let item = makeCleanupItem(
-                name: URL(fileURLWithPath: path).lastPathComponent,
-                path: path,
-                category: .userCache
-            ) {
-                items.append(item)
-            }
-        }
+        // pip and the other developer tool caches belong to the Dev Tool
+        // Caches category (excluded above), so they are not listed here.
 
         // Sandboxed apps keep their caches inside per-app containers, not
         // ~/Library/Caches — on modern macOS this is where most of the
@@ -286,6 +299,40 @@ actor ScanEngine {
         })
         let totalSize = items.reduce(0) { $0 + $1.size }
         return CategoryResult(category: .aiApps, items: items.sorted { $0.size > $1.size }, totalSize: totalSize)
+    }
+
+    /// Review-only. Every row is an exact allowlisted path (see
+    /// AIAgentDataSupport.rules), unselected, and removed by Move to Trash
+    /// while the owning app is not running. Sizes under 1 MB are skipped.
+    private func scanAIAgentData() -> CategoryResult {
+        let homeURL = URL(fileURLWithPath: home, isDirectory: true)
+        let items: [CleanableItem] = AIAgentDataSupport.discover(
+            homeDirectory: homeURL,
+            fileManager: fileManager
+        ).compactMap { candidate in
+            let path = candidate.url.path
+            report(path)
+            let size: Int64
+            if candidate.rule.isDirectory {
+                size = directorySize(path: path)
+            } else {
+                // Allocated size: a large single file can be sparse.
+                let values = try? candidate.url.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
+                size = Int64(values?.totalFileAllocatedSize ?? values?.fileSize ?? 0)
+            }
+            guard size > 1024 * 1024 else { return nil }
+            return CleanableItem(
+                name: candidate.name,
+                path: path,
+                size: size,
+                category: .aiAgentData,
+                isSelected: false,
+                lastModified: candidate.lastModified,
+                detail: candidate.rule.detail()
+            )
+        }
+        let totalSize = items.reduce(0) { $0 + $1.size }
+        return CategoryResult(category: .aiAgentData, items: items.sorted { $0.size > $1.size }, totalSize: totalSize)
     }
 
     private func scanMailAttachments() -> CategoryResult {
@@ -717,6 +764,57 @@ actor ScanEngine {
         return CategoryResult(category: .nodeCache, items: items, totalSize: totalSize)
     }
 
+    private func scanDevToolCaches() -> CategoryResult {
+        var items: [CleanableItem] = []
+        var gradleRunning: Bool?
+        var hasGo: Bool?
+
+        for root in DevToolCaches.roots {
+            if Task.isCancelled { break }
+            let path = (root.path(home: home) as NSString).standardizingPath
+            report(path)
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                continue
+            }
+            guard !DevToolCaches.hasSymlinkBelowHome(path, home: home) else {
+                Logger.shared.log("Dev tool caches: refusing symlinked cache root \(path)", level: .warning)
+                continue
+            }
+            if root.removal == .goCleanModcache {
+                if hasGo == nil { hasGo = devTools.locate("go", home: home) != nil }
+                guard hasGo == true else {
+                    Logger.shared.log("Dev tool caches: go not found; not listing the Go module cache", level: .info)
+                    continue
+                }
+            }
+            let size = directorySize(path: path)
+            guard size > 0 else { continue }
+
+            var name = String(localized: String.LocalizationValue(root.nameKey))
+            var isSelected = root.selectedByDefault
+            if root.removal == .unlinkUnlessGradleRunning {
+                if gradleRunning == nil { gradleRunning = devTools.isGradleRunning() }
+                if gradleRunning == true {
+                    isSelected = false
+                    name = String(format: String(localized: "%@ (Gradle is running)"), name)
+                }
+            }
+            items.append(CleanableItem(
+                name: name,
+                path: path,
+                size: size,
+                category: .devToolCaches,
+                isSelected: isSelected,
+                lastModified: fileModDate(path: path),
+                selectOnlyByHand: !root.selectedByDefault
+            ))
+        }
+
+        let totalSize = items.reduce(0) { $0 + $1.size }
+        return CategoryResult(category: .devToolCaches, items: items, totalSize: totalSize)
+    }
+
     nonisolated static func approvedNodeCacheRoots(
         for manager: NodeCacheManager,
         home: String
@@ -866,33 +964,136 @@ actor ScanEngine {
         }
 
         // If the `docker` CLI is available and the daemon answers, surface
-        // reclaimable space reported by `docker system df` as a single
-        // virtual entry. Cleaning it runs `docker system prune -f` (see
-        // CleaningEngine.pruneDockerSystem) — stopped containers, dangling
-        // images, unused networks, and build cache; running containers and
-        // tagged images are untouched. The empty path mirrors the purgeable-
-        // space convention: this is an action, not a file unlink, so the UI
-        // must not offer reveal-in-Finder or attempt removeItem on it.
-        // Works for both Docker Desktop and OrbStack (both ship a docker CLI
-        // at these locations).
-        let dockerBinPaths = ["/usr/local/bin/docker", "/opt/homebrew/bin/docker"]
-        for dockerBin in dockerBinPaths where fileManager.fileExists(atPath: dockerBin) {
-            if Task.isCancelled { break }
-            if let reclaimable = await reclaimableDockerSpace(dockerBin: dockerBin), reclaimable > 0 {
+        // one virtual row per `docker system df` type with reclaimable space.
+        // Each row runs its own prune (see DockerSupport.PruneAction and
+        // CleaningEngine.pruneDocker) — space inside the Docker/OrbStack VM
+        // is unreachable by any file unlink from the host. Rows start
+        // unselected: build cache and images cost a rebuild or re-pull, and
+        // volumes may hold data nothing can recreate. The docker-prune: path
+        // marks them as actions, so the UI never offers reveal-in-Finder.
+        // Works for both Docker Desktop and OrbStack (see
+        // DockerSupport.candidateBinaryPaths for where each ships its CLI).
+        if !Task.isCancelled,
+           let dockerBin = DockerSupport.locateBinary(homeDirectory: home),
+           let rows = await dockerDiskUsage(dockerBin: dockerBin) {
+            let unused = await dockerUnusedObjects(dockerBin: dockerBin)
+            for estimate in DockerSupport.pruneEstimates(rows, dangling: unused.dangling, volumes: unused.volumes) {
                 items.append(CleanableItem(
-                    name: String(localized: "Docker prune (stopped containers, dangling images, build cache)"),
-                    path: "",
-                    size: reclaimable,
+                    name: dockerPruneItemName(estimate.action, sizeKnown: estimate.sizeKnown),
+                    // The volumes row carries the exact volumes it will remove.
+                    path: DockerSupport.actionPath(for: estimate.action, volumes: estimate.volumes),
+                    size: estimate.bytes,
                     category: .dockerCache,
                     isSelected: false,
                     lastModified: nil
                 ))
             }
-            break
         }
 
         let totalSize = items.reduce(0) { $0 + $1.size }
-        return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize)
+        let dockerRaw = DockerSupport.dockerRawPath(homeDirectory: home)
+        var note: String?
+        if let allocated = DockerSupport.allocatedSize(ofFileAt: dockerRaw), allocated > 0 {
+            let size = ByteCountFormatter.string(fromByteCount: allocated, countStyle: .file)
+            // Wording follows docs.docker.com/desktop/troubleshoot-and-support/faqs/macfaqs/
+            // (see docs/DOCKER.md): "a few minutes", and the reclaim image is
+            // Docker's own documented fallback, never run by PureMac.
+            note = String(localized: "Docker Desktop's disk image (Docker.raw) uses \(size) on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself.")
+        }
+        return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize, notes: note.map { [$0] } ?? [])
+    }
+
+    /// One row per linked git worktree found in agent folders and Claude
+    /// Code's project list (see GitWorktreeScanner). Only Safe to delete
+    /// rows start selected; Protected and orphan rows are listed with their
+    /// reasons but cannot be selected (prunable orphans can, for
+    /// `git worktree prune`, never preselected). Inactive days, extra
+    /// search folders and the base branch come from Settings
+    /// (GitWorktreeSettings). Without git (no Homebrew git and no
+    /// developer tools) the category is simply empty.
+    private func scanGitWorktrees() async -> CategoryResult {
+        guard let gitPath = GitWorktreeScanner.locateGit() else {
+            Logger.shared.log("Git Worktrees: git not found", level: .info)
+            return CategoryResult(category: .gitWorktrees, items: [], totalSize: 0)
+        }
+        let settings = GitWorktreeSettings.current()
+        var scanner = GitWorktreeScanner(homeDirectory: home, gitPath: gitPath)
+        scanner.inactiveDays = settings.inactiveDays
+        scanner.extraRoots = settings.extraRoots
+        scanner.baseBranchOverride = settings.baseBranch
+        scanner.measuresSizes = true
+        // Every step goes to the ticker: a check takes seconds, so these are
+        // few, and "12/48" tells a long scan from a stuck one.
+        let onPath = self.onPath
+        let onFraction = self.onFraction
+        // The bar: checks fill the first three quarters, build folders the rest.
+        let checksShare = 0.75
+        let reports = await scanner.scan { step in
+            switch step {
+            case .discovering(let path):
+                onPath?(path)
+            case .inspecting(let path, let position, let total):
+                onPath?("\(position)/\(total) · \(path)")
+                onFraction?(checksShare * Double(position - 1) / Double(max(total, 1)))
+            }
+        }
+        // Build folders of the worktrees that cannot be removed whole: one
+        // more bounded walk each, also four at a time.
+        let total = reports.count
+        let artifactReports = await GitWorktreeScanner.concurrentMap(reports, limit: GitWorktreeScanner.concurrentInspections) { [scanner] index, worktree in
+            onPath?(String(localized: "Build folders \(index + 1)/\(total) · \(worktree.path)"))
+            onFraction?(checksShare + (1 - checksShare) * Double(index) / Double(max(total, 1)))
+            return await scanner.artifactReport(for: worktree)
+        }
+        var items: [CleanableItem] = []
+        for (index, worktree) in reports.enumerated() {
+            if Task.isCancelled { break }
+            var item = CleanableItem(
+                name: worktree.displayName,
+                path: worktree.path,
+                size: worktree.totalBytes,
+                category: .gitWorktrees,
+                isSelected: worktree.verdict.status == .safeToDelete,
+                lastModified: worktree.lastActivity
+            )
+            item.gitWorktree = worktree
+            items.append(item)
+
+            // A worktree that cannot be removed whole still has build
+            // folders git ignores: offer them as their own row, never
+            // preselected, blocked while the worktree is in use.
+            if let artifacts = artifactReports[index] ?? nil {
+                var artifactItem = CleanableItem(
+                    name: String(localized: "Artifacts in \(artifacts.displayName)"),
+                    path: WorktreeArtifactSupport.rowPath(forWorktree: artifacts.worktreePath),
+                    size: artifacts.totalBytes,
+                    category: .gitWorktrees,
+                    isSelected: false,
+                    lastModified: worktree.lastActivity
+                )
+                artifactItem.worktreeArtifacts = artifacts
+                items.append(artifactItem)
+            }
+        }
+        let totalSize = items.reduce(0) { $0 + $1.sizeInCategoryTotal }
+        return CategoryResult(category: .gitWorktrees, items: items, totalSize: totalSize)
+    }
+
+    /// Ollama models (via `ollama`'s own API/CLI) and Hugging Face caches.
+    /// Every row starts unselected: models are user data, not junk. Smart Scan
+    /// and scheduled scans never reach this (see `CleaningCategory.smartScannable`).
+    private func scanLocalAIModels() async -> CategoryResult {
+        let outcome = await localAIModels.scan()
+        for item in outcome.items {
+            report(item.name)
+        }
+        let totalSize = outcome.items.reduce(0) { $0 + $1.size }
+        return CategoryResult(
+            category: .localAIModels,
+            items: outcome.items,
+            totalSize: totalSize,
+            notes: outcome.notes
+        )
     }
 
     private func scanUniversalBinaries() -> CategoryResult {
@@ -945,59 +1146,111 @@ actor ScanEngine {
         return CategoryResult(category: .languageFiles, items: items, totalSize: totalSize)
     }
 
-    /// Sum the reclaimable bytes reported by `docker system df --format json`.
-    /// Returns nil when Docker isn't running or the command fails — callers
-    /// should treat that as "no reclaimable info available", not as an error.
-    private func reclaimableDockerSpace(dockerBin: String) async -> Int64? {
+    private func dockerPruneItemName(_ action: DockerSupport.PruneAction, sizeKnown: Bool) -> String {
+        switch action {
+        case .buildCache:
+            return String(localized: "Docker build cache")
+        case .stoppedContainers:
+            return String(localized: "Stopped Docker containers")
+        case .danglingImages:
+            return sizeKnown
+                ? String(localized: "Dangling Docker images (untagged leftovers)")
+                : String(localized: "Dangling Docker images (untagged leftovers, size not estimated)")
+        case .unusedImages:
+            return String(localized: "All unused Docker images (pulled or rebuilt when needed)")
+        case .unusedVolumes:
+            return sizeKnown
+                ? String(localized: "Unused Docker volumes (may contain data such as databases)")
+                : String(localized: "Unused Docker volumes (may contain data such as databases, size not estimated)")
+        }
+    }
+
+    /// Runs one read-only docker lookup and returns its stdout. nil on a
+    /// non-zero exit (silent), cancellation, or failure (logged as `label`).
+    private func dockerLookup(dockerBin: String, arguments: [String], label: String, timeout: TimeInterval) async -> String? {
+        guard !Task.isCancelled else { return nil }
+        do {
+            let result = try await BrewProcessRunner.run(
+                executableURL: URL(fileURLWithPath: dockerBin),
+                arguments: arguments,
+                timeout: timeout
+            )
+            guard result.status == 0 else { return nil }
+            return String(data: result.stdout, encoding: .utf8)
+        } catch is CancellationError {
+            return nil
+        } catch {
+            Logger.shared.log("\(label) failed: \(DockerSupport.describe(error, timeout: timeout))", level: .warning)
+            return nil
+        }
+    }
+
+    /// The dangling images and the unused volumes the clean may remove, with
+    /// conservative sizes (see DockerSupport.danglingEstimate and
+    /// volumeEstimate). The names come from the filters the prune commands
+    /// themselves use; the slow `docker system df -v` runs once, only when
+    /// something was found, and only supplies sizes: if it fails the rows
+    /// still appear, labelled "size not estimated".
+    private func dockerUnusedObjects(dockerBin: String) async -> (
+        dangling: DockerSupport.DanglingEstimate?,
+        volumes: DockerSupport.VolumeEstimate?
+    ) {
+        let timeout = DockerSupport.danglingLookupTimeout
+        let imageIDs = await dockerLookup(
+            dockerBin: dockerBin,
+            arguments: DockerSupport.danglingImageIDsArguments,
+            label: "docker images --filter dangling=true",
+            timeout: timeout
+        ).map(DockerSupport.parseImageIDs)
+        let volumeNames = await dockerLookup(
+            dockerBin: dockerBin,
+            arguments: DockerSupport.unusedVolumeNamesArguments,
+            label: "docker volume ls --filter dangling=true",
+            timeout: timeout
+        ).map(DockerSupport.parseVolumeNames)
+
+        var imageUsage: [DockerSupport.ImageUsage]?
+        var volumeUsage: [DockerSupport.VolumeUsage]?
+        if !(imageIDs ?? []).isEmpty || !(volumeNames ?? []).isEmpty {
+            if let verbose = await dockerLookup(
+                dockerBin: dockerBin,
+                arguments: DockerSupport.verboseSystemDFArguments,
+                label: "docker system df -v",
+                timeout: timeout
+            ) {
+                imageUsage = DockerSupport.parseImageUsage(verbose)
+                volumeUsage = DockerSupport.parseVolumeUsage(verbose)
+            }
+        }
+        return (
+            DockerSupport.danglingEstimate(danglingIDs: imageIDs, usage: imageUsage),
+            DockerSupport.volumeEstimate(names: volumeNames, usage: volumeUsage)
+        )
+    }
+
+    /// Rows of `docker system df`. Returns nil when Docker isn't running or
+    /// the command fails — callers should treat that as "no reclaimable info
+    /// available", not as an error.
+    private func dockerDiskUsage(dockerBin: String) async -> [DockerSupport.DiskUsageRow]? {
         let result: BrewProcessOutput
         do {
             result = try await BrewProcessRunner.run(
                 executableURL: URL(fileURLWithPath: dockerBin),
-                arguments: ["system", "df", "--format", "{{.Reclaimable}}"],
+                arguments: DockerSupport.systemDFArguments,
                 timeout: 10
             )
         } catch is CancellationError {
             return nil
         } catch {
-            Logger.shared.log("docker system df failed: \(error.localizedDescription)", level: .warning)
+            Logger.shared.log("docker system df failed: \(DockerSupport.describe(error, timeout: 10))", level: .warning)
             return nil
         }
         guard result.status == 0,
               let output = String(data: result.stdout, encoding: .utf8)
         else { return nil }
-        // Each line looks like e.g. "1.234GB (45%)" — parse the leading number.
-        var total: Int64 = 0
-        for line in output.split(separator: "\n") {
-            let raw = line.split(separator: " ").first.map(String.init) ?? ""
-            if let bytes = parseHumanBytes(raw) {
-                total += bytes
-            }
-        }
-        return total
+        return DockerSupport.parseSystemDF(output)
     }
 
-    /// Parse Docker's compact size format ("1.23GB", "456MB", "789kB") into bytes.
-    private func parseHumanBytes(_ s: String) -> Int64? {
-        let trimmed = s.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        let units: [(String, Double)] = [
-            ("TB", 1_000_000_000_000),
-            ("GB", 1_000_000_000),
-            ("MB", 1_000_000),
-            ("kB", 1_000),
-            ("KB", 1_000),
-            ("B", 1),
-        ]
-        for (suffix, multiplier) in units {
-            if trimmed.hasSuffix(suffix) {
-                let numberPart = String(trimmed.dropLast(suffix.count))
-                if let value = Double(numberPart) {
-                    return Int64(value * multiplier)
-                }
-            }
-        }
-        return nil
-    }
     // MARK: - Helpers
 
     private func scanDirectory(

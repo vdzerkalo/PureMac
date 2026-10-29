@@ -311,7 +311,9 @@
 "pnpm content-addressable store" = "Сховище pnpm з адресацією за вмістом";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Очищення Docker (зупинені контейнери, неприв’язані образи та кеш збірок)";
+"Docker build cache" = "Кеш збірок Docker";
+"Stopped Docker containers" = "Зупинені контейнери Docker";
+"Unused Docker volumes (may contain data such as databases)" = "Невикористані томи Docker (можуть містити дані, наприклад бази даних)";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "Щогодини";
@@ -413,7 +415,7 @@
 /* Smart Care dashboard hero + Care areas — English fallback, pending translation */
 "%@ free" = "%@ free";
 "%lld checks" = "%lld checks";
-"%lld items found" = "%lld items found";
+"%lld items found" = "Знайдено об’єктів: %lld";
 "%lld selected" = "%lld selected";
 "%lld-POINT LOCAL SCAN" = "%lld-POINT LOCAL SCAN";
 "%lld/%lld checked" = "%lld/%lld checked";
@@ -490,10 +492,11 @@
 "%lld files totaling %@ were moved. Every protected copy remains in place." = "%lld files totaling %@ were moved. Every protected copy remains in place.";
 "%lld files totaling %@ will be moved to Trash. The protected copy in every group stays in place." = "%lld files totaling %@ will be moved to Trash. The protected copy in every group stays in place.";
 "%lld folders" = "%lld folders";
+
 /* Additional interface strings. */
 "%lld found" = "%lld found";
 "%lld inaccessible" = "%lld inaccessible";
-"%lld items · %@ found" = "%lld items · %@ found";
+"%lld items · %@ found" = "Знайдено об’єктів: %lld · %@";
 "%lld matched" = "%lld matched";
 "%lld of %lld items shown" = "%lld of %lld items shown";
 "%lld percent" = "%lld percent";
@@ -735,7 +738,7 @@
 "Refreshing package data and comparing installed versions." = "Refreshing package data and comparing installed versions.";
 "Refused to delete %lld protected item(s) (home credential directory or similar)." = "Refused to delete %lld protected item(s) (home credential directory or similar).";
 "Remove %lld files" = "Remove %lld files";
-"Remove %lld items" = "Remove %lld items";
+"Remove %lld items" = "Видалити елементів: %lld";
 "Remove apps and their related files" = "Remove apps and their related files";
 "Remove selected app files?" = "Remove selected app files?";
 "Remove selected files?" = "Remove selected files?";
@@ -927,3 +930,193 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* Git Worktrees and risky removals */
+"Git Worktrees" = "Git-worktree";
+"Leftover git worktrees from AI agents and old branches" = "Залишені git-worktree від AI-агентів і старих гілок";
+"Safe to delete" = "Можна видалити";
+"Needs review" = "Потребує перевірки";
+"Protected" = "Захищено";
+"Orphan" = "Сирота";
+"uncommitted changes (%lld)" = "незакомічені зміни (%lld)";
+"commits not on any remote or other branch (%lld)" = "коміти, яких немає на remote чи в іншій гілці (%lld)";
+"stashed changes" = "є stash";
+"locked by git" = "заблоковано git";
+"open in a running process" = "відкрито в запущеному процесі";
+"agent worktree active in the last 24 hours" = "агент працював тут за останні 24 години";
+"folder is gone; git still lists it" = "папки немає, але git її ще пам’ятає";
+"not a worktree its repository knows about" = "репозиторій не знає такого worktree";
+"untracked files (%lld)" = "невідстежувані файли (%lld)";
+"ignored .env files would be deleted" = "буде видалено ігноровані файли .env";
+"no main branch to compare with" = "немає основної гілки для порівняння";
+"not merged into the main branch" = "не злито в основну гілку";
+"no commits of its own" = "немає власних комітів";
+"active %lld days ago" = "активність %lld дн. тому";
+"merged, no recent activity" = "злито, без недавньої активності";
+"merged, idle for %lld days" = "злито, без змін %lld дн.";
+"Nothing goes to the Trash: Docker deletes these objects permanently." = "Нічого не потрапляє в Кошик: Docker видаляє ці об’єкти назавжди.";
+"Stopped containers and the files inside them are deleted; running containers are kept." = "Зупинені контейнери та файли в них видаляються; запущені лишаються.";
+"Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash." = "Кожну папку видаляє git worktree remove: усе всередині, зокрема ігноровані node_modules і .env, видаляється, а не йде в Кошик.";
+"Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Гілки лишаються. Коміти в безпеці, лише якщо вони злиті, запушені або є в іншій гілці; PureMac перевіряє це ще раз перед видаленням.";
+"Close any agent, editor or terminal still using these folders: they lose their working directory." = "Закрийте агентів, редактори й термінали, що ще працюють у цих папках: вони втратять робочу теку.";
+"Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Невикористані volumes стираються разом з даними (бази, завантаження); жоден pull чи build їх не поверне.";
+"Confirm each risk before removing" = "Підтвердьте кожен ризик перед видаленням";
+"Remove %lld items permanently?" = "Видалити назавжди елементів: %lld?";
+"Remove permanently" = "Видалити назавжди";
+"This cannot be undone. Nothing is moved to the Trash." = "Це не можна скасувати. Нічого не потрапить у Кошик.";
+"Copy agent prompt" = "Скопіювати промпт для агента";
+"Copied" = "Скопійовано";
+"Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Скопіювати короткий бриф з усіма знайденими елементами, щоб AI-агент перевірив ризики разом з вами до видалення.";
+"Permanent · git worktree remove (branch is kept)" = "Назавжди · git worktree remove (гілка лишається)";
+"PureMac will not remove this worktree." = "PureMac не видалятиме цей worktree.";
+
+/* Git Worktrees settings, prune and size breakdown */
+"Idle after: %lld days" = "Неактивний понад: %lld дн.";
+"A merged worktree without activity for this long is Safe to delete; a more recent one needs review." = "Злитий worktree без активності так довго можна видалити; свіжіший потребує перевірки.";
+"Base branch" = "Основна гілка";
+"origin/HEAD, origin/main, origin/master, main, master" = "origin/HEAD, origin/main, origin/master, main, master";
+"Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged." = "Залиште порожнім, щоб перебрати їх по черзі. Якщо такої гілки в репозиторії немає, там нічого не вважається злитим.";
+"Optional in Smart Scan" = "Необов'язкові в розумному скануванні";
+"Off until you add them" = "Вимкнені, доки ви їх не додасте";
+"Scanning only reads. Removal stays on the category screen." = "Сканування лише читає. Видалення лишається на екрані категорії.";
+"Add to Smart Scan" = "Додати до розумного сканування";
+"In Smart Scan from the next scan" = "У розумному скануванні з наступного запуску";
+"In Smart Scan · scanned after the current category" = "У розумному скануванні · після поточної категорії";
+"In Smart Scan · nothing found" = "У розумному скануванні · нічого не знайдено";
+"In Smart Scan · %@ found, listed in the plan" = "У розумному скануванні · знайдено %@, є в плані";
+"Remove from Smart Scan" = "Прибрати з розумного сканування";
+"Include in Smart Scan" = "Включати в розумне сканування";
+"Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen." = "Тоді розумне сканування також показує worktree. Воно лише читає ваші репозиторії і з великою кількістю worktree може тривати кілька хвилин; сканування за розкладом їх пропускає, а видаляються worktree лише з їхнього екрана.";
+"Build folders %lld/%lld · %@" = "Папки збірки %lld/%lld · %@";
+"Smart Scan then also lists Ollama models and Hugging Face downloads. It only reads; scheduled scans skip them, and models are removed only from their own screen." = "Тоді розумне сканування також показує моделі Ollama та завантаження Hugging Face. Воно лише читає; сканування за розкладом їх пропускає, а видаляються моделі лише з їхнього екрана.";
+"Delete the merged branch after removing a worktree" = "Видаляти злиту гілку після видалення worktree";
+"Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged." = "Виконує git branch -d, ніколи -D, лише для worktree, які можна видалити, і лише якщо git згоден, що гілку злито.";
+"Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep." = "Окрім списку проєктів Claude Code і папок worktree Cursor та Codex, у цих папках шукають репозиторії на три рівні вглиб.";
+"Remove folder" = "Вилучити папку";
+"Add Search Folder…" = "Додати папку пошуку…";
+"Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Гілки worktree, які можна видалити, видаляє git branch -d, лише якщо git згоден, що їх злито. Коміти в безпеці, лише якщо вони злиті, запушені або є в іншій гілці; PureMac перевіряє це ще раз безпосередньо перед видаленням.";
+"git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not." = "git worktree prune видаляє лише записи git про worktree, чиєї папки вже немає; файли не чіпає. Діє на всі відсутні worktree цього репозиторію, вибрані чи ні.";
+"artifacts %@ · code %@" = "артефакти %@ · код %@";
+"no build folders · code %@" = "папок збірки немає · код %@";
+"Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Назавжди · git worktree prune (забуває відсутню папку, файли не видаляє)";
+"Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Назавжди · git worktree remove (злиту гілку видаляє git branch -d)";
+
+/* Git Worktrees build artifacts */
+"Artifacts in %@" = "Артефакти в %@";
+"blocked: %@" = "заблоковано: %@";
+"Artifacts" = "Артефакти";
+"The worktree is busy, so PureMac will not touch its build folders." = "Worktree зайнятий, тому PureMac не чіпатиме його папки збірки.";
+"Only git-ignored build folders are deleted. The worktree stays." = "Видаляються лише папки збірки, які ігнорує git. Worktree лишається.";
+"Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay" = "Назавжди · видалити лише папки збірки, які ігнорує git; worktree і його відстежувані файли лишаються";
+"Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders." = "Папки збірки, як-от node_modules, .next, dist чи target, у цих worktree видаляються назавжди, а не переміщуються в Кошик. Git їх ігнорує, відстежуваних файлів усередині немає; worktree і їхні файли лишаються, а наступне встановлення чи збірка створить папки знову.";
+"Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool." = "Спершу зупиніть dev-сервери, спостерігачі та збірки, що працюють із цих worktree. PureMac пропускає worktree, які бачить у використанні, але не бачить кожен інструмент.";
+
+/* Docker polish */
+"Dangling Docker images (untagged leftovers)" = "Dangling-образи Docker (залишки без тегів)";
+"Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling-образи Docker (залишки без тегів, розмір не оцінено)";
+"All unused Docker images (pulled or rebuilt when needed)" = "Усі невикористані образи Docker (завантажуються або збираються знову за потреби)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself." = "Образ диска Docker Desktop (Docker.raw) займає на диску %@. За даними Docker, місце, звільнене всередині нього, може повертатися macOS кілька хвилин; якщо цього не сталося, виконайте самі `docker run --privileged --pid=host docker/desktop-reclaim-space`.";
+"Build cache is deleted; the next build recreates it and is slower." = "Кеш збірок буде видалено; наступна збірка створить його знову й буде повільнішою.";
+"All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded." = "Усі образи, які не використовує жоден контейнер, буде видалено, з тегами чи без; образи, зібрані локально й ніколи не відправлені в registry, можна лише зібрати знову, а не завантажити.";
+"Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source." = "Dangling-образи (без тегу) буде видалено; якщо такий образ ще потрібен, його доведеться зібрати знову з вихідного коду.";
+
+/* Docker review fixes */
+"Unused Docker volumes (may contain data such as databases, size not estimated)" = "Невикористані томи Docker (можуть містити дані, наприклад бази даних, розмір не оцінено)";
+"The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "Томи, названі в команді, буде стерто разом з даними (бази даних, завантаження); жоден pull чи збірка їх не поверне.";
+"Reviewed inside the category before removal" = "Видаляється в самій категорії після перегляду";
+
+/* Git Worktrees safety review */
+"ignored files outside build folders (%lld)" = "ігноровані файли поза папками збірки (%lld)";
+"nested repository in ignored folder" = "вкладений репозиторій в ігнорованій папці";
+"ignored folders too large to check completely" = "ігноровані папки завеликі для повної перевірки";
+"Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted." = "Вкажіть назву гілки, наприклад main або origin/main. HEAD, теги та хеші комітів не приймаються.";
+
+/* Git Worktrees artifacts safety review */
+"A build folder contains a git repository, so PureMac will not delete build folders here." = "Папка збірки містить git-репозиторій, тому PureMac не видалятиме тут папки збірки.";
+
+/* Dev Tool Caches */
+"Dev Tool Caches" = "Кеші інструментів розробника";
+"Package, build, and download caches of developer tools" = "Кеші пакетів, збірок і завантажень інструментів розробника";
+"Bun cache" = "Кеш Bun";
+"uv cache" = "Кеш uv";
+"pip cache" = "Кеш pip";
+"Poetry cache" = "Кеш Poetry";
+"CocoaPods cache" = "Кеш CocoaPods";
+"Swift Package Manager cache" = "Кеш Swift Package Manager";
+"Gradle caches" = "Кеші Gradle";
+"Gradle wrapper distributions" = "Дистрибутиви Gradle wrapper";
+"Cargo registry cache" = "Кеш реєстру Cargo";
+"Cargo registry index" = "Індекс реєстру Cargo";
+"Cargo git database" = "Git-база Cargo";
+"Cargo git checkouts" = "Git-вибірки Cargo";
+"Go build cache" = "Кеш збірки Go";
+"Go module cache" = "Кеш модулів Go";
+"Deno cache" = "Кеш Deno";
+"Dart pub packages" = "Пакети Dart pub";
+"Dart pub git packages" = "Git-пакети Dart pub";
+"Playwright browsers" = "Браузери Playwright";
+"Puppeteer browsers" = "Браузери Puppeteer";
+"node-gyp headers" = "Заголовки node-gyp";
+"Electron download cache" = "Кеш завантажень Electron";
+"Electron Builder cache" = "Кеш Electron Builder";
+"Maven repository (may hold local installs)" = "Репозиторій Maven (може містити локальні встановлення)";
+"NuGet packages (may hold local packages)" = "Пакети NuGet (можуть містити локальні пакети)";
+"NuGet HTTP cache" = "HTTP-кеш NuGet";
+"%@ (Gradle is running)" = "%@ (Gradle запущено)";
+
+/* Local AI Models */
+"Local AI Models" = "Локальні моделі ШІ";
+"Ollama models and Hugging Face downloads. Removed models must be downloaded again." = "Моделі Ollama та завантаження Hugging Face. Видалені моделі доведеться завантажувати знову.";
+"OLLAMA_HOST points to another machine. PureMac only manages models on this Mac." = "OLLAMA_HOST вказує на інший комп’ютер. PureMac керує лише моделями на цьому Mac.";
+"Ollama is not running or the ollama command was not found. Start Ollama and scan again to list its models." = "Ollama не запущено, або команду ollama не знайдено. Запустіть Ollama і скануйте знову, щоб побачити її моделі.";
+"Ollama model · freed space can be smaller when models share files" = "Модель Ollama · звільнене місце може бути меншим, якщо моделі мають спільні файли";
+"Non-standard folder in the Hugging Face cache · review before removing" = "Нестандартна папка в кеші Hugging Face · перевірте перед видаленням";
+"Model files in Application Support/huggingface · review before removing" = "Файли моделей у Application Support/huggingface · перевірте перед видаленням";
+"%lld Hugging Face repo(s) keep their files in a shared store outside the repo folder and are not listed. Removing them would not free space." = "Репозиторіїв Hugging Face: %lld. Їхні файли лежать у спільному сховищі поза папкою репозиторію, тому їх не показано. Видалення не звільнило б місця.";
+"Hugging Face last-used dates are approximate: the newest change among a repo's refs and snapshots." = "Дати останнього використання Hugging Face приблизні: це найновіша зміна серед refs і snapshots репозиторію.";
+"Hugging Face model" = "Модель Hugging Face";
+"Hugging Face dataset" = "Набір даних Hugging Face";
+"Hugging Face space" = "Space Hugging Face";
+"%@ · %lld revision(s)" = "%@ · ревізій: %lld";
+"Ollama models are removed through Ollama itself. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them." = "Моделі Ollama видаляються через сам Ollama. Файли, спільні для кількох моделей, залишаються на диску, тому може звільнитися менше місця, ніж показано. Репозиторії й папки Hugging Face видаляються та завантажуються знову, коли вони знадобляться.";
+"Permanent · Remove through Ollama" = "Остаточно · Видалити через Ollama";
+"Permanent · Delete model files" = "Остаточно · Видалити файли моделей";
+
+/* Local AI Models: links and unrecognised files */
+"Linked from %@ · cannot be removed" = "Є посилання з %@ · видалити не можна";
+"%lld item(s) in Application Support/huggingface were not listed because they do not look like model data." = "Елементів у Application Support/huggingface: %lld. Їх не показано, бо вони не схожі на дані моделей.";
+"Files linked from outside the cache are not detected." = "Файли, на які посилаються з-поза кешу, не виявляються.";
+
+/* AI Agent Data */
+"AI Agent Data" = "Дані ШІ-агентів";
+"Large, regenerable data of AI agent apps. Review each item before removal." = "Великі дані програм ШІ-агентів, які можна відтворити. Перегляньте кожен елемент перед видаленням.";
+"Claude iOS Simulator build output" = "Результат збірки iOS Simulator від Claude";
+"Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build." = "Результат збірки Xcode для інструмента iOS Simulator від Claude. Створюється знову під час наступної збірки.";
+"Claude Desktop web cache" = "Веб-кеш Claude Desktop";
+"Chromium HTTP cache of Claude Desktop. Rebuilt automatically." = "HTTP-кеш Chromium у Claude Desktop. Відновлюється автоматично.";
+"Claude Desktop code cache" = "Кеш коду Claude Desktop";
+"Chromium compiled-script cache of Claude Desktop. Rebuilt automatically." = "Кеш скомпільованих скриптів Chromium у Claude Desktop. Відновлюється автоматично.";
+"Codex plugin backup %@" = "Резервна копія плагінів Codex %@";
+"Old copy of Codex's plugin folder left by a plugin sync. The current plugins are kept elsewhere." = "Стара копія теки плагінів Codex, залишена синхронізацією плагінів. Поточні плагіни зберігаються в іншому місці.";
+"Antigravity backup: browser recordings" = "Резервна копія Antigravity: записи браузера";
+"Frames of agent browser sessions inside the one-time backup. The live recordings stay in ~/.gemini/antigravity. Backup settings are not touched." = "Кадри сеансів браузера агента в одноразовій резервній копії. Актуальні записи лишаються в ~/.gemini/antigravity. Налаштування в копії не зачіпаються.";
+"Cursor extension download cache" = "Кеш завантажених розширень Cursor";
+"Downloaded extension packages (.vsix). Downloaded again when needed." = "Завантажені пакети розширень (.vsix). Завантажуються знову за потреби.";
+"%@ is running. Quit it to remove this." = "%@ запущено. Закрийте програму, щоб видалити це.";
+
+/* Space Explorer treemap */
+"List" = "Список";
+"Treemap" = "Деревовидна карта";
+"Result view" = "Вигляд результатів";
+"Other (%lld items)" = "Інше (елементів: %lld)";
+"Items too small to draw individually are grouped into this tile." = "Елементи, надто малі для окремого показу, згруповано в цій плитці.";
+"Treemap of allocated space" = "Деревовидна карта зайнятого місця";
+"Folder" = "Папка";
+"Hover a tile to see its name and size. Click a folder to open it." = "Наведіть курсор на плитку, щоб побачити назву й розмір. Клацніть папку, щоб відкрити її.";
+"Skipped and inaccessible items are not included in these sizes." = "Пропущені та недоступні елементи не враховано в цих розмірах.";
+
+/* Local AI Models removal risks */
+"Nothing goes to the Trash: models are deleted permanently." = "Нічого не потрапляє в Кошик: моделі видаляються назавжди.";
+"Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Моделі Ollama видаляються через сам Ollama. Файли, спільні з іншими моделями, залишаються на диску, тож звільниться менше місця, ніж показано. Щоб знову користуватися видаленою моделлю, її треба завантажити через pull ще раз.";
+"Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Репозиторії Hugging Face і папки моделей видаляються разом з усіма файлами. Щоб знову користуватися ними, їх треба завантажити повністю, часто багато гігабайтів, а на повільному з’єднанні це можуть бути години.";
+"Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Файли, на які посилаються з-поза кешу, не виявляються: проєкт із посиланням на видалену папку перестане працювати.";

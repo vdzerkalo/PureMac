@@ -3,6 +3,7 @@ import XCTest
 
 final class CleaningEngineTests: XCTestCase {
     private let fileManager = FileManager.default
+    private var fixtureHome: URL!
     private var fixtureRoot: URL!
     private var savedExclusions: [String]?
 
@@ -10,14 +11,18 @@ final class CleaningEngineTests: XCTestCase {
         try super.setUpWithError()
         savedExclusions = UserDefaults.standard.stringArray(forKey: CleanupExclusions.defaultsKey)
         UserDefaults.standard.set([], forKey: CleanupExclusions.defaultsKey)
-        fixtureRoot = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/PureMacTests-\(UUID().uuidString)")
+        // A temp home: the engine's allow-list roots resolve under it, so no
+        // test reads, writes or deletes anything in the real home or Trash.
+        fixtureHome = fileManager.temporaryDirectory
+            .appendingPathComponent("PureMac-CleaningEngine-\(UUID().uuidString)", isDirectory: true)
+            .resolvingSymlinksInPath()
+        fixtureRoot = fixtureHome.appendingPathComponent("Library/Caches/PureMacTests")
         try fileManager.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
     }
 
     override func tearDownWithError() throws {
-        if let fixtureRoot {
-            try? fileManager.removeItem(at: fixtureRoot)
+        if let fixtureHome {
+            try? fileManager.removeItem(at: fixtureHome)
         }
         if let savedExclusions {
             UserDefaults.standard.set(savedExclusions, forKey: CleanupExclusions.defaultsKey)
@@ -31,7 +36,7 @@ final class CleaningEngineTests: XCTestCase {
         let path = fixtureRoot.appendingPathComponent("already-gone").path
         let item = makeItem(path: path, size: 4096)
 
-        let result = await CleaningEngine().cleanItems([item]) { _ in }
+        let result = await makeEngine().cleanItems([item]) { _ in }
 
         XCTAssertTrue(result.cleanedPaths.contains(path))
         XCTAssertEqual(result.itemsCleaned, 0)
@@ -44,7 +49,7 @@ final class CleaningEngineTests: XCTestCase {
         try Data(repeating: 1, count: 4096).write(to: file)
         let observed = expectation(description: "progress")
 
-        let result = await CleaningEngine().cleanItems([makeItem(path: file.path, size: 4096)]) { progress in
+        let result = await makeEngine().cleanItems([makeItem(path: file.path, size: 4096)]) { progress in
             XCTAssertEqual(progress, 1)
             XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
             observed.fulfill()
@@ -61,7 +66,7 @@ final class CleaningEngineTests: XCTestCase {
         try Data(repeating: 2, count: 4096).write(to: target)
         try fileManager.createSymbolicLink(at: link, withDestinationURL: target)
 
-        let result = await CleaningEngine().cleanItems([makeItem(path: link.path, size: 4096)]) { _ in }
+        let result = await makeEngine().cleanItems([makeItem(path: link.path, size: 4096)]) { _ in }
 
         XCTAssertTrue(fileManager.fileExists(atPath: target.path))
         XCTAssertEqual(
@@ -81,7 +86,7 @@ final class CleaningEngineTests: XCTestCase {
         try fileManager.createSymbolicLink(at: linkedDirectory, withDestinationURL: targetDirectory)
         let linkedTarget = linkedDirectory.appendingPathComponent("target.bin")
 
-        let result = await CleaningEngine().cleanItems([makeItem(path: linkedTarget.path, size: 4096)]) { _ in }
+        let result = await makeEngine().cleanItems([makeItem(path: linkedTarget.path, size: 4096)]) { _ in }
 
         XCTAssertTrue(fileManager.fileExists(atPath: target.path))
         XCTAssertFalse(result.cleanedPaths.contains(linkedTarget.path))
@@ -93,7 +98,7 @@ final class CleaningEngineTests: XCTestCase {
         let link = fixtureRoot.appendingPathComponent("dangling.bin")
         try fileManager.createSymbolicLink(at: link, withDestinationURL: target)
 
-        let result = await CleaningEngine().cleanItems([makeItem(path: link.path, size: 4096)]) { _ in }
+        let result = await makeEngine().cleanItems([makeItem(path: link.path, size: 4096)]) { _ in }
 
         XCTAssertEqual(
             try fileManager.attributesOfItem(atPath: link.path)[.type] as? FileAttributeType,
@@ -108,7 +113,7 @@ final class CleaningEngineTests: XCTestCase {
         try Data(repeating: 3, count: 4096).write(to: file)
         CleanupExclusions.add(file.path)
 
-        let result = await CleaningEngine().cleanItems([makeItem(path: file.path, size: 4096)]) { _ in }
+        let result = await makeEngine().cleanItems([makeItem(path: file.path, size: 4096)]) { _ in }
 
         XCTAssertTrue(fileManager.fileExists(atPath: file.path))
         XCTAssertFalse(result.cleanedPaths.contains(file.path))
@@ -125,12 +130,16 @@ final class CleaningEngineTests: XCTestCase {
             makeItem(path: app.path, size: 4096, category: .universalBinaries),
             makeItem(path: localization.path, size: 4096, category: .languageFiles),
         ]
-        let result = await CleaningEngine().cleanItems(items) { _ in }
+        let result = await makeEngine().cleanItems(items) { _ in }
 
         XCTAssertTrue(fileManager.fileExists(atPath: app.path))
         XCTAssertTrue(fileManager.fileExists(atPath: localization.path))
         XCTAssertTrue(result.cleanedPaths.isEmpty)
         XCTAssertEqual(result.errors.count, 2)
+    }
+
+    private func makeEngine() -> CleaningEngine {
+        CleaningEngine(homeDirectory: fixtureHome, trashOperation: FakeTrash.operation(in: fixtureHome))
     }
 
     private func makeItem(

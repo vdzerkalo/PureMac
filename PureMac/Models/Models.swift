@@ -7,6 +7,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case systemJunk = "System Junk"
     case userCache = "User Cache"
     case aiApps = "AI Apps"
+    case aiAgentData = "AI Agent Data"
     case mailAttachments = "Mail Files"
     case trashBins = "Trash Bins"
     case largeFiles = "Large & Old Files"
@@ -14,7 +15,10 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case xcodeJunk = "Xcode Junk"
     case brewCache = "Brew Cache"
     case nodeCache = "Node Cache"
+    case devToolCaches = "Dev Tool Caches"
     case dockerCache = "Docker Cache"
+    case gitWorktrees = "Git Worktrees"
+    case localAIModels = "Local AI Models"
     case universalBinaries = "Universal Binaries"
     case languageFiles = "Language Files"
 
@@ -26,6 +30,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .systemJunk: return "gearshape.fill"
         case .userCache: return "internaldrive.fill"
         case .aiApps: return "cpu.fill"
+        case .aiAgentData: return "brain.head.profile"
         case .mailAttachments: return "envelope.fill"
         case .trashBins: return "trash.fill"
         case .largeFiles: return "doc.fill"
@@ -33,7 +38,10 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .xcodeJunk: return "hammer.fill"
         case .brewCache: return "mug.fill"
         case .nodeCache: return "leaf.fill"
+        case .devToolCaches: return "wrench.and.screwdriver.fill"
         case .dockerCache: return "shippingbox.fill"
+        case .gitWorktrees: return "arrow.triangle.branch"
+        case .localAIModels: return "brain"
         case .universalBinaries: return "cpu"
         case .languageFiles: return "globe"
         }
@@ -45,6 +53,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .systemJunk: return "System caches, logs, and temporary files"
         case .userCache: return "Application caches and browser data"
         case .aiApps: return "Local AI app logs, caches, and optional history"
+        case .aiAgentData: return "Large, regenerable data of AI agent apps. Review each item before removal."
         case .mailAttachments: return "Downloaded mail attachments"
         case .trashBins: return "Files in your Trash"
         case .largeFiles: return "Files over 100 MB or older than 1 year"
@@ -52,7 +61,10 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .xcodeJunk: return "Derived data, archives, and simulator runtimes"
         case .brewCache: return "Homebrew download cache"
         case .nodeCache: return "npm, yarn, and pnpm download caches"
+        case .devToolCaches: return "Package, build, and download caches of developer tools"
         case .dockerCache: return "Docker images, containers, and build cache"
+        case .gitWorktrees: return "Leftover git worktrees from AI agents and old branches"
+        case .localAIModels: return "Ollama models and Hugging Face downloads. Removed models must be downloaded again."
         case .universalBinaries: return "Unused CPU architecture slices in app binaries"
         case .languageFiles: return "Unused app localizations"
         }
@@ -64,6 +76,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .systemJunk: return .purple
         case .userCache: return .blue
         case .aiApps: return .teal
+        case .aiAgentData: return .purple
         case .mailAttachments: return .orange
         case .trashBins: return .red
         case .largeFiles: return .yellow
@@ -71,7 +84,10 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .xcodeJunk: return .cyan
         case .brewCache: return .mint
         case .nodeCache: return .pink
+        case .devToolCaches: return .green
         case .dockerCache: return .indigo
+        case .gitWorktrees: return .orange
+        case .localAIModels: return .orange
         case .universalBinaries: return .brown
         case .languageFiles: return .gray
         }
@@ -93,6 +109,66 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
             $0 != .smartScan && $0 != .purgeableSpace && !appModifying.contains($0)
         }
     }
+
+    // MARK: Category sets
+    //
+    // Three explicit sets answer three different questions. A category can be
+    // in any combination of them; `CategoryRulesTests` pins every category's
+    // membership, so a new case without a decision for all three fails a test.
+
+    // (a) Smart Scan, scheduled scans, scheduled cleaning and the headline
+    // "junk found" total cover every `scannable` category except these. They
+    // act on the user's own work (`git worktree remove`), are user data (model
+    // downloads) or are review-only (AI agent app data: every row starts
+    // unselected and is removed per category), so they are cleaned only from
+    // their own category screen. Worktrees and models can be added back to a
+    // manual Smart Scan (a2); scheduled scans never include them.
+    static var smartScanExcluded: Set<CleaningCategory> {
+        [.gitWorktrees, .localAIModels, .aiAgentData]
+    }
+
+    static var smartScannable: [CleaningCategory] {
+        scannable.filter { !smartScanExcluded.contains($0) }
+    }
+
+    // (a2) Categories of (a) that the user can add to a manual Smart Scan:
+    // "Add to Smart Scan" on the Overview or a toggle in Settings, stored
+    // under this key. Adding one adds only its scan; the Overview still never
+    // counts, selects or cleans it (b), and scheduled scans keep
+    // `smartScannable`. AI agent data stays review-only.
+    var smartScanOptInKey: String? {
+        switch self {
+        case .gitWorktrees: return GitWorktreeSettings.includeInSmartScanKey
+        case .localAIModels: return LocalAIModels.includeInSmartScanKey
+        default: return nil
+        }
+    }
+
+    static var smartScanOptional: [CleaningCategory] {
+        scannable.filter { $0.smartScanOptInKey != nil && !smartScannable.contains($0) }
+    }
+
+    /// What a manual Smart Scan covers: `smartScannable` plus the optional
+    /// categories added in `defaults`, in `scannable` order.
+    static func smartScanCategories(defaults: UserDefaults = .standard) -> [CleaningCategory] {
+        scannable.filter { category in
+            smartScannable.contains(category)
+                || (smartScanOptional.contains(category) && category.smartScanOptInKey.map(defaults.bool(forKey:)) == true)
+        }
+    }
+
+    // (b) Categories the Overview never counts, selects or cleans. They stay
+    // out of `AppState.totalSelectedSize`, the Clean button, the category
+    // checkbox and every `cleanAll` (manual, scheduled, Full Disk Access
+    // retry), even when their category screen was scanned. Always a superset
+    // of `smartScanExcluded`. Docker is scanned by Smart Scan (a) but its
+    // prune and volume rows run only from its own screen.
+    static var overviewExcluded: Set<CleaningCategory> {
+        [.dockerCache, .gitWorktrees, .localAIModels, .aiAgentData]
+    }
+
+    // (c) Categories whose removal needs the per-risk acknowledgement sheet:
+    // `RemovalRisk.requiresAcknowledgement`.
 
     // Categories that rewrite app bundles in place (binary thinning,
     // localization stripping) instead of deleting junk.
@@ -143,6 +219,10 @@ struct CleanableItem: Identifiable, Hashable {
     /// runtime disk-image identifier from `simctl runtime list`.
     static let simctlRuntimePathPrefix = "simctl-runtime:"
 
+    /// Path prefix for virtual Local AI Models rows removed with
+    /// `ollama rm <name>`. Never a filesystem path.
+    static let ollamaModelPathPrefix = "ollama-model:"
+
     let id = UUID()
     let name: String
     let path: String
@@ -150,21 +230,113 @@ struct CleanableItem: Identifiable, Hashable {
     let category: CleaningCategory
     var isSelected: Bool
     let lastModified: Date?
+    /// Optional second line shown under the name instead of the path
+    /// (Local AI Models: model kind and sharing caveats; AI Agent Data: what
+    /// the folder is).
+    var detail: String? = nil
+    /// Rows that can hold data the user cannot re-download (Maven's `~/.m2`,
+    /// NuGet packages, every model row). They start unselected and only a
+    /// click on the row itself selects them: see `isExcludedFromBulkSelection`.
+    var selectOnlyByHand: Bool = false
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
-    /// True for action-only items (Docker prune, simctl runtimes) that have
-    /// no real filesystem path to reveal in Finder.
+    /// True for action-only items (Docker prune, simctl runtimes, Ollama
+    /// models) that have no real filesystem path to reveal in Finder.
     var isActionItem: Bool {
-        path.isEmpty || path.hasPrefix(Self.simctlRuntimePathPrefix)
+        path.isEmpty
+            || path.hasPrefix(Self.simctlRuntimePathPrefix)
+            || path.hasPrefix(Self.ollamaModelPathPrefix)
+            || path.hasPrefix(DockerSupport.actionPathPrefix)
+            || path.hasPrefix(WorktreeArtifactSupport.rowPathPrefix)
+    }
+
+    /// Set on Git Worktrees rows: what git reported at scan time, including
+    /// the repository the clean step runs `git worktree remove` in.
+    var gitWorktree: GitWorktreeReport?
+
+    /// Set on "Artifacts in <repo · branch>" rows: the ignored build folders
+    /// of one worktree that stays in place. Never set together with
+    /// `gitWorktree`.
+    var worktreeArtifacts: WorktreeArtifactsReport?
+
+    /// Protected worktrees and orphans git does not know about are listed so
+    /// the user sees why they stay, but they can never be selected. Prunable
+    /// orphans can: their action is `git worktree prune`. Artifact rows of a
+    /// worktree in use, locked or active as an agent worktree are blocked too.
+    var isSelectionBlocked: Bool {
+        (gitWorktree?.verdict.blocksSelection ?? false) || (worktreeArtifacts?.blocker != nil)
+    }
+
+    /// Ollama rows are `ollama-model:<name>#<digest>`. `#` cannot occur in a
+    /// valid model name, so the first one separates the digest recorded at
+    /// scan time (checked again right before `ollama rm`).
+    private var ollamaPathPayload: Substring? {
+        guard category == .localAIModels, path.hasPrefix(Self.ollamaModelPathPrefix) else { return nil }
+        return path.dropFirst(Self.ollamaModelPathPrefix.count)
+    }
+
+    var ollamaModelName: String? {
+        guard let payload = ollamaPathPayload else { return nil }
+        let name = String(payload.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+        return name.isEmpty ? nil : name
+    }
+
+    var ollamaModelDigest: String? {
+        guard let payload = ollamaPathPayload,
+              let hash = payload.firstIndex(of: "#")
+        else { return nil }
+        let digest = String(payload[payload.index(after: hash)...])
+        return digest.isEmpty ? nil : digest
     }
 
     var simctlRuntimeIdentifier: String? {
         guard path.hasPrefix(Self.simctlRuntimePathPrefix) else { return nil }
         let id = String(path.dropFirst(Self.simctlRuntimePathPrefix.count))
         return id.isEmpty ? nil : id
+    }
+
+    /// The docker prune behind a virtual Docker Cache row, if this is one.
+    var dockerPruneAction: DockerSupport.PruneAction? {
+        category == .dockerCache ? DockerSupport.action(forPath: path) : nil
+    }
+
+    /// The exact docker command behind a Docker Cache row, including the
+    /// volume names a volumes row removes.
+    var dockerCommandLine: String? {
+        category == .dockerCache ? DockerSupport.commandLine(forPath: path) : nil
+    }
+
+    /// What the row adds to its category's total. An artifact row is a part
+    /// of its worktree's row, which already counts those bytes.
+    var sizeInCategoryTotal: Int64 {
+        worktreeArtifacts == nil ? size : 0
+    }
+
+    /// Rows whose removal cannot be undone by any download or rebuild, and
+    /// worktree artifact rows (a bulk selection must not delete build
+    /// folders next to whole worktrees). Bulk selection (Select visible, the
+    /// category checkbox) skips them; only a click on the row itself selects one.
+    var requiresExplicitSelection: Bool {
+        worktreeArtifacts != nil || (dockerPruneAction?.requiresExplicitSelection ?? false)
+    }
+
+    /// The one rule every bulk selection path obeys: select all, the category
+    /// checkbox, "Select visible" and `AppState.setSelection(true, …)` skip a
+    /// row for which this is true. Only a click on the row itself can select
+    /// it (and then only if `isSelectionBlocked` allows). ORs every reason a
+    /// category has: hand-select-only rows (Maven, NuGet, model rows), rows
+    /// that erase unrecoverable data or delete build folders next to whole
+    /// worktrees (`requiresExplicitSelection`: Docker volumes, worktree
+    /// artifact rows) and rows that cannot be removed at all
+    /// (`isSelectionBlocked`: protected and unlisted worktrees, artifact rows
+    /// of a busy worktree). A row whose owning app runs (AI Agent Data) is
+    /// blocked by `AppState.isExcludedFromBulkSelection`, which adds that live
+    /// condition to this one.
+    var isExcludedFromBulkSelection: Bool {
+        selectOnlyByHand || requiresExplicitSelection || isSelectionBlocked
     }
 
     func hash(into hasher: inout Hasher) {
@@ -183,12 +355,29 @@ struct CategoryResult: Identifiable {
     let category: CleaningCategory
     var items: [CleanableItem]
     var totalSize: Int64
+    /// Context shown above the list (for example "Ollama is not running", or
+    /// how much Docker Desktop's disk image really occupies). Already
+    /// localized; not part of the totals and not a cleanable item.
+    var notes: [String] = []
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
     }
 
     var itemCount: Int { items.count }
+
+    /// The result left after a clean removed `cleanedPaths`, keeping the
+    /// notes; nil when nothing remains.
+    func removingItems(at cleanedPaths: Set<String>) -> CategoryResult? {
+        let remaining = items.filter { !cleanedPaths.contains($0.path) }
+        guard !remaining.isEmpty else { return nil }
+        return CategoryResult(
+            category: category,
+            items: remaining,
+            totalSize: remaining.reduce(0) { $0 + $1.sizeInCategoryTotal },
+            notes: notes
+        )
+    }
 }
 
 // MARK: - Schedule Settings
@@ -224,7 +413,7 @@ struct ScheduleConfig: Codable {
     var interval: ScheduleInterval = .daily
     var autoClean: Bool = false
     var autoPurge: Bool = false
-    var categoriesToScan: [CleaningCategory] = CleaningCategory.scannable
+    var categoriesToScan: [CleaningCategory] = CleaningCategory.smartScannable
     var lastRunDate: Date?
     var nextRunDate: Date?
     var notifyOnCompletion: Bool = true

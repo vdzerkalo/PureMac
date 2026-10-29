@@ -146,7 +146,11 @@ Smart Scan checks each category in sequence and reports progress as files are fo
 - **Xcode Junk** - DerivedData, Archives, simulator caches, downloaded simulator runtimes (deleted via `simctl runtime delete`; never auto-selected), and XcodeBuildMCP or MobileBuildMCP DerivedData (never auto-selected, so scheduled cleanup leaves it alone; manual cleanup moves it to the Trash while holding the tool's storage lock, which does not detect a running build)
 - **Brew Cache** - Homebrew download caches within approved cache locations
 - **Node Cache** - npm, yarn classic, pnpm content-addressable store
-- **Docker Cache** - images, containers, build cache
+- **Dev Tool Caches** - Bun, uv, pip, Poetry, CocoaPods, Swift Package Manager, Gradle, Cargo, Go, Deno, Dart pub, Playwright, Puppeteer, node-gyp, and Electron download or build caches, one row per cache location; Maven and NuGet are listed but never auto-selected. uv and Go are cleaned with their own commands, and Gradle is skipped while it is running. See [Dev Tool Caches](docs/DEV-TOOL-CACHES.md)
+- **Docker Cache** - Docker Desktop and OrbStack file caches, plus build cache, stopped containers, dangling and unused images, and volumes (volumes need an explicit click). Each row runs its own `docker ... prune` (volumes: `docker volume rm` on the listed names) and shows the exact command. Removed only from its own screen after each risk is confirmed, never from the Overview. See [Docker Cache](docs/DOCKER.md)
+- **Git Worktrees** - leftover worktrees from AI agents and old branches, judged only by what git reports. Removed with `git worktree remove` (never `--force`); worktrees with uncommitted changes, unpushed commits, a stash, a lock, an open process or a nested repository in an ignored folder are protected. Not part of Smart Scan, the Overview or scheduled cleaning; only merged, idle worktrees start selected. Worktrees that cannot be removed also get an opt-in "Artifacts" row that deletes only their git-ignored build folders (`node_modules`, `.next`, `dist`, …) and leaves the worktree intact. See [Git Worktrees](docs/GIT-WORKTREES.md)
+- **Local AI Models** - Ollama models and Hugging Face downloads, one row per model with size and date; never auto-selected, skipped by Smart Scan, the Overview and scheduled cleanup, and removed permanently only after each risk is confirmed. Ollama models are removed through Ollama (its API, or `ollama rm` when the API is unreachable), Hugging Face repos with `hf cache rm` or by deleting that one validated folder. See [Local AI Models](docs/LOCAL-AI-MODELS.md)
+- **AI Agent Data** - review-only list of large, regenerable data of Claude Desktop, Codex, Antigravity, and Cursor (simulator build output, plugin and recording backups, caches). Never preselected, never in Smart Scan or scheduled cleaning; moves to the Trash only while the app is not running. See [AI agent data](docs/AI-AGENT-DATA.md)
 
 > **On "purgeable space":** PureMac shows your APFS purgeable space in the storage breakdown for transparency, but it deliberately does **not** list it as junk to delete. Purgeable space is reserved and reclaimed by macOS itself - no third-party app can reliably free it, and even the Finder's purgeable figure is known to be inaccurate. Cleaners that claim to "reclaim purgeable space" are overpromising. We'd rather be honest than impressive.
 
@@ -158,7 +162,7 @@ The **Storage** tab in Apple Features measures known model assets, downloaded sc
 
 Local iPhone and iPad backups have a separate manual review. Nothing is preselected or scheduled. Selected backups move to the Trash after confirmation and fresh checks for changes, symbolic links, and exclusions. Keep any backup you may need to restore a device; space is not reclaimed until the Trash is emptied.
 
-**Space Explorer** measures the allocated space inside a folder you choose. Drill into directories, compare their sizes, and reveal an item in Finder. Packages are measured without exposing their contents as navigable folders. Skipped and inaccessible items are reported.
+**Space Explorer** measures the allocated space inside a folder you choose. Drill into directories, compare their sizes, and reveal an item in Finder. Packages are measured without exposing their contents as navigable folders. Skipped and inaccessible items are reported. A read-only treemap mode draws the same sizes as proportional tiles ([details](docs/SPACE-TREEMAP.md)).
 
 **Duplicate Finder** groups files with matching sizes and SHA-256 content hashes. Hard links are not counted as separate recoverable copies. Every group keeps one protected copy; selected extras move to the Trash only after confirmation and a fresh identity/content check. Emptying the Trash is a separate step.
 
@@ -258,6 +262,7 @@ Key components:
 - **PermissionCoordinator** - Single source of truth for FDA prompts, polling, and post-grant retries
 - **FullDiskAccessManager** - TCC probe + registration; broad probe paths (Mail, Safari, Messages, AddressBook, Calendars) so macOS catalogs the bundle reliably
 - **CleaningEngine** - Symlink-resistant deletion with an allow-list, NSAppleScript-based admin escalation for root-owned items, NUL-separated path staging for xargs
+- **Developer cleanup** - Dev Tool Caches, Docker, Git Worktrees, Local AI Models and AI Agent Data share one bulk-selection rule, three category sets (Smart Scan, Overview, risk sheet) and one Docker deny list: map, safety model, debugging and a checklist for adding a category in [docs/DEVELOPER-CLEANUP.md](docs/DEVELOPER-CLEANUP.md)
 
 ## Security
 
@@ -266,6 +271,7 @@ Key components:
 - Admin escalation is gated by its own explicit allow-list; root-owned items outside those permitted roots are refused.
 - System app protection: Apple's bundles cannot be uninstalled, regardless of selection.
 - Manual destructive workflows require confirmation. Exact duplicates retain one protected copy and recheck files before moving extras to the Trash. Scheduled auto-clean remains unattended after enablement.
+- Git worktree cleanup removes only through git: signals come from git commands, the worktree is re-inspected right before removal, `git worktree remove` runs without `--force`, symlinks are never followed, merged branches are deleted only with `git branch -d` and only if enabled, build-folder cleanup inside a kept worktree refuses symlinks, tracked files and busy worktrees, and nothing else in `.claude` is touched. Details and tests: [docs/GIT-WORKTREES.md](docs/GIT-WORKTREES.md).
 
 If you find a vulnerability, please open a private security advisory rather than a public issue.
 
