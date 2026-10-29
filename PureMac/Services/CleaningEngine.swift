@@ -423,45 +423,44 @@ actor CleaningEngine {
     /// Returns a friendly error when no CLI is installed or the daemon is
     /// not running — common with OrbStack, which only runs on demand.
     func pruneDockerSystem() async -> (freed: Int64, error: String?) {
-        let dockerBinPaths = ["/usr/local/bin/docker", "/opt/homebrew/bin/docker"]
-        guard let dockerBin = dockerBinPaths.first(where: { fileManager.isExecutableFile(atPath: $0) }) else {
+        guard let dockerBin = DockerSupport.locateBinary(homeDirectory: homeDirectory.path) else {
             return (0, "Docker CLI not found — install Docker Desktop or OrbStack")
         }
 
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: dockerBin)
-        task.arguments = ["system", "prune", "-f"]
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        task.standardOutput = stdoutPipe
-        task.standardError = stderrPipe
+        // BrewProcessRunner drains both pipes while waiting (prune lists every
+        // deleted object and can overflow the 64 KB pipe buffer) and enforces
+        // a timeout, so a wedged daemon can't hang the clean forever.
+        let result: BrewProcessOutput
         do {
-            try task.run()
+            result = try await BrewProcessRunner.run(
+                executableURL: URL(fileURLWithPath: dockerBin),
+                arguments: ["system", "prune", "-f"],
+                timeout: DockerSupport.pruneTimeout
+            )
+        } catch is CancellationError {
+            return (0, nil)
+        } catch ApplicationUpdaterError.timedOut {
+            Logger.shared.log("docker system prune timed out after \(Int(DockerSupport.pruneTimeout))s", level: .error)
+            return (0, "docker system prune did not finish in time — check Docker Desktop or OrbStack, then clean again")
         } catch {
             Logger.shared.log("docker system prune failed to launch: \(error.localizedDescription)", level: .error)
             return (0, "Couldn't run docker system prune: \(error.localizedDescription)")
         }
-        // Drain both pipes BEFORE waiting: prune lists every deleted object
-        // and can overflow the 64 KB pipe buffer, deadlocking waitUntilExit.
-        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        task.waitUntilExit()
 
-        guard task.terminationStatus == 0 else {
-            let stderrText = String(data: errData, encoding: .utf8) ?? ""
-            if stderrText.contains("Cannot connect") || stderrText.contains("dial unix")
-                || stderrText.contains("daemon") {
+        guard result.status == 0 else {
+            let stderrText = String(data: result.stderr, encoding: .utf8) ?? ""
+            if DockerSupport.isDaemonUnavailable(stderr: stderrText) {
                 return (0, "Docker isn't running — start Docker Desktop or OrbStack, then clean again")
             }
-            Logger.shared.log("docker system prune exited \(task.terminationStatus): \(stderrText)", level: .error)
-            return (0, "docker system prune failed (exit \(task.terminationStatus))")
+            Logger.shared.log("docker system prune exited \(result.status): \(stderrText)", level: .error)
+            return (0, "docker system prune failed (exit \(result.status))")
         }
 
         // Final line reads "Total reclaimed space: 1.234GB" ("0B" when idle).
-        let output = String(data: outData, encoding: .utf8) ?? ""
+        let output = String(data: result.stdout, encoding: .utf8) ?? ""
         if let line = output.split(separator: "\n").last(where: { $0.contains("Total reclaimed space:") }),
            let raw = line.split(separator: ":").last?.trimmingCharacters(in: .whitespaces),
-           let bytes = parseDockerBytes(raw) {
+           let bytes = DockerSupport.parseHumanBytes(raw) {
             Logger.shared.log("docker system prune reclaimed \(bytes) bytes", level: .info)
             return (bytes, nil)
         }
@@ -496,29 +495,6 @@ actor CleaningEngine {
 
         Logger.shared.log("Deleted simulator runtime \(identifier) (~\(reportedSize) bytes)", level: .info)
         return (reportedSize, true, nil)
-    }
-
-    /// Parse Docker's compact size format ("1.23GB", "456MB", "789kB", "0B").
-    private func parseDockerBytes(_ s: String) -> Int64? {
-        let trimmed = s.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        let units: [(String, Double)] = [
-            ("TB", 1_000_000_000_000),
-            ("GB", 1_000_000_000),
-            ("MB", 1_000_000),
-            ("kB", 1_000),
-            ("KB", 1_000),
-            ("B", 1),
-        ]
-        for (suffix, multiplier) in units {
-            if trimmed.hasSuffix(suffix) {
-                let numberPart = String(trimmed.dropLast(suffix.count))
-                if let value = Double(numberPart) {
-                    return Int64(value * multiplier)
-                }
-            }
-        }
-        return nil
     }
 
     // MARK: - Purgeable Space
