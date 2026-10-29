@@ -179,10 +179,11 @@ struct CleanableItem: Identifiable, Hashable {
     /// the repository the clean step runs `git worktree remove` in.
     var gitWorktree: GitWorktreeReport?
 
-    /// Protected and orphan worktrees are listed so the user sees why they
-    /// stay, but they can never be selected for removal.
+    /// Protected worktrees and orphans git does not know about are listed so
+    /// the user sees why they stay, but they can never be selected. Prunable
+    /// orphans can: their action is `git worktree prune`.
     var isSelectionBlocked: Bool {
-        gitWorktree?.verdict.status.blocksSelection ?? false
+        gitWorktree?.verdict.blocksSelection ?? false
     }
 
     var simctlRuntimeIdentifier: String? {

@@ -6,9 +6,16 @@ actor CleaningEngine {
     /// XcodeBuildMCPDerivedDataSupport path checks on symlinked homes.
     private let homeDirectory: URL
     private let binaryThinner = BinaryThinner()
+    /// Read at clean time so the re-check before a worktree removal uses the
+    /// settings in force now, not those of the scan.
+    private let worktreeSettings: @Sendable () -> GitWorktreeSettings
 
-    init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    init(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        worktreeSettings: @escaping @Sendable () -> GitWorktreeSettings = { GitWorktreeSettings.current() }
+    ) {
         self.homeDirectory = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        self.worktreeSettings = worktreeSettings
     }
 
     struct CleaningResult {
@@ -30,6 +37,9 @@ actor CleaningEngine {
         // "Couldn't clean everything" alert.
         var protectedPaths: Set<String> = []
         var skippedProtected: Int { protectedPaths.count }
+        /// Things worth telling the user about a clean that still counted as
+        /// done, e.g. a merged branch git refused to delete.
+        var notes: [String] = []
     }
 
     // MARK: - Public API
@@ -110,6 +120,9 @@ actor CleaningEngine {
                 }
                 if let error = outcome.error {
                     result.errors.append(error)
+                }
+                if let note = outcome.note {
+                    result.notes.append(note)
                 }
                 continue
             }
@@ -487,31 +500,62 @@ actor CleaningEngine {
     /// and unpushed work can all change after the scan), then runs
     /// `git worktree remove` without --force. Protected or orphan verdicts,
     /// and anything git itself refuses, leave the worktree untouched.
-    func removeGitWorktree(_ item: CleanableItem) async -> (freed: Int64, cleaned: Bool, error: String?) {
+    ///
+    /// A row scanned as a prunable orphan (folder already gone) gets
+    /// `git worktree prune` instead, and only while it is still one; a row
+    /// scanned as anything else is never pruned. With the "delete merged
+    /// branch" setting on, a worktree whose fresh verdict is Safe to delete
+    /// also loses its branch via `git branch -d`; a refusal is returned as
+    /// a note and does not undo the removal.
+    func removeGitWorktree(_ item: CleanableItem) async -> (freed: Int64, cleaned: Bool, error: String?, note: String?) {
         guard let report = item.gitWorktree, let repository = report.repositoryPath else {
-            return (0, false, "Not a git worktree PureMac can remove: \(item.name)")
+            return (0, false, "Not a git worktree PureMac can remove: \(item.name)", nil)
         }
         guard let gitPath = GitWorktreeScanner.locateGit() else {
-            return (0, false, "git not found — install Homebrew git or the Xcode command-line tools")
+            return (0, false, "git not found — install Homebrew git or the Xcode command-line tools", nil)
         }
-        let scanner = GitWorktreeScanner(homeDirectory: homeDirectory.path, gitPath: gitPath)
+        let settings = worktreeSettings()
+        var scanner = GitWorktreeScanner(homeDirectory: homeDirectory.path, gitPath: gitPath)
+        scanner.inactiveDays = settings.inactiveDays
+        scanner.baseBranchOverride = settings.baseBranch
         guard let fresh = await scanner.reinspect(path: item.path, repository: repository) else {
-            return (0, false, "\(item.name) is no longer a worktree of \(repository)")
+            return (0, false, "\(item.name) is no longer a worktree of \(repository)", nil)
+        }
+        if report.verdict.isPrunableOrphan || fresh.verdict.isPrunableOrphan {
+            guard report.verdict.isPrunableOrphan, fresh.verdict.isPrunableOrphan else {
+                Logger.shared.log("Skipped worktree \(item.path): its state changed since the scan", level: .warning)
+                return (0, false, "\(item.name): the folder appeared or disappeared since the scan; rescan first", nil)
+            }
+            if let error = await scanner.prune(path: item.path, repository: repository) {
+                Logger.shared.log("git worktree prune for \(item.path) refused: \(error)", level: .warning)
+                return (0, false, "\(item.name): \(error)", nil)
+            }
+            Logger.shared.log("Pruned missing worktree \(item.path) in \(repository)", level: .info)
+            return (0, true, nil, nil)
         }
         guard !fresh.verdict.status.blocksSelection else {
             let why = fresh.verdict.reasons.map(\.localizedDescription).joined(separator: ", ")
             Logger.shared.log("Skipped worktree \(item.path): \(fresh.verdict.status.rawValue) (\(why))", level: .warning)
-            return (0, false, "\(fresh.verdict.status.label): \(why) — \(item.name)")
+            return (0, false, "\(fresh.verdict.status.label): \(why) — \(item.name)", nil)
         }
         if let error = await scanner.remove(path: item.path, repository: repository) {
             Logger.shared.log("git worktree remove \(item.path) refused: \(error)", level: .warning)
-            return (0, false, "\(item.name): \(error)")
+            return (0, false, "\(item.name): \(error)", nil)
         }
         guard !fileManager.fileExists(atPath: item.path) else {
-            return (0, false, "\(item.name): git reported success but the folder is still there")
+            return (0, false, "\(item.name): git reported success but the folder is still there", nil)
         }
         Logger.shared.log("Removed worktree \(item.path) (~\(item.size) bytes)", level: .info)
-        return (item.size, true, nil)
+        var note: String?
+        if settings.deleteMergedBranch, fresh.verdict.status == .safeToDelete, fresh.branch != nil {
+            if let kept = await scanner.deleteMergedBranch(of: fresh, repository: repository) {
+                Logger.shared.log("\(item.name): \(kept)", level: .warning)
+                note = "\(item.name): \(kept)"
+            } else {
+                Logger.shared.log("Deleted merged branch \(fresh.branch ?? "") in \(repository)", level: .info)
+            }
+        }
+        return (item.size, true, nil, note)
     }
 
     // MARK: - Simulator Runtimes

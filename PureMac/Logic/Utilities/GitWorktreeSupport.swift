@@ -15,6 +15,19 @@ enum GitWorktreeSupport {
     /// often has no process whose working directory is inside it.
     static let recentAgentActivityWindow: TimeInterval = 24 * 60 * 60
 
+    /// Folder names that hold regenerable build output. The one list behind
+    /// the "artifacts X · code Y" size split and the activity walk. Keep it
+    /// in sync with `Purger.artifactNames` in cli/Sources/puremac/Core/Purger.swift:
+    /// every name here must be there too, except `artifactNamesOnlyHere`
+    /// (checked by GitWorktreeArtifactListTests).
+    static let artifactDirectoryNames: Set<String> = [
+        "node_modules", ".next", "build", "dist", "DerivedData", ".build", "target", ".venv", "venv", "__pycache__",
+    ]
+    /// Names the CLI's project purger leaves out because they are too
+    /// generic there. Inside a worktree git settles whether a folder is
+    /// ignored build output, so they are counted here.
+    static let artifactNamesOnlyHere: Set<String> = ["build", "dist"]
+
     // MARK: - git worktree list --porcelain -z
 
     struct ListedWorktree: Equatable {
@@ -179,7 +192,9 @@ enum GitWorktreeSupport {
         case protected
         case orphan
 
-        /// Protected and orphan rows can be shown but never selected.
+        /// Protected and orphan rows are not removable as worktrees.
+        /// `Verdict.blocksSelection` is the effective rule: it lets prunable
+        /// orphans through for `git worktree prune`.
         var blocksSelection: Bool { self == .protected || self == .orphan }
     }
 
@@ -204,6 +219,14 @@ enum GitWorktreeSupport {
     struct Verdict: Equatable {
         let status: Status
         let reasons: [Reason]
+
+        /// A worktree whose folder is already gone and that git still lists.
+        /// The only orphan with an action: `git worktree prune`.
+        var isPrunableOrphan: Bool { status == .orphan && reasons == [.prunable] }
+
+        /// What the UI and the clean step enforce: protected rows and orphans
+        /// git does not know about can never be selected. Prunable orphans can.
+        var blocksSelection: Bool { status.blocksSelection && !isPrunableOrphan }
     }
 
     static func classify(
@@ -285,6 +308,31 @@ enum GitWorktreeSupport {
         return url.deletingLastPathComponent().path
     }
 
+    /// Relative paths of the ignored folders in a `git status --ignored=matching`
+    /// listing whose name is a build-artifact name ("apps/web/.next/" becomes
+    /// "apps/web/.next"). Only folders git itself reports as ignored count.
+    static func artifactDirectories(inIgnored ignored: [String]) -> [String] {
+        ignored.compactMap { entry in
+            guard entry.hasSuffix("/") else { return nil }
+            let relative = String(entry.dropLast())
+            guard let name = relative.split(separator: "/").last, artifactDirectoryNames.contains(String(name)) else { return nil }
+            return relative
+        }
+    }
+
+    /// True for a name that is safe to hand to git as a revision: no leading
+    /// dash (option injection), no whitespace, control or revision-syntax
+    /// characters. Used for the base-branch setting.
+    static func isValidRevisionName(_ name: String) -> Bool {
+        guard !name.isEmpty, !name.hasPrefix("-"), !name.hasPrefix("/"), !name.hasSuffix("/"), !name.hasSuffix(".lock"),
+              !name.contains(".."), !name.contains("@{")
+        else { return false }
+        let forbidden = CharacterSet.whitespacesAndNewlines
+            .union(.controlCharacters)
+            .union(CharacterSet(charactersIn: "~^:?*[\\"))
+        return name.rangeOfCharacter(from: forbidden) == nil
+    }
+
     /// True when `path` equals `root` or sits inside it.
     static func isInside(_ path: String, root: String) -> Bool {
         let normalizedRoot = root.hasSuffix("/") ? String(root.dropLast()) : root
@@ -326,6 +374,16 @@ extension GitWorktreeSupport.Reason {
             ? String(localized: "merged, no recent activity")
             : String(localized: "merged, idle for \(days) days")
         }
+    }
+}
+
+extension GitWorktreeReport {
+    /// "artifacts 1.2 GB · code 40 MB"; nil for a worktree with no size.
+    var sizeBreakdownText: String? {
+        guard totalBytes > 0 else { return nil }
+        let artifacts = ByteCountFormatter.string(fromByteCount: artifactBytes, countStyle: .file)
+        let code = ByteCountFormatter.string(fromByteCount: codeBytes, countStyle: .file)
+        return String(localized: "artifacts \(artifacts) · code \(code)")
     }
 }
 

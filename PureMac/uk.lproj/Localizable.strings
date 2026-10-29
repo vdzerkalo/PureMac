@@ -971,3 +971,20 @@
 "Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Скопіювати короткий бриф з усіма знайденими елементами, щоб AI-агент перевірив ризики разом з вами до видалення.";
 "Permanent · git worktree remove (branch is kept)" = "Назавжди · git worktree remove (гілка лишається)";
 "PureMac will not remove this worktree." = "PureMac не видалятиме цей worktree.";
+
+/* Git Worktrees settings, prune and size breakdown */
+"Idle after: %lld days" = "Неактивний понад: %lld дн.";
+"A merged worktree without activity for this long is Safe to delete; a more recent one needs review." = "Злитий worktree без активності так довго можна видалити; свіжіший потребує перевірки.";
+"Base branch" = "Основна гілка";
+"origin/HEAD, origin/main, origin/master, main, master" = "origin/HEAD, origin/main, origin/master, main, master";
+"Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged." = "Залиште порожнім, щоб перебрати їх по черзі. Якщо такої гілки в репозиторії немає, там нічого не вважається злитим.";
+"Delete the merged branch after removing a worktree" = "Видаляти злиту гілку після видалення worktree";
+"Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged." = "Виконує git branch -d, ніколи -D, лише для worktree, які можна видалити, і лише якщо git згоден, що гілку злито.";
+"Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep." = "Окрім списку проєктів Claude Code і папок worktree Cursor та Codex, у цих папках шукають репозиторії на три рівні вглиб.";
+"Remove folder" = "Вилучити папку";
+"Add Search Folder…" = "Додати папку пошуку…";
+"Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Гілки worktree, які можна видалити, видаляє git branch -d, лише якщо git згоден, що їх злито. Коміти в безпеці, лише якщо вони злиті, запушені або є в іншій гілці; PureMac перевіряє це ще раз безпосередньо перед видаленням.";
+"git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not." = "git worktree prune видаляє лише записи git про worktree, чиєї папки вже немає; файли не чіпає. Діє на всі відсутні worktree цього репозиторію, вибрані чи ні.";
+"artifacts %@ · code %@" = "артефакти %@ · код %@";
+"Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Назавжди · git worktree prune (забуває відсутню папку, файли не видаляє)";
+"Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Назавжди · git worktree remove (злиту гілку видаляє git branch -d)";

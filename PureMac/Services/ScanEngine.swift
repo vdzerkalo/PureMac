@@ -905,22 +905,37 @@ actor ScanEngine {
     /// One row per linked git worktree found in agent folders and Claude
     /// Code's project list (see GitWorktreeScanner). Only Safe to delete
     /// rows start selected; Protected and orphan rows are listed with their
-    /// reasons but cannot be selected. Without git (no Homebrew git and no
+    /// reasons but cannot be selected (prunable orphans can, for
+    /// `git worktree prune`, never preselected). Inactive days, extra
+    /// search folders and the base branch come from Settings
+    /// (GitWorktreeSettings). Without git (no Homebrew git and no
     /// developer tools) the category is simply empty.
     private func scanGitWorktrees() async -> CategoryResult {
         guard let gitPath = GitWorktreeScanner.locateGit() else {
             Logger.shared.log("Git Worktrees: git not found", level: .info)
             return CategoryResult(category: .gitWorktrees, items: [], totalSize: 0)
         }
-        let reports = await GitWorktreeScanner(homeDirectory: home, gitPath: gitPath).scan()
+        let settings = GitWorktreeSettings.current()
+        var scanner = GitWorktreeScanner(homeDirectory: home, gitPath: gitPath)
+        scanner.inactiveDays = settings.inactiveDays
+        scanner.extraRoots = settings.extraRoots
+        scanner.baseBranchOverride = settings.baseBranch
         var items: [CleanableItem] = []
-        for worktree in reports {
+        for scanned in await scanner.scan() {
             if Task.isCancelled { break }
-            report(worktree.path)
+            report(scanned.path)
+            // Sizes never follow symlinks and are split into ignored build
+            // artifacts and everything else.
+            var worktree = scanned
+            if GitWorktreeScanner.pathExists(worktree.path) {
+                let sizes = GitWorktreeScanner.measure(path: worktree.path, artifactDirectories: worktree.artifactDirectories)
+                worktree.artifactBytes = sizes.artifacts
+                worktree.codeBytes = sizes.code
+            }
             var item = CleanableItem(
                 name: worktree.displayName,
                 path: worktree.path,
-                size: fileManager.fileExists(atPath: worktree.path) ? directorySize(path: worktree.path) : 0,
+                size: worktree.totalBytes,
                 category: .gitWorktrees,
                 isSelected: worktree.verdict.status == .safeToDelete,
                 lastModified: worktree.lastActivity

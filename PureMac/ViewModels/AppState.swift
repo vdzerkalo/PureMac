@@ -96,6 +96,9 @@ final class AppState: ObservableObject {
     @Published var fdaBannerDismissed: Bool = false
     @Published var cleanError: String?
     @Published private(set) var lastCleanupHadFailures = false
+    /// Remarks about a clean that otherwise succeeded, e.g. a merged branch
+    /// git refused to delete. Replaced by every clean, shown in the category.
+    @Published private(set) var lastCleanupNotes: [String] = []
     /// True when the most recent clean error is rooted in a TCC/FDA refusal
     /// (i.e. items survived even the admin pass). MainWindow uses this to
     /// route the user into the PermissionSheet instead of the generic alert.
@@ -902,6 +905,7 @@ final class AppState: ObservableObject {
         scanGeneration = generation
         scanWasCancelled = false
         totalFreedSpace = 0
+        lastCleanupNotes = []
         scanProgress = 0
         scanState = .scanning(progress: 0, currentCategory: "Preparing...")
         if replacingResults {
@@ -982,6 +986,7 @@ final class AppState: ObservableObject {
             totalFreedSpace = result.freedSpace
             if result.itemsCleaned > 0 { lastCleanedDate = Date() }
             if result.itemsCleaned > 0 { Haptics.successWithSound() }
+            lastCleanupNotes = result.notes
 
             let survivors = survivingItems(from: itemsToClean, result: result)
 
@@ -1034,6 +1039,7 @@ final class AppState: ObservableObject {
 
             totalFreedSpace = cleanResult.freedSpace
             if cleanResult.itemsCleaned > 0 { lastCleanedDate = Date() }
+            lastCleanupNotes = cleanResult.notes
 
             if let existing = categoryResults[category] {
                 let cleared = existing.items.filter { cleanResult.cleanedPaths.contains($0.path) }

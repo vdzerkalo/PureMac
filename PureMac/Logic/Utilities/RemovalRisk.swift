@@ -11,7 +11,11 @@ enum RemovalRisk {
     }
 
     /// The risks the user confirms one by one for the items under review.
-    static func risks(for category: CleaningCategory, items: [CleanableItem]) -> [String] {
+    static func risks(
+        for category: CleaningCategory,
+        items: [CleanableItem],
+        worktreeSettings: GitWorktreeSettings = .current()
+    ) -> [String] {
         switch category {
         case .dockerCache:
             var risks = [
@@ -24,11 +28,19 @@ enum RemovalRisk {
             }
             return risks
         case .gitWorktrees:
-            return [
-                String(localized: "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash."),
-                String(localized: "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing."),
-                String(localized: "Close any agent, editor or terminal still using these folders: they lose their working directory."),
-            ]
+            let pruneOnly = items.filter { $0.gitWorktree?.verdict.isPrunableOrphan == true }
+            var risks: [String] = []
+            if items.isEmpty || pruneOnly.count < items.count {
+                risks.append(String(localized: "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash."))
+                risks.append(worktreeSettings.deleteMergedBranch
+                    ? String(localized: "Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing.")
+                    : String(localized: "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing."))
+                risks.append(String(localized: "Close any agent, editor or terminal still using these folders: they lose their working directory."))
+            }
+            if !pruneOnly.isEmpty {
+                risks.append(String(localized: "git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not."))
+            }
+            return risks
         default:
             return []
         }
@@ -41,6 +53,7 @@ enum RemovalRisk {
         if let worktree = item.gitWorktree {
             guard let repository = worktree.repositoryPath else { return "none (display only): \(abbreviate(item.path))" }
             let name = repositories[repository] ?? repository
+            if worktree.verdict.isPrunableOrphan { return "worktree prune \(name)" }
             let relative = GitWorktreeSupport.isInside(item.path, root: repository)
                 ? String(item.path.dropFirst(repository.count + 1))
                 : abbreviate(item.path)
@@ -74,7 +87,8 @@ enum RemovalRisk {
         category: CleaningCategory,
         found: [CleanableItem],
         proposed: Set<UUID>,
-        date: Date = Date()
+        date: Date = Date(),
+        worktreeSettings: GitWorktreeSettings = .current()
     ) -> String {
         let day = ISO8601DateFormatter.string(from: date, timeZone: .current, formatOptions: [.withFullDate])
         let proposedItems = found.filter { proposed.contains($0.id) }
@@ -86,7 +100,11 @@ enum RemovalRisk {
         if !repositories.isEmpty {
             lines.append("Repos: " + repositories.sorted { $0.value < $1.value }
                 .map { "\($0.value) = \(abbreviate($0.key))" }.joined(separator: "; "))
-            lines.append("`worktree remove R:P` = `git -C R worktree remove P` (no --force, branch kept).")
+            lines.append("`worktree remove R:P` = `git -C R worktree remove P` (no --force, "
+                + (worktreeSettings.deleteMergedBranch ? "then `git branch -d` for safe rows)." : "branch kept)."))
+            if found.contains(where: { $0.gitWorktree?.verdict.isPrunableOrphan == true }) {
+                lines.append("`worktree prune R` = `git -C R worktree prune` (folder already gone; git records only).")
+            }
         }
         lines += [
             "✔ = proposed for removal, · = found only.",

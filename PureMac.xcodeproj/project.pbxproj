@@ -22,6 +22,7 @@
 		2BCDC53C5E3AB58442C8E4B0 /* CleaningEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22B679C0120F1E3DDCB27FE2 /* CleaningEngineTests.swift */; };
 		2C3AD1E4511D0F07C8C7C9D1 /* DeviceBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D7ABF3991A1C11BC5728FC6 /* DeviceBackupService.swift */; };
 		2E44E6E9D0318C28B9B1B0E4 /* DockerSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FDDFD24B669166A1C8E95C6 /* DockerSupportTests.swift */; };
+		308A1F98147980E0BF9F65F7 /* GitWorktreeSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8F2CA12DB58DA9D22A2887C /* GitWorktreeSettings.swift */; };
 		30D4A73B94B245DB4EB21B6B /* AppleStorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F9E767232924C819946DAAC /* AppleStorageService.swift */; };
 		340E424F759ACCDE7372F99F /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5ADDC35F31E40780FB5D017 /* Theme.swift */; };
 		39BEE5E2BEC526CCADFC9DDD /* ServicesMenu.strings in Resources */ = {isa = PBXBuildFile; fileRef = 57FBBF8C7EF27C8E09126ED5 /* ServicesMenu.strings */; };
@@ -235,6 +236,7 @@
 		C5963EBBEE5BA6E147700821 /* pl */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = pl; path = pl.lproj/Localizable.strings; sourceTree = "<group>"; };
 		C5ADDC35F31E40780FB5D017 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		C7D81BE7EA5DB17F4A0300AD /* SimulatorRuntimeSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatorRuntimeSupportTests.swift; sourceTree = "<group>"; };
+		C8F2CA12DB58DA9D22A2887C /* GitWorktreeSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitWorktreeSettings.swift; sourceTree = "<group>"; };
 		CB94E06E145558123BB5BFB3 /* Conditions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Conditions.swift; sourceTree = "<group>"; };
 		CEAB8C4EEC46264C55BE4642 /* it */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = it; path = it.lproj/Localizable.strings; sourceTree = "<group>"; };
 		CED1B71D5F9510582E869CFD /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
@@ -367,6 +369,7 @@
 				089D484A0482787027665936 /* DuplicateFinder.swift */,
 				E866A1541D289C69144A5E62 /* FullDiskAccessManager.swift */,
 				EBE437DFAE03B97429F22D56 /* GitWorktreeScanner.swift */,
+				C8F2CA12DB58DA9D22A2887C /* GitWorktreeSettings.swift */,
 				40A3F22FCEF534DE4A2CAD0E /* Haptics.swift */,
 				913E3064AA9BD7BE94A315CF /* MenuBarController.swift */,
 				5C8619CA3ECD70CBBC96475C /* PerformanceInspector.swift */,
@@ -657,6 +660,7 @@
 				B51E5A95BB49A6C0F5273E21 /* FileSize.swift in Sources */,
 				2253F11BDF561B617439C96B /* FullDiskAccessManager.swift in Sources */,
 				4995E9CDB094E9E4C94BEFAD /* GitWorktreeScanner.swift in Sources */,
+				308A1F98147980E0BF9F65F7 /* GitWorktreeSettings.swift in Sources */,
 				AD3AC3AAE336EECF3C3043CE /* GitWorktreeSupport.swift in Sources */,
 				A549D8A39A9E5E70D91B90A6 /* Haptics.swift in Sources */,
 				9E87638A3F12C12D93995DA7 /* LanguageFilesScanner.swift in Sources */,

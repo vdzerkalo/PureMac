@@ -93,6 +93,13 @@ struct CategoryDetailView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
+                if category == .gitWorktrees {
+                    ForEach(appState.lastCleanupNotes, id: \.self) { note in
+                        Label(note, systemImage: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             Spacer(minLength: 16)
             Button {
@@ -253,6 +260,12 @@ struct CategoryDetailView: View {
                                     .font(.caption)
                                     .foregroundStyle(worktree.verdict.status.tint)
                                     .fixedSize(horizontal: false, vertical: true)
+                                if let breakdown = worktree.sizeBreakdownText {
+                                    Text(breakdown)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                }
                             }
                         }
                         .padding(.vertical, 12)
@@ -349,7 +362,13 @@ struct CategoryDetailView: View {
     }
 
     private func removalMethod(_ item: CleanableItem) -> String {
-        if item.gitWorktree != nil {
+        if let worktree = item.gitWorktree {
+            if worktree.verdict.isPrunableOrphan {
+                return String(localized: "Permanent · git worktree prune (forgets the missing folder, deletes no files)")
+            }
+            if GitWorktreeSettings.current().deleteMergedBranch {
+                return String(localized: "Permanent · git worktree remove (merged branch is deleted with git branch -d)")
+            }
             return String(localized: "Permanent · git worktree remove (branch is kept)")
         }
         if item.simctlRuntimeIdentifier != nil {
@@ -398,6 +417,13 @@ private struct CleanupFileRow: View {
                         .font(.system(size: 11))
                         .foregroundStyle(worktree.verdict.status.tint)
                         .lineLimit(2)
+                }
+                if let breakdown = item.gitWorktree?.sizeBreakdownText {
+                    Text(breakdown)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
                 }
             }
             Spacer(minLength: 12)
