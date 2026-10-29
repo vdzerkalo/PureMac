@@ -927,3 +927,14 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* Space Explorer treemap */
+"List" = "Список";
+"Treemap" = "Деревовидна карта";
+"Result view" = "Вигляд результатів";
+"Other (%lld items)" = "Інше (елементів: %lld)";
+"Items too small to draw individually are grouped into this tile." = "Елементи, надто малі для окремого показу, згруповано в цій плитці.";
+"Treemap of allocated space" = "Деревовидна карта зайнятого місця";
+"Folder" = "Папка";
+"Hover a tile to see its name and size. Click a folder to open it." = "Наведіть курсор на плитку, щоб побачити назву й розмір. Клацніть папку, щоб відкрити її.";
+"Skipped and inaccessible items are not included in these sizes." = "Пропущені та недоступні елементи не враховано в цих розмірах.";

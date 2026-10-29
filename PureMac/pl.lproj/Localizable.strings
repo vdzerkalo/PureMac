@@ -927,3 +927,14 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* Space Explorer treemap */
+"List" = "List";
+"Treemap" = "Treemap";
+"Result view" = "Result view";
+"Other (%lld items)" = "Other (%lld items)";
+"Items too small to draw individually are grouped into this tile." = "Items too small to draw individually are grouped into this tile.";
+"Treemap of allocated space" = "Treemap of allocated space";
+"Folder" = "Folder";
+"Hover a tile to see its name and size. Click a folder to open it." = "Hover a tile to see its name and size. Click a folder to open it.";
+"Skipped and inaccessible items are not included in these sizes." = "Skipped and inaccessible items are not included in these sizes.";
