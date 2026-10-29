@@ -878,9 +878,10 @@ actor ScanEngine {
         if !Task.isCancelled,
            let dockerBin = DockerSupport.locateBinary(homeDirectory: home),
            let rows = await dockerDiskUsage(dockerBin: dockerBin) {
-            for estimate in DockerSupport.pruneEstimates(rows) {
+            let dangling = await dockerDanglingEstimate(dockerBin: dockerBin)
+            for estimate in DockerSupport.pruneEstimates(rows, dangling: dangling) {
                 items.append(CleanableItem(
-                    name: dockerPruneItemName(estimate.action),
+                    name: dockerPruneItemName(estimate.action, sizeKnown: estimate.sizeKnown),
                     path: DockerSupport.actionPath(for: estimate.action),
                     size: estimate.bytes,
                     category: .dockerCache,
@@ -895,7 +896,10 @@ actor ScanEngine {
         var note: String?
         if let allocated = DockerSupport.allocatedSize(ofFileAt: dockerRaw), allocated > 0 {
             let size = ByteCountFormatter.string(fromByteCount: allocated, countStyle: .file)
-            note = String(localized: "Docker Desktop's disk image (Docker.raw) uses \(size) on disk. Space freed by these actions returns to macOS a few minutes after cleaning.")
+            // Wording follows docs.docker.com/desktop/troubleshoot-and-support/faqs/macfaqs/
+            // (see docs/DOCKER.md): "a few minutes", and the reclaim image is
+            // Docker's own documented fallback, never run by PureMac.
+            note = String(localized: "Docker Desktop's disk image (Docker.raw) uses \(size) on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself.")
         }
         return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize, note: note)
     }
@@ -950,17 +954,62 @@ actor ScanEngine {
         return CategoryResult(category: .languageFiles, items: items, totalSize: totalSize)
     }
 
-    private func dockerPruneItemName(_ action: DockerSupport.PruneAction) -> String {
+    private func dockerPruneItemName(_ action: DockerSupport.PruneAction, sizeKnown: Bool) -> String {
         switch action {
         case .buildCache:
             return String(localized: "Docker build cache")
         case .stoppedContainers:
             return String(localized: "Stopped Docker containers")
+        case .danglingImages:
+            return sizeKnown
+                ? String(localized: "Dangling Docker images (untagged leftovers)")
+                : String(localized: "Dangling Docker images (untagged leftovers, size not estimated)")
         case .unusedImages:
-            return String(localized: "Unused Docker images (downloaded again when needed)")
+            return String(localized: "All unused Docker images (pulled or rebuilt when needed)")
         case .unusedVolumes:
             return String(localized: "Unused Docker volumes (may contain data such as databases)")
         }
+    }
+
+    /// Dangling images `docker image prune -f` would remove, with a
+    /// conservative size (see DockerSupport.danglingEstimate). nil when there
+    /// are none or the lookup failed; a failed `df -v` only costs the size.
+    private func dockerDanglingEstimate(dockerBin: String) async -> DockerSupport.DanglingEstimate? {
+        guard !Task.isCancelled else { return nil }
+        let ids: [String]
+        do {
+            let listed = try await BrewProcessRunner.run(
+                executableURL: URL(fileURLWithPath: dockerBin),
+                arguments: DockerSupport.danglingImageIDsArguments,
+                timeout: DockerSupport.danglingLookupTimeout
+            )
+            guard listed.status == 0, let text = String(data: listed.stdout, encoding: .utf8) else { return nil }
+            ids = DockerSupport.parseImageIDs(text)
+        } catch is CancellationError {
+            return nil
+        } catch {
+            Logger.shared.log("docker images --filter dangling=true failed: \(error.localizedDescription)", level: .warning)
+            return nil
+        }
+        // Nothing dangling: skip the slow verbose df entirely.
+        guard !ids.isEmpty, !Task.isCancelled else { return nil }
+
+        var usage: [DockerSupport.ImageUsage]?
+        do {
+            let verbose = try await BrewProcessRunner.run(
+                executableURL: URL(fileURLWithPath: dockerBin),
+                arguments: DockerSupport.verboseSystemDFArguments,
+                timeout: DockerSupport.danglingLookupTimeout
+            )
+            if verbose.status == 0, let text = String(data: verbose.stdout, encoding: .utf8) {
+                usage = DockerSupport.parseImageUsage(text)
+            }
+        } catch is CancellationError {
+            return nil
+        } catch {
+            Logger.shared.log("docker system df -v failed: \(error.localizedDescription)", level: .warning)
+        }
+        return DockerSupport.danglingEstimate(danglingIDs: ids, usage: usage)
     }
 
     /// Rows of `docker system df`. Returns nil when Docker isn't running or

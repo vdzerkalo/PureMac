@@ -14,12 +14,25 @@ enum RemovalRisk {
     static func risks(for category: CleaningCategory, items: [CleanableItem]) -> [String] {
         switch category {
         case .dockerCache:
+            // One risk per kind of object the selected rows remove, worded for
+            // the exact command; the volumes risk appears only with that row.
+            let actions = Set(items.compactMap(\.dockerPruneAction))
             var risks = [
                 String(localized: "Nothing goes to the Trash: Docker deletes these objects permanently."),
-                String(localized: "Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower."),
-                String(localized: "Stopped containers and the files inside them are deleted; running containers are kept."),
             ]
-            if items.contains(where: { $0.dockerPruneAction == .unusedVolumes }) {
+            if actions.contains(.buildCache) {
+                risks.append(String(localized: "Build cache is deleted; the next build recreates it and is slower."))
+            }
+            if actions.contains(.stoppedContainers) {
+                risks.append(String(localized: "Stopped containers and the files inside them are deleted; running containers are kept."))
+            }
+            if actions.contains(.unusedImages) {
+                // Covers the dangling row too: `image prune -a` removes both.
+                risks.append(String(localized: "All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded."))
+            } else if actions.contains(.danglingImages) {
+                risks.append(String(localized: "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source."))
+            }
+            if actions.contains(.unusedVolumes) {
                 risks.append(String(localized: "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back."))
             }
             return risks
@@ -82,7 +95,7 @@ enum RemovalRisk {
 
     private static func readOnlyChecks(for category: CleaningCategory) -> String {
         switch category {
-        case .dockerCache: return "docker ps -a, docker volume ls, docker system df -v"
+        case .dockerCache: return "docker ps -a, docker images --filter dangling=true, docker volume ls, docker system df -v"
         default: return "list and inspect only"
         }
     }

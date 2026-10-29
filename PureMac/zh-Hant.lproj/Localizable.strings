@@ -272,9 +272,7 @@
 /* Docker Cache helper */
 "Docker build cache" = "Docker 建置快取";
 "Stopped Docker containers" = "已停止的 Docker 容器";
-"Unused Docker images (downloaded again when needed)" = "未使用的 Docker 映像檔（需要時會重新下載）";
 "Unused Docker volumes (may contain data such as databases)" = "未使用的 Docker 卷宗（可能包含資料庫等資料）";
-"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "Docker Desktop 的磁碟映像檔（Docker.raw）在磁碟上佔用 %@。這些操作釋放的空間會在清理後數分鐘內歸還給 macOS。";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "每小時";
@@ -934,7 +932,6 @@
 
 /* Risky removals */
 "Nothing goes to the Trash: Docker deletes these objects permanently." = "Nothing goes to the Trash: Docker deletes these objects permanently.";
-"Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower." = "Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower.";
 "Stopped containers and the files inside them are deleted; running containers are kept." = "Stopped containers and the files inside them are deleted; running containers are kept.";
 "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back.";
 "Confirm each risk before removing" = "Confirm each risk before removing";
@@ -944,3 +941,12 @@
 "Copy agent prompt" = "Copy agent prompt";
 "Copied" = "Copied";
 "Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Copy a short brief with every found item so an AI agent can check the risks with you before removal.";
+
+/* Docker polish */
+"Dangling Docker images (untagged leftovers)" = "Dangling Docker images (untagged leftovers)";
+"Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling Docker images (untagged leftovers, size not estimated)";
+"All unused Docker images (pulled or rebuilt when needed)" = "All unused Docker images (pulled or rebuilt when needed)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself." = "Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself.";
+"Build cache is deleted; the next build recreates it and is slower." = "Build cache is deleted; the next build recreates it and is slower.";
+"All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded." = "All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded.";
+"Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source." = "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source.";

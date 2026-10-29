@@ -6,9 +6,13 @@ actor CleaningEngine {
     /// XcodeBuildMCPDerivedDataSupport path checks on symlinked homes.
     private let homeDirectory: URL
     private let binaryThinner = BinaryThinner()
+    /// Tests point this at a fake CLI script so no real docker ever runs;
+    /// nil in the app, which searches DockerSupport.candidateBinaryPaths.
+    private let dockerBinaryPath: String?
 
-    init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser, dockerBinaryPath: String? = nil) {
         self.homeDirectory = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        self.dockerBinaryPath = dockerBinaryPath
     }
 
     struct CleaningResult {
@@ -34,8 +38,11 @@ actor CleaningEngine {
 
     // MARK: - Public API
 
-    func cleanItems(_ items: [CleanableItem], progressHandler: @Sendable (Double) -> Void) async -> CleaningResult {
+    func cleanItems(_ selectedItems: [CleanableItem], progressHandler: @Sendable (Double) -> Void) async -> CleaningResult {
         var result = CleaningResult()
+        // Docker prune rows run in DockerSupport.PruneAction.cleanOrder, not
+        // in the order they were selected.
+        let items = DockerSupport.orderedForCleaning(selectedItems)
         let total = items.count
         let exclusions = CleanupExclusions.paths()
 
@@ -419,14 +426,15 @@ actor CleaningEngine {
 
     /// Runs the prune behind one Docker Cache row (see
     /// DockerSupport.PruneAction) and reports the bytes Docker says it
-    /// reclaimed. Running containers, images they use and volumes they mount
+    /// reclaimed. Each command prints only what it removed itself, so the
+    /// freed bytes of several rows add up without overlap. Running containers, images they use and volumes they mount
     /// are never removed by any of these commands. With a VM-based runtime
     /// (Docker Desktop, OrbStack) the junk lives inside the VM disk,
     /// unreachable by any file unlink from the host. Returns a friendly error
     /// when no CLI is installed or the daemon is not running — common with
     /// OrbStack, which only runs on demand.
     func pruneDocker(_ action: DockerSupport.PruneAction) async -> (freed: Int64, error: String?) {
-        guard let dockerBin = DockerSupport.locateBinary(homeDirectory: homeDirectory.path) else {
+        guard let dockerBin = dockerBinaryPath ?? DockerSupport.locateBinary(homeDirectory: homeDirectory.path) else {
             return (0, "Docker CLI not found — install Docker Desktop or OrbStack")
         }
 
