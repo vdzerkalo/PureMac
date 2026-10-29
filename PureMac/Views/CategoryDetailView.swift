@@ -245,6 +245,20 @@ struct CategoryDetailView: View {
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
+                            } else if let artifacts = item.worktreeArtifacts {
+                                ForEach(artifacts.folders, id: \.relativePath) { folder in
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        Text(artifacts.worktreePath + "/" + folder.relativePath)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .textSelection(.enabled)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Spacer(minLength: 0)
+                                        Text(ByteCountFormatter.string(fromByteCount: folder.bytes, countStyle: .file))
+                                            .font(.caption)
+                                            .monospacedDigit()
+                                    }
+                                    .foregroundStyle(.secondary)
+                                }
                             } else if !item.path.isEmpty {
                                 Text(item.path)
                                     .font(.system(.caption, design: .monospaced))
@@ -362,6 +376,9 @@ struct CategoryDetailView: View {
     }
 
     private func removalMethod(_ item: CleanableItem) -> String {
+        if item.worktreeArtifacts != nil {
+            return String(localized: "Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay")
+        }
         if let worktree = item.gitWorktree {
             if worktree.verdict.isPrunableOrphan {
                 return String(localized: "Permanent · git worktree prune (forgets the missing folder, deletes no files)")
@@ -396,9 +413,9 @@ private struct CleanupFileRow: View {
                 .tint(Tint.teal)
                 .disabled(item.isSelectionBlocked)
                 .accessibilityLabel("Select \(item.name)")
-            Image(systemName: item.gitWorktree != nil ? "arrow.triangle.branch" : item.isActionItem ? "gearshape.2" : "doc")
+            Image(systemName: item.worktreeArtifacts != nil ? "shippingbox" : item.gitWorktree != nil ? "arrow.triangle.branch" : item.isActionItem ? "gearshape.2" : "doc")
                 .font(.system(size: 18))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(item.worktreeArtifacts != nil ? Tint.accent : Color.secondary)
                 .frame(width: 25)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name)
@@ -406,12 +423,28 @@ private struct CleanupFileRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(item.dockerPruneAction?.commandLine
-                    ?? (item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath))
+                    ?? (item.worktreeArtifacts.map { ($0.worktreePath as NSString).abbreviatingWithTildeInPath }
+                        ?? (item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath)))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .help(item.path)
+                    .help(item.worktreeArtifacts?.worktreePath ?? item.path)
+                if let artifacts = item.worktreeArtifacts {
+                    Text(artifacts.folders.map {
+                        "\($0.relativePath) \(ByteCountFormatter.string(fromByteCount: $0.bytes, countStyle: .file))"
+                    }.joined(separator: " · "))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(2)
+                    if let blocker = artifacts.blocker {
+                        Text(String(localized: "blocked: \(blocker.localizedDescription)"))
+                            .font(.system(size: 11))
+                            .foregroundStyle(Tint.red)
+                            .lineLimit(2)
+                    }
+                }
                 if let worktree = item.gitWorktree, !worktree.verdict.reasons.isEmpty {
                     Text(worktree.verdict.reasons.map(\.localizedDescription).joined(separator: ", "))
                         .font(.system(size: 11))
@@ -427,7 +460,18 @@ private struct CleanupFileRow: View {
                 }
             }
             Spacer(minLength: 12)
-            if let worktree = item.gitWorktree {
+            if let artifacts = item.worktreeArtifacts {
+                let blocked = artifacts.blocker != nil
+                Text(blocked ? String(localized: "Blocked") : String(localized: "Artifacts"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(blocked ? Tint.red : Tint.accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background((blocked ? Tint.red : Tint.accent).opacity(0.12), in: Capsule())
+                    .help(blocked
+                        ? String(localized: "The worktree is busy, so PureMac will not touch its build folders.")
+                        : String(localized: "Only git-ignored build folders are deleted. The worktree stays."))
+            } else if let worktree = item.gitWorktree {
                 Text(worktree.verdict.status.label)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(worktree.verdict.status.tint)
@@ -453,7 +497,7 @@ private struct CleanupFileRow: View {
             Text(item.formattedSize)
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .frame(width: 85, alignment: .trailing)
-            if !item.isActionItem {
+            if !item.isActionItem || item.worktreeArtifacts != nil {
                 Button { reveal() } label: { Image(systemName: "arrow.up.forward.square") }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
@@ -462,6 +506,7 @@ private struct CleanupFileRow: View {
             }
         }
         .padding(.vertical, 9)
+        .padding(.leading, item.worktreeArtifacts != nil ? 18 : 0)
         .contextMenu {
             if !item.isActionItem {
                 Button("Reveal in Finder") { reveal() }
@@ -477,7 +522,7 @@ private struct CleanupFileRow: View {
     }
 
     private func reveal() {
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.worktreeArtifacts?.worktreePath ?? item.path)])
     }
 }
 

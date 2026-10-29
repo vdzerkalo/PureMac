@@ -942,8 +942,24 @@ actor ScanEngine {
             )
             item.gitWorktree = worktree
             items.append(item)
+
+            // A worktree that cannot be removed whole still has build
+            // folders git ignores: offer them as their own row, never
+            // preselected, blocked while the worktree is in use.
+            if let artifacts = await scanner.artifactReport(for: worktree) {
+                var artifactItem = CleanableItem(
+                    name: String(localized: "Artifacts in \(artifacts.displayName)"),
+                    path: WorktreeArtifactSupport.rowPath(forWorktree: artifacts.worktreePath),
+                    size: artifacts.totalBytes,
+                    category: .gitWorktrees,
+                    isSelected: false,
+                    lastModified: worktree.lastActivity
+                )
+                artifactItem.worktreeArtifacts = artifacts
+                items.append(artifactItem)
+            }
         }
-        let totalSize = items.reduce(0) { $0 + $1.size }
+        let totalSize = items.reduce(0) { $0 + $1.sizeInCategoryTotal }
         return CategoryResult(category: .gitWorktrees, items: items, totalSize: totalSize)
     }
 

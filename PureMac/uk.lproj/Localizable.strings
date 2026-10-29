@@ -988,3 +988,13 @@
 "artifacts %@ · code %@" = "артефакти %@ · код %@";
 "Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Назавжди · git worktree prune (забуває відсутню папку, файли не видаляє)";
 "Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Назавжди · git worktree remove (злиту гілку видаляє git branch -d)";
+
+/* Git Worktrees build artifacts */
+"Artifacts in %@" = "Артефакти в %@";
+"blocked: %@" = "заблоковано: %@";
+"Artifacts" = "Артефакти";
+"The worktree is busy, so PureMac will not touch its build folders." = "Worktree зайнятий, тому PureMac не чіпатиме його папки збірки.";
+"Only git-ignored build folders are deleted. The worktree stays." = "Видаляються лише папки збірки, які ігнорує git. Worktree лишається.";
+"Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay" = "Назавжди · видалити лише папки збірки, які ігнорує git; worktree і його відстежувані файли лишаються";
+"Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders." = "Папки збірки, як-от node_modules, .next, dist чи target, у цих worktree видаляються назавжди, а не переміщуються в Кошик. Git їх ігнорує, відстежуваних файлів усередині немає; worktree і їхні файли лишаються, а наступне встановлення чи збірка створить папки знову.";
+"Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool." = "Спершу зупиніть dev-сервери, спостерігачі та збірки, що працюють із цих worktree. PureMac пропускає worktree, які бачить у використанні, але не бачить кожен інструмент.";

@@ -594,3 +594,54 @@ struct GitWorktreeScanner {
         ((try? FileManager.default.attributesOfItem(atPath: path)[.type]) as? FileAttributeType) == .typeSymbolicLink
     }
 }
+
+// MARK: - Build artifacts inside worktrees
+
+extension GitWorktreeScanner {
+    /// Every check a build folder must pass before it is listed and, again,
+    /// right before it is deleted: the filesystem rules of
+    /// `WorktreeArtifactSupport.check`, then `git check-ignore -q -- <dir>`
+    /// must succeed (git ignores the folder) and `git ls-files -- <dir>`
+    /// must print nothing (no tracked file inside).
+    func checkArtifactFolder(worktree: String, relative: String) async -> WorktreeArtifactSupport.Check {
+        let filesystem = WorktreeArtifactSupport.check(worktree: worktree, relative: relative)
+        guard case .ok = filesystem else { return filesystem }
+        guard let ignored = await git(["check-ignore", "-q", "--", relative], in: worktree) else {
+            return .refused("git did not answer")
+        }
+        guard ignored.status == 0 else {
+            return .refused(ignored.status == 1 ? "is not ignored by git" : "git check-ignore failed (exit \(ignored.status))")
+        }
+        guard let tracked = await git(["ls-files", "--", relative], in: worktree), tracked.status == 0 else {
+            return .refused("git ls-files failed")
+        }
+        guard tracked.stdout.isEmpty else { return .refused("contains files tracked by git") }
+        return filesystem
+    }
+
+    /// The "Artifacts in …" row for a worktree that cannot be removed as a
+    /// whole (Needs review or Protected): its build folders that pass
+    /// `checkArtifactFolder`, with their sizes. Nil when there are none.
+    func artifactReport(for worktree: GitWorktreeReport) async -> WorktreeArtifactsReport? {
+        guard let repository = worktree.repositoryPath,
+              worktree.verdict.status == .needsReview || worktree.verdict.status == .protected,
+              Self.pathExists(worktree.path)
+        else { return nil }
+        var folders: [WorktreeArtifactFolder] = []
+        for relative in WorktreeArtifactSupport.candidates(in: worktree.path) {
+            if Task.isCancelled { break }
+            guard case .ok(let resolved) = await checkArtifactFolder(worktree: worktree.path, relative: relative) else { continue }
+            let bytes = Self.allocatedBytes(under: URL(fileURLWithPath: resolved))
+            if bytes > 0 { folders.append(WorktreeArtifactFolder(relativePath: relative, bytes: bytes)) }
+        }
+        guard !folders.isEmpty else { return nil }
+        return WorktreeArtifactsReport(
+            worktreePath: worktree.path,
+            repositoryPath: repository,
+            branch: worktree.branch,
+            head: worktree.head,
+            worktreeVerdict: worktree.verdict,
+            folders: folders
+        )
+    }
+}
