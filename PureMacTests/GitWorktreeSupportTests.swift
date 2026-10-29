@@ -207,6 +207,24 @@ final class GitWorktreeSupportTests: XCTestCase {
         XCTAssertEqual(Support.classify(onlyBuild).status, .safeToDelete)
     }
 
+    func testMacOSLitterAndHarmlessEntriesDoNotCountAsIgnoredWork() {
+        for name in [".DS_Store", "._x", "Icon\r", ".localized"] {
+            XCTAssertTrue(Support.isHarmlessIgnoredName(name), name)
+        }
+        for name in ["._", "notes.txt", ".env", "DS_Store", "Icon", ".DS_Store.bak", "master.key", ".localized2"] {
+            XCTAssertFalse(Support.isHarmlessIgnoredName(name), name)
+        }
+        var status = Support.WorkingTreeStatus()
+        status.ignored = [".DS_Store", "docs/.DS_Store", "._x", "a/b/._y", "Icon\r", ".localized", "link", "scratch/"]
+        status.harmlessIgnored = ["link", "scratch/"]
+        XCTAssertEqual(status.ignoredOutsideBuildFolders, [])
+        status.ignored += ["notes.txt", "other/", ".DS_Store/"]
+        XCTAssertEqual(status.ignoredOutsideBuildFolders, ["notes.txt", "other/", ".DS_Store/"],
+                       "a folder is harmless only when the scanner said so")
+        let onlyLitter = signals { $0.status.ignored = [".DS_Store", "._x"] }
+        XCTAssertEqual(Support.classify(onlyLitter).status, .safeToDelete)
+    }
+
     func testNestedRepositoryInIgnoredFolderIsProtected() {
         let nested = signals { $0.nestedRepositoryInIgnored = true; $0.status.ignored = ["vendor/"] }
         XCTAssertEqual(Support.classify(nested), .init(status: .protected, reasons: [.nestedRepositoryInIgnored]))
@@ -675,13 +693,12 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertLessThan(direct, 500_000)
 
         // The untracked `dist` symlink is a review reason, the ignored one is not.
-        XCTAssertEqual(report.verdict, .init(status: .needsReview, reasons: [.untrackedFiles(1), .ignoredOutsideBuildFolders(1)]))
+        XCTAssertEqual(report.verdict, .init(status: .needsReview, reasons: [.untrackedFiles(1)]))
         try FileManager.default.removeItem(atPath: "\(worktree)/dist")
         try age(worktree)
 
         let fresh = try await inspect(worktree)
-        XCTAssertEqual(fresh.verdict, .init(status: .needsReview, reasons: [.ignoredOutsideBuildFolders(1)]),
-                       "the ignored `link-out` symlink is outside the build folders, like any other ignored entry")
+        XCTAssertEqual(fresh.verdict.status, .safeToDelete, "an ignored symlink to elsewhere is no reason to keep a worktree")
         let error = await scanner().remove(path: worktree, repository: repo)
 
         XCTAssertNil(error)
@@ -1531,6 +1548,62 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(nested)/vendor/lib/unique.txt"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(nested)/config/master.key"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(depInNodeModules)/node_modules/dep/.git"))
+    }
+
+    func testMacOSLitterAndIgnoredSymlinksKeepAWorktreeSafe() async throws {
+        try exclude([".DS_Store", "._*", "Icon?", ".localized", "scratch/", "cache-link", "notes.txt"])
+        let outside = root.appendingPathComponent("link-target").path
+        try write("precious\n", to: "\(outside)/precious.txt")
+        // A repository behind a symlink must never be walked into.
+        try FileManager.default.createDirectory(atPath: "\(outside)/inner-repo/.git", withIntermediateDirectories: true)
+
+        let safe = try makeMerged("litter-only")
+        try write("", to: "\(safe)/.DS_Store")
+        try write("", to: "\(safe)/._x")
+        try write("", to: "\(safe)/Icon\r")
+        try write("", to: "\(safe)/.localized")
+        try write("", to: "\(safe)/README-sub/.DS_Store")
+        try write("", to: "\(safe)/scratch/.DS_Store")
+        try write("", to: "\(safe)/scratch/deeper/._y")
+        try FileManager.default.createSymbolicLink(atPath: "\(safe)/link-out", withDestinationPath: outside)
+        try FileManager.default.createSymbolicLink(atPath: "\(safe)/cache-link", withDestinationPath: outside + "/inner-repo")
+        let listing = try git(["status", "--porcelain=v2", "--ignored=matching", "--untracked-files=normal"], in: safe)
+        for expected in ["! .DS_Store", "! ._x", "! .localized", "! link-out", "! cache-link", "! scratch/"] {
+            XCTAssertTrue(listing.contains(expected), "\(expected) in \(listing)")
+        }
+        try age(safe)
+        for link in ["link-out", "cache-link"] {
+            let touch = Process()
+            touch.executableURL = URL(fileURLWithPath: "/usr/bin/touch")
+            touch.arguments = ["-h", "-t", "202601011200", "\(safe)/\(link)"]
+            try touch.run()
+            touch.waitUntilExit()
+        }
+
+        let withNotes = try makeMerged("litter-and-notes")
+        try write("", to: "\(withNotes)/.DS_Store")
+        try write("mine\n", to: "\(withNotes)/notes.txt")
+        try age(withNotes)
+
+        let folderWithWork = try makeMerged("litter-and-work")
+        try write("", to: "\(folderWithWork)/scratch/.DS_Store")
+        try write("mine\n", to: "\(folderWithWork)/scratch/deeper/notes.txt")
+        try age(folderWithWork)
+
+        let safeReport = try await inspect(safe)
+        XCTAssertEqual(safeReport.verdict.status, .safeToDelete, "\(safeReport.verdict)")
+        let notesReport = try await inspect(withNotes)
+        XCTAssertEqual(notesReport.verdict, .init(status: .needsReview, reasons: [.ignoredOutsideBuildFolders(1)]))
+        let workReport = try await inspect(folderWithWork)
+        XCTAssertEqual(workReport.verdict, .init(status: .needsReview, reasons: [.ignoredOutsideBuildFolders(1)]),
+                       "scratch/ holds a file that is not litter")
+
+        // Removing the worktree removes the links, never what they point to.
+        let result = await engine().cleanItems([item(for: safeReport)]) { _ in }
+        XCTAssertEqual(result.itemsCleaned, 1, "\(result.errors)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: safe))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(outside)/precious.txt"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(outside)/inner-repo/.git"))
     }
 
     func testIgnoredFolderWalkIsBoundedAndNeverFollowsSymlinks() throws {

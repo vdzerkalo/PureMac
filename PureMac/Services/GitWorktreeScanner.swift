@@ -352,6 +352,7 @@ struct GitWorktreeScanner {
             }
             let ignoredFolders = Self.inspectIgnoredFolders(worktree: path, ignored: signals.status.ignored)
             signals.nestedRepositoryInIgnored = ignoredFolders.nestedRepository != nil
+            signals.status.harmlessIgnored = ignoredFolders.harmlessEntries
             signals.envFilesInIgnoredFolders = ignoredFolders.envFiles.count
             signals.ignoredFoldersNotFullyChecked = ignoredFolders.incomplete
             signals.lastActivity = await lastActivity(of: path)
@@ -376,6 +377,11 @@ struct GitWorktreeScanner {
         var envFiles: [String] = []
         /// The walk stopped at `entryLimit` or met a folder it could not read.
         var incomplete = false
+        /// Ignored entries (as git printed them) that cannot hold work: symlinks,
+        /// and folders outside the build folders holding only macOS litter
+        /// (`GitWorktreeSupport.isHarmlessIgnoredName`), symlinks and folders
+        /// of the same kind. Never set for a folder that was not fully read.
+        var harmlessEntries: Set<String> = []
     }
 
     /// Walks every ignored folder git reported (including build folders: a
@@ -392,12 +398,20 @@ struct GitWorktreeScanner {
                 report.nestedRepository = relative
                 return report
             }
-            guard entry.hasSuffix("/") else { continue }
+            guard entry.hasSuffix("/") else {
+                var info = stat()
+                if lstat((worktree as NSString).appendingPathComponent(relative), &info) == 0, (info.st_mode & S_IFMT) == S_IFLNK {
+                    report.harmlessEntries.insert(entry)
+                }
+                continue
+            }
+            var entryIsHarmless = true
             var stack = [(path: (worktree as NSString).appendingPathComponent(relative), relative: relative,
                           inBuildFolder: GitWorktreeSupport.isInsideArtifactFolder(entry))]
             while let current = stack.popLast() {
                 guard let handle = opendir(current.path) else {
                     report.incomplete = true
+                    entryIsHarmless = false
                     continue
                 }
                 defer { closedir(handle) }
@@ -418,16 +432,21 @@ struct GitWorktreeScanner {
                     }
                     if !current.inBuildFolder, name.hasPrefix(".env") { report.envFiles.append(childRelative) }
                     var isDirectory = item.pointee.d_type == UInt8(DT_DIR)
+                    var isLink = item.pointee.d_type == UInt8(DT_LNK)
                     if item.pointee.d_type == UInt8(DT_UNKNOWN) {
                         var info = stat()
-                        isDirectory = lstat(current.path + "/" + name, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR
+                        let found = lstat(current.path + "/" + name, &info) == 0
+                        isDirectory = found && (info.st_mode & S_IFMT) == S_IFDIR
+                        isLink = found && (info.st_mode & S_IFMT) == S_IFLNK
                     }
+                    if !isDirectory, !isLink, !GitWorktreeSupport.isHarmlessIgnoredName(name) { entryIsHarmless = false }
                     if isDirectory {
                         stack.append((current.path + "/" + name, childRelative,
                                       current.inBuildFolder || GitWorktreeSupport.artifactDirectoryNames.contains(name)))
                     }
                 }
             }
+            if entryIsHarmless { report.harmlessEntries.insert(entry) }
         }
         return report
     }
