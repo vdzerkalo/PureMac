@@ -16,13 +16,15 @@ func makeFakeDockerCLI(
     unusedVolumes: [String],
     inUseVolumes: [String],
     builder: FakeBuilder,
-    hugeImageOutput: Bool
+    hugeImageOutput: Bool,
+    vanishedVolumes: [String] = []
 ) throws -> (dir: URL, binary: String, log: URL) {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("PureMac-FakeDocker-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let log = dir.appendingPathComponent("calls.log")
     let unusedList = unusedVolumes.map { "'\($0)'" }.joined(separator: " ")
     let inUse = " " + inUseVolumes.joined(separator: " ") + " "
+    let vanished = " " + vanishedVolumes.joined(separator: " ") + " "
     let builderBranch: String
     switch builder {
     case .normal: builderBranch = "printf 'ID\\tRECLAIMABLE\\tSIZE\\nTotal:\\t1.5GB\\n'"
@@ -47,7 +49,10 @@ func makeFakeDockerCLI(
       for n in "$@"; do
         case "\(inUse)" in
           *" $n "*) echo "Error response from daemon: remove $n: volume is in use - [abc]" >&2; fail=1 ;;
-          *) echo "$n" ;;
+          *) case "\(vanished)" in
+               *" $n "*) echo "Error response from daemon: get $n: no such volume" >&2; fail=1 ;;
+               *) echo "$n" ;;
+             esac ;;
         esac
       done
       exit $fail ;;
@@ -302,9 +307,10 @@ final class DockerSupportTests: XCTestCase {
         unusedVolumes: [String] = [],
         inUseVolumes: [String] = [],
         builder: FakeBuilder = .normal,
-        hugeImageOutput: Bool = false
+        hugeImageOutput: Bool = false,
+        vanishedVolumes: [String] = []
     ) throws -> (dir: URL, binary: String, log: URL) {
-        try makeFakeDockerCLI(unusedVolumes: unusedVolumes, inUseVolumes: inUseVolumes, builder: builder, hugeImageOutput: hugeImageOutput)
+        try makeFakeDockerCLI(unusedVolumes: unusedVolumes, inUseVolumes: inUseVolumes, builder: builder, hugeImageOutput: hugeImageOutput, vanishedVolumes: vanishedVolumes)
     }
 
     func testCleanRunsSelectedPrunesInOrderAndSumsFreedSpaceWithoutOverlap() async throws {
@@ -597,6 +603,42 @@ final class DockerSupportTests: XCTestCase {
         XCTAssertEqual(result.itemsCleaned, 0, "a row with a failed volume is not marked cleaned")
     }
 
+    func testVolumeThatVanishesBetweenTheRecheckAndTheRemovalIsAQuietSkip() async throws {
+        // "ghost" is still listed by the re-check, then gone when rm runs:
+        // docker answers "no such volume" and exits 1. Not an error.
+        let fake = try makeFakeDocker(unusedVolumes: ["ghost"], vanishedVolumes: ["ghost"])
+        defer { try? FileManager.default.removeItem(at: fake.dir) }
+        let engine = CleaningEngine(homeDirectory: fake.dir, dockerBinaryPath: fake.binary)
+
+        let result = await engine.cleanItems([item(.unusedVolumes, volumes: [.init(name: "ghost", bytes: 7)])]) { _ in }
+
+        XCTAssertTrue(result.errors.isEmpty, "\(result.errors)")
+        XCTAssertEqual(result.freedSpace, 0)
+        XCTAssertEqual(result.itemsCleaned, 1)
+    }
+
+    func testVanishedVolumeDoesNotHideOtherRemovalErrors() async throws {
+        let fake = try makeFakeDocker(unusedVolumes: ["a", "b", "ghost"], inUseVolumes: ["b"], vanishedVolumes: ["ghost"])
+        defer { try? FileManager.default.removeItem(at: fake.dir) }
+        let engine = CleaningEngine(homeDirectory: fake.dir, dockerBinaryPath: fake.binary)
+        let row = item(.unusedVolumes, volumes: [.init(name: "a", bytes: 10), .init(name: "b", bytes: 20), .init(name: "ghost", bytes: 30)])
+
+        let result = await engine.cleanItems([row]) { _ in }
+
+        XCTAssertEqual(result.freedSpace, 10)
+        XCTAssertEqual(result.errors, ["docker volume rm: remove b: volume is in use - [abc]"])
+    }
+
+    func testNoSuchVolumeForAnUnrequestedNameIsStillReported() {
+        let outcome = DockerSupport.parseVolumeRemoval(
+            stdout: "",
+            stderr: "Error response from daemon: get other: no such volume",
+            requested: [.init(name: "a", bytes: 1)]
+        )
+        XCTAssertEqual(outcome.vanished, 0)
+        XCTAssertEqual(outcome.problems, ["docker volume rm: get other: no such volume"])
+    }
+
     // MARK: - cancellation, daemon errors, long output
 
     func testCancelledPruneIsAnErrorNotACleanedRow() async throws {
@@ -701,6 +743,95 @@ final class DockerSupportTests: XCTestCase {
         }
     }
 
+    func testParentsOfProtectedDisksAreRefusedToo() async throws {
+        // ~/Library/Containers and ~/Library/Group Containers are whole-folder
+        // allow-list roots, so an item equal to one of them, or to any folder
+        // that contains a protected disk, must be refused.
+        let (engine, home) = try protectedFixture()
+        let parents = [
+            home,
+            "\(home)/Library",
+            "\(home)/Library/Containers",
+            "\(home)/Library/Containers/",
+            "\(home)/Library/Group Containers",
+            "\(home)/Library/Group Containers/",
+            "\(home)/Library/Containers/com.docker.docker",
+            "\(home)/Library/Containers/com.docker.docker/Data",
+            "\(home)/Library/Containers/com.docker.docker/Data/vms/0",
+            "\(home)/Library/Group Containers/group.com.docker",
+            "\(home)/Library/Group Containers/HUAQ24HBR6.dev.orbstack",
+            "\(home)/.orbstack",
+            "\(home)/.docker",
+            // case variants
+            "\(home)/LIBRARY/containers",
+            "\(home)/library/GROUP containers",
+            "\(home)/.ORBSTACK",
+            "\(home)/Library/Containers/Com.Docker.Docker/DATA",
+        ]
+        for path in parents {
+            let item = CleanableItem(name: "parent", path: path, size: 1, category: .userCache, isSelected: true, lastModified: nil)
+            let user = await engine.isSafeToDelete(item: item, resolvedPath: path)
+            let admin = await engine.isSafeToDelete(item: item, resolvedPath: path, includeUninstallPaths: true)
+            XCTAssertFalse(user, "user pass must refuse \(path)")
+            XCTAssertFalse(admin, "admin pass must refuse \(path)")
+        }
+    }
+
+    func testDotDotAndTrailingSlashSpellingsOfDiskPathsAreRefused() async throws {
+        let (engine, home) = try protectedFixture()
+        let tricky = [
+            "\(home)/Library/Containers/com.docker.docker/Data/cache/../vms/0/data/Docker.raw",
+            "\(home)/Library/Caches/../Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
+            "\(home)/Library/Containers/com.docker.docker/Data/vms/",
+            "\(home)/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw/",
+            "\(home)/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data/../data/data.img",
+            "\(home)/Library/Containers/com.docker.docker/Data/cache/../../",
+        ]
+        for path in tricky {
+            for category in [CleaningCategory.dockerCache, .userCache] {
+                let item = CleanableItem(name: "disk", path: path, size: 1, category: category, isSelected: true, lastModified: nil)
+                // Once with the spelling as given, once as the engine would resolve it.
+                let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+                for candidate in [path, resolved] {
+                    let user = await engine.isSafeToDelete(item: item, resolvedPath: candidate)
+                    let admin = await engine.isSafeToDelete(item: item, resolvedPath: candidate, includeUninstallPaths: true)
+                    XCTAssertFalse(user, "user pass must refuse \(path) as \(candidate)")
+                    XCTAssertFalse(admin, "admin pass must refuse \(path) as \(candidate)")
+                }
+            }
+        }
+    }
+
+    func testSymlinkedParentIntoADiskFolderIsRefused() async throws {
+        let (engine, home) = try protectedFixture()
+        let vms = "\(home)/Library/Containers/com.docker.docker/Data/vms"
+        let raw = "\(vms)/0/data/Docker.raw"
+        try FileManager.default.createDirectory(atPath: (raw as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        XCTAssertTrue(FileManager.default.createFile(atPath: raw, contents: Data("x".utf8)))
+        // An innocent-looking folder in an allowed root that points at the disks.
+        try FileManager.default.createDirectory(atPath: "\(home)/Library/Caches", withIntermediateDirectories: true)
+        let alias = "\(home)/Library/Caches/looks-harmless"
+        try FileManager.default.createSymbolicLink(atPath: alias, withDestinationPath: vms)
+
+        for path in [alias, "\(alias)/0/data/Docker.raw"] {
+            // The engine passes the unresolved item path and the resolved one;
+            // the check must hold for the symlink spelling alone as well.
+            let item = CleanableItem(name: "alias", path: path, size: 1, category: .userCache, isSelected: true, lastModified: nil)
+            let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+            for candidate in [path, resolved] {
+                let user = await engine.isSafeToDelete(item: item, resolvedPath: candidate)
+                let admin = await engine.isSafeToDelete(item: item, resolvedPath: candidate, includeUninstallPaths: true)
+                XCTAssertFalse(user, "user pass must refuse \(path) as \(candidate)")
+                XCTAssertFalse(admin, "admin pass must refuse \(path) as \(candidate)")
+            }
+        }
+        let result = await engine.cleanItems([
+            CleanableItem(name: "alias", path: "\(alias)/0/data/Docker.raw", size: 1, category: .userCache, isSelected: true, lastModified: nil),
+        ]) { _ in }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: raw))
+        XCTAssertEqual(result.itemsCleaned, 0)
+    }
+
     func testDockerCacheFoldersStayCleanable() async throws {
         let (engine, home) = try protectedFixture()
         let allowed = [
@@ -765,6 +896,25 @@ final class DockerOverviewTests: XCTestCase {
         try await Task.sleep(nanoseconds: 500_000_000)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: fake.log.path), "no docker command may run from the Overview")
+        XCTAssertEqual(state.scanState, .idle)
+    }
+
+    func testFullDiskAccessRetryDoesNotRunDockerPrunes() async throws {
+        let fake = try makeFakeDockerCLI(unusedVolumes: ["a"], inUseVolumes: [], builder: .normal, hugeImageOutput: false)
+        defer { try? FileManager.default.removeItem(at: fake.dir) }
+        let engine = CleaningEngine(homeDirectory: fake.dir, dockerBinaryPath: fake.binary)
+        let state = AppState(performStartupTasks: false, cleaningEngine: engine)
+        let items = DockerSupport.PruneAction.allCases.map { action in
+            CleanableItem(
+                name: action.rawValue,
+                path: DockerSupport.actionPath(for: action, volumes: action == .unusedVolumes ? [.init(name: "a", bytes: 1)] : []),
+                size: 100, category: .dockerCache, isSelected: true, lastModified: nil
+            )
+        }
+
+        await state.retryAfterFullDiskAccess(items: items, context: .cleanup(failedCount: items.count))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fake.log.path), "a permission retry must not bypass the Docker review")
         XCTAssertEqual(state.scanState, .idle)
     }
 }
