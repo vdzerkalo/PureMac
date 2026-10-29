@@ -926,3 +926,21 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* Local AI Models */
+"Local AI Models" = "Local AI Models";
+"Ollama models and Hugging Face downloads. Removed models must be downloaded again." = "Ollama models and Hugging Face downloads. Removed models must be downloaded again.";
+"OLLAMA_HOST points to another machine. PureMac only manages models on this Mac." = "OLLAMA_HOST points to another machine. PureMac only manages models on this Mac.";
+"Ollama is not running or the ollama command was not found. Start Ollama and scan again to list its models." = "Ollama is not running or the ollama command was not found. Start Ollama and scan again to list its models.";
+"Ollama model · freed space can be smaller when models share files" = "Ollama model · freed space can be smaller when models share files";
+"Non-standard folder in the Hugging Face cache · review before removing" = "Non-standard folder in the Hugging Face cache · review before removing";
+"Model files in Application Support/huggingface · review before removing" = "Model files in Application Support/huggingface · review before removing";
+"%lld Hugging Face repo(s) keep their files in a shared store outside the repo folder and are not listed. Removing them would not free space." = "%lld Hugging Face repo(s) keep their files in a shared store outside the repo folder and are not listed. Removing them would not free space.";
+"Hugging Face last-used dates are approximate: the newest change among a repo's refs and snapshots." = "Hugging Face last-used dates are approximate: the newest change among a repo's refs and snapshots.";
+"Hugging Face model" = "Hugging Face model";
+"Hugging Face dataset" = "Hugging Face dataset";
+"Hugging Face space" = "Hugging Face space";
+"%@ · %lld revision(s)" = "%@ · %lld revision(s)";
+"Ollama models are removed with ollama rm. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them." = "Ollama models are removed with ollama rm. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them.";
+"Permanent · Remove with ollama rm" = "Permanent · Remove with ollama rm";
+"Permanent · Delete model files" = "Permanent · Delete model files";

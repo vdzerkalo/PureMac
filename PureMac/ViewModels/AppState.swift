@@ -152,8 +152,19 @@ final class AppState: ObservableObject {
         categoryResults[selectedCategory]
     }
 
+    /// Results that take part in Smart Scan totals and bulk cleaning. Local
+    /// AI Models (user data) are reviewed on their own page and excluded here.
     var allResults: [CategoryResult] {
-        CleaningCategory.scannable.compactMap { categoryResults[$0] }.filter { $0.totalSize > 0 }
+        CleaningCategory.smartScannable.compactMap { categoryResults[$0] }.filter { $0.totalSize > 0 }
+    }
+
+    /// Junk total shown on the dashboard and sidebar; excludes user-data
+    /// categories such as Local AI Models.
+    private var smartScanTotalSize: Int64 {
+        categoryResults
+            .filter { CleaningCategory.smartScannable.contains($0.key) }
+            .values
+            .reduce(0) { $0 + $1.totalSize }
     }
 
     var totalSelectedSize: Int64 {
@@ -637,7 +648,7 @@ final class AppState: ObservableObject {
         for (category, result) in categoryResults {
             categoryResults[category] = applyingCleanupExclusions(to: result)
         }
-        totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+        totalJunkSize = smartScanTotalSize
     }
 
     func removeCleanupExclusion(_ path: String) {
@@ -649,7 +660,12 @@ final class AppState: ObservableObject {
         let excluded = excludedCleanupPaths
         guard !excluded.isEmpty else { return result }
         let items = result.items.filter { !CleanupExclusions.excludes($0.path, paths: excluded) }
-        return CategoryResult(category: result.category, items: items, totalSize: items.reduce(0) { $0 + $1.size })
+        return CategoryResult(
+            category: result.category,
+            items: items,
+            totalSize: items.reduce(0) { $0 + $1.size },
+            notes: result.notes
+        )
     }
 
     func setSelection(_ selected: Bool, for items: [CleanableItem]) {
@@ -856,7 +872,7 @@ final class AppState: ObservableObject {
                 )
             }
         }
-        totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+        totalJunkSize = smartScanTotalSize
 
         // Route survivors back through the same outcome path the original
         // cleanup uses. Without this, an FDA revocation between grant and
@@ -881,7 +897,7 @@ final class AppState: ObservableObject {
 
     func startSmartScan() {
         guard !scanState.isActive, !deviceBackupRemovalInProgress else { return }
-        beginScan(categories: CleaningCategory.scannable, replacingResults: true)
+        beginScan(categories: CleaningCategory.smartScannable, replacingResults: true)
     }
 
     func scanSingleCategory(_ category: CleaningCategory) {
@@ -928,7 +944,7 @@ final class AppState: ObservableObject {
                 }
                 guard !Task.isCancelled, scanGeneration == generation else { return }
                 categoryResults[category] = applyingCleanupExclusions(to: result)
-                totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+                totalJunkSize = smartScanTotalSize
             }
             scanProgress = 1
             scanTicker.path = ""
@@ -947,6 +963,8 @@ final class AppState: ObservableObject {
         let itemsToClean = allResults.flatMap { $0.items }.filter { item in
             guard itemIDs?.contains(item.id) ?? true else { return false }
             guard isItemSelected(item) else { return false }
+            // Models are user data: never part of a bulk or scheduled clean.
+            guard !CleaningCategory.userDataCategories.contains(item.category) else { return false }
             if scheduled && XcodeBuildMCPDerivedDataSupport.isManagedDerivedDataPath(item.path) {
                 // Scheduled XcodeBuildMCP cleanup is intentionally stricter
                 // than ordinary Xcode Junk: only old, unlocked rows qualify.
@@ -1000,11 +1018,12 @@ final class AppState: ObservableObject {
                     categoryResults[cat] = CategoryResult(
                         category: cat,
                         items: remaining,
-                        totalSize: remaining.reduce(0) { $0 + $1.size }
+                        totalSize: remaining.reduce(0) { $0 + $1.size },
+                        notes: catResult.notes
                     )
                 }
             }
-            totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+            totalJunkSize = smartScanTotalSize
 
             handleCleanOutcome(errors: result.errors, survivors: survivors)
 
@@ -1059,11 +1078,12 @@ final class AppState: ObservableObject {
                     categoryResults[category] = CategoryResult(
                         category: category,
                         items: remaining,
-                        totalSize: remaining.reduce(0) { $0 + $1.size }
+                        totalSize: remaining.reduce(0) { $0 + $1.size },
+                        notes: existing.notes
                     )
                 }
             }
-            totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+            totalJunkSize = smartScanTotalSize
 
             let survivors = survivingItems(from: selectedItems, result: cleanResult)
             handleCleanOutcome(errors: cleanResult.errors, survivors: survivors)
@@ -1145,7 +1165,7 @@ final class AppState: ObservableObject {
 
     func runScheduledScan() async {
         guard canRunScheduledScan(isAppActive: NSApp.isActive) else { return }
-        let categories = scheduler.config.categoriesToScan.filter { CleaningCategory.scannable.contains($0) }
+        let categories = scheduler.config.categoriesToScan.filter { CleaningCategory.smartScannable.contains($0) }
         guard !categories.isEmpty else { return }
         let generation = UUID()
         scanGeneration = generation

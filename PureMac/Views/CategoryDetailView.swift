@@ -33,6 +33,9 @@ struct CategoryDetailView: View {
                 .padding(.horizontal, 28)
                 .padding(.bottom, 16)
             }
+            if let result, !result.notes.isEmpty {
+                notesBanner(result.notes)
+            }
             if let result, !result.items.isEmpty {
                 filters
                 Divider()
@@ -63,6 +66,26 @@ struct CategoryDetailView: View {
             filter = CleanupReviewFilter()
             pendingReview = nil
         }
+    }
+
+    private func notesBanner(_ notes: [String]) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(notes, id: \.self) { note in
+                    Text(note)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 28)
+        .padding(.bottom, 14)
     }
 
     private var header: some View {
@@ -195,6 +218,12 @@ struct CategoryDetailView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if items.contains(where: { $0.category == .localAIModels }) {
+                    Text("Ollama models are removed with ollama rm. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Divider()
             ScrollView {
@@ -210,7 +239,7 @@ struct CategoryDetailView: View {
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             }
-                            if !item.path.isEmpty {
+                            if !item.path.isEmpty, item.ollamaModelName == nil {
                                 Text(item.path)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
@@ -247,6 +276,12 @@ struct CategoryDetailView: View {
     }
 
     private func removalMethod(_ item: CleanableItem) -> String {
+        if item.ollamaModelName != nil {
+            return String(localized: "Permanent · Remove with ollama rm")
+        }
+        if item.category == .localAIModels {
+            return String(localized: "Permanent · Delete model files")
+        }
         if item.simctlRuntimeIdentifier != nil {
             return String(localized: "Permanent · Remove simulator runtime")
         }
@@ -280,12 +315,12 @@ private struct CleanupFileRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath)
+                Text(secondaryLine)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .help(item.path)
+                    .help(item.isActionItem ? secondaryLine : item.path)
             }
             Spacer(minLength: 12)
             if !item.isSelected {
@@ -326,6 +361,16 @@ private struct CleanupFileRow: View {
                 Button("Always exclude from cleanup") { appState.excludeFromCleanup(item) }
                     .disabled(appState.scanState.isActive)
             }
+        }
+    }
+
+    private var secondaryLine: String {
+        let location = item.isActionItem ? nil : (item.path as NSString).abbreviatingWithTildeInPath
+        switch (item.detail, location) {
+        case let (detail?, location?): return "\(detail) · \(location)"
+        case let (detail?, nil): return detail
+        case let (nil, location?): return location
+        case (nil, nil): return String(localized: "Managed cleanup action")
         }
     }
 

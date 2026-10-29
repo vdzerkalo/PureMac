@@ -6,9 +6,15 @@ actor CleaningEngine {
     /// XcodeBuildMCPDerivedDataSupport path checks on symlinked homes.
     private let homeDirectory: URL
     private let binaryThinner = BinaryThinner()
+    private let localAIModels: LocalAIModels
 
-    init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
-        self.homeDirectory = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+    init(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        localAIModels: LocalAIModels? = nil
+    ) {
+        let canonicalHome = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        self.homeDirectory = canonicalHome
+        self.localAIModels = localAIModels ?? LocalAIModels(context: .live(homeDirectory: canonicalHome))
     }
 
     struct CleaningResult {
@@ -49,6 +55,23 @@ actor CleaningEngine {
 
             if item.category == .aiApps, !isSupportedAIAppPath(item.path) {
                 result.errors.append("Unsupported AI app cleanup path: \(item.path)")
+                continue
+            }
+
+            if item.category == .localAIModels {
+                // Models are removed only through LocalAIModels: `ollama rm`
+                // for Ollama, and `hf cache rm` or one validated folder delete
+                // for Hugging Face. This never reaches the generic allow-list
+                // below, and never the admin pass.
+                let outcome = await localAIModels.remove(item)
+                result.freedSpace += outcome.freed
+                if outcome.cleaned {
+                    result.itemsCleaned += 1
+                    result.cleanedPaths.insert(item.path)
+                }
+                if let error = outcome.error {
+                    result.errors.append(error)
+                }
                 continue
             }
 
@@ -285,6 +308,10 @@ actor CleaningEngine {
         // refuses to escalate.
         let exclusions = CleanupExclusions.paths()
         let validated: [(item: CleanableItem, resolved: String)] = items.compactMap { item in
+            guard item.category != .localAIModels else {
+                result.errors.append("Administrator cleanup is unavailable for local AI models: \(item.name)")
+                return nil
+            }
             guard item.category != .aiApps else {
                 result.errors.append("Administrator cleanup is unavailable for AI app data: \(item.name)")
                 return nil
@@ -579,6 +606,11 @@ actor CleaningEngine {
     ) -> Bool {
         if item.category == .aiApps {
             return item.path == resolvedPath && isSupportedAIAppPath(resolvedPath)
+        }
+        // Local AI Models rows have their own validated route in cleanItems;
+        // if one ever reaches the generic path it must not be deletable here.
+        if item.category == .localAIModels {
+            return false
         }
         let originalIsManaged = XcodeBuildMCPDerivedDataSupport.isManagedDerivedDataPath(
             item.path,
