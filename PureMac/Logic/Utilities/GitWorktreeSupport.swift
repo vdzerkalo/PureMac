@@ -325,6 +325,18 @@ enum GitWorktreeSupport {
         }
     }
 
+    /// True when the signals the scan gathers before walking the ignored
+    /// folders already make `classify` return Protected. No later signal
+    /// lowers that status, so the scan stops checking such a worktree.
+    static func isProtectedBeforeWalk(_ signals: Signals) -> Bool {
+        guard !signals.listed.isPrunable else { return false }
+        return signals.status.trackedChanges > 0
+            || signals.uniqueCommits > 0
+            || signals.hasAttributedStash
+            || signals.listed.isLocked
+            || signals.inUse
+    }
+
     static func classify(
         _ signals: Signals,
         now: Date = Date(),

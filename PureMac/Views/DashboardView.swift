@@ -486,6 +486,27 @@ struct DashboardView: View {
                 )
                 resultRows(results: appState.allResults.sorted { $0.totalSize > $1.totalSize })
             }
+
+            if !appState.smartScanAdditionOffers.isEmpty {
+                dashboardSection("Not in Smart Scan", detail: "Scanned only after you add them")
+                smartScanOffers
+            }
+        }
+    }
+
+    private var smartScanOffers: some View {
+        CardSurface(padding: 0, elevation: .flat) {
+            VStack(spacing: 0) {
+                ForEach(Array(appState.smartScanAdditionOffers.enumerated()), id: \.element) { index, category in
+                    SmartScanOfferRow(category: category, disabled: appState.scanState.isActive) {
+                        appState.addToSmartScan(category)
+                    }
+                    if index < appState.smartScanAdditionOffers.count - 1 {
+                        Divider()
+                            .padding(.leading, 58)
+                    }
+                }
+            }
         }
     }
 
@@ -683,6 +704,33 @@ private struct DashboardToolCard: View {
     }
 }
 
+/// A category Smart Scan leaves out until the user adds it.
+private struct SmartScanOfferRow: View {
+    let category: CleaningCategory
+    let disabled: Bool
+    let add: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            IconTile(systemName: category.icon, tint: category.color, size: 30, corner: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(LocalizedStringKey(category.rawValue))
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Scanning only reads. Removal stays on the category screen.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Add to Smart Scan", action: add)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(disabled)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+    }
+}
+
 private struct CategoryResultRow: View {
     let result: CategoryResult
     let selectedCount: Int
@@ -728,7 +776,7 @@ private struct CategoryResultRow: View {
     }
 }
 
-private struct ScanPathTicker: View {
+struct ScanPathTicker: View {
     @ObservedObject var ticker: ScanProgressTicker
 
     var body: some View {

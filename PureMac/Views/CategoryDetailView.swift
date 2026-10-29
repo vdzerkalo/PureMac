@@ -30,13 +30,16 @@ struct CategoryDetailView: View {
         VStack(spacing: 0) {
             header
             if case .scanning = appState.scanState {
-                HStack(spacing: 12) {
-                    ProgressView().controlSize(.small)
-                    Text("Scanning \(Text(LocalizedStringKey(appState.currentScanCategory)))…")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Stop scan") { appState.cancelScan() }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 12) {
+                        ProgressView().controlSize(.small)
+                        Text("Scanning \(Text(LocalizedStringKey(appState.currentScanCategory)))…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Stop scan") { appState.cancelScan() }
+                    }
+                    ScanPathTicker(ticker: appState.scanTicker)
                 }
                 .padding(.horizontal, 28)
                 .padding(.bottom, 16)
@@ -491,22 +494,28 @@ private struct CleanupFileRow: View {
                     .background(Color.primary.opacity(0.05), in: Capsule())
                     .help("Personal data or an optional cleanup action. Left unselected by default.")
             }
+            // Rows without a date or without a file to reveal (cleanup
+            // actions) keep both slots empty, so the date and size columns
+            // line up across every row.
             if let date = item.lastModified {
                 Text(date, style: .date)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(width: 78, alignment: .trailing)
+            } else {
+                Color.clear.frame(width: 78, height: 1)
             }
             Text(item.formattedSize)
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .frame(width: 85, alignment: .trailing)
-            if !item.isActionItem || item.worktreeArtifacts != nil {
-                Button { reveal() } label: { Image(systemName: "arrow.up.forward.square") }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-                    .help("Reveal in Finder")
-                    .accessibilityLabel("Reveal \(item.name) in Finder")
-            }
+            Button { reveal() } label: { Image(systemName: "arrow.up.forward.square") }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Reveal in Finder")
+                .accessibilityLabel("Reveal \(item.name) in Finder")
+                .opacity(hidesReveal ? 0 : 1)
+                .disabled(hidesReveal)
+                .accessibilityHidden(hidesReveal)
         }
         .padding(.vertical, 9)
         .padding(.leading, item.worktreeArtifacts != nil ? 18 : 0)
@@ -523,6 +532,9 @@ private struct CleanupFileRow: View {
             }
         }
     }
+
+    /// Cleanup actions have no file to reveal; artifact rows reveal their worktree.
+    private var hidesReveal: Bool { item.isActionItem && item.worktreeArtifacts == nil }
 
     private func reveal() {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.worktreeArtifacts?.worktreePath ?? item.path)])
