@@ -162,7 +162,7 @@ The **Storage** tab in Apple Features measures known model assets, downloaded sc
 
 Local iPhone and iPad backups have a separate manual review. Nothing is preselected or scheduled. Selected backups move to the Trash after confirmation and fresh checks for changes, symbolic links, and exclusions. Keep any backup you may need to restore a device; space is not reclaimed until the Trash is emptied.
 
-**Space Explorer** measures the allocated space inside a folder you choose. Drill into directories, compare their sizes, and reveal an item in Finder. Packages are measured without exposing their contents as navigable folders. Skipped and inaccessible items are reported.
+**Space Explorer** measures the allocated space inside a folder you choose. Drill into directories, compare their sizes, and reveal an item in Finder. Packages are measured without exposing their contents as navigable folders. Skipped and inaccessible items are reported. A read-only treemap mode draws the same sizes as proportional tiles ([details](docs/SPACE-TREEMAP.md)).
 
 **Duplicate Finder** groups files with matching sizes and SHA-256 content hashes. Hard links are not counted as separate recoverable copies. Every group keeps one protected copy; selected extras move to the Trash only after confirmation and a fresh identity/content check. Emptying the Trash is a separate step.
 

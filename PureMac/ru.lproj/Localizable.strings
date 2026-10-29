@@ -1084,3 +1084,13 @@
 "Cursor extension download cache" = "Кэш загруженных расширений Cursor";
 "Downloaded extension packages (.vsix). Downloaded again when needed." = "Загруженные пакеты расширений (.vsix). При необходимости загружаются снова.";
 "%@ is running. Quit it to remove this." = "%@ запущено. Закройте приложение, чтобы удалить это.";
+/* Space Explorer treemap */
+"List" = "Список";
+"Treemap" = "Древовидная карта";
+"Result view" = "Вид результатов";
+"Other (%lld items)" = "Прочее (элементов: %lld)";
+"Items too small to draw individually are grouped into this tile." = "Элементы, слишком маленькие для отдельного показа, сгруппированы в этой плитке.";
+"Treemap of allocated space" = "Древовидная карта занятого места";
+"Folder" = "Папка";
+"Hover a tile to see its name and size. Click a folder to open it." = "Наведите курсор на плитку, чтобы увидеть название и размер. Щёлкните папку, чтобы открыть её.";
+"Skipped and inaccessible items are not included in these sizes." = "Пропущенные и недоступные элементы не учтены в этих размерах.";
