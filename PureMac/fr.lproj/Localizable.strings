@@ -980,6 +980,7 @@
 "Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing.";
 "git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not." = "git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not.";
 "artifacts %@ · code %@" = "artifacts %@ · code %@";
+"no build folders · code %@" = "no build folders · code %@";
 "Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Permanent · git worktree prune (forgets the missing folder, deletes no files)";
 "Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Permanent · git worktree remove (merged branch is deleted with git branch -d)";
 

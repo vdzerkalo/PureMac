@@ -738,7 +738,7 @@
 "Refreshing package data and comparing installed versions." = "Refreshing package data and comparing installed versions.";
 "Refused to delete %lld protected item(s) (home credential directory or similar)." = "Refused to delete %lld protected item(s) (home credential directory or similar).";
 "Remove %lld files" = "Remove %lld files";
-"Remove %lld items" = "Remove %lld items";
+"Remove %lld items" = "Видалити елементів: %lld";
 "Remove apps and their related files" = "Remove apps and their related files";
 "Remove selected app files?" = "Remove selected app files?";
 "Remove selected files?" = "Remove selected files?";
@@ -984,6 +984,7 @@
 "Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Гілки worktree, які можна видалити, видаляє git branch -d, лише якщо git згоден, що їх злито. Коміти в безпеці, лише якщо вони злиті, запушені або є в іншій гілці; PureMac перевіряє це ще раз безпосередньо перед видаленням.";
 "git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not." = "git worktree prune видаляє лише записи git про worktree, чиєї папки вже немає; файли не чіпає. Діє на всі відсутні worktree цього репозиторію, вибрані чи ні.";
 "artifacts %@ · code %@" = "артефакти %@ · код %@";
+"no build folders · code %@" = "папок збірки немає · код %@";
 "Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Назавжди · git worktree prune (забуває відсутню папку, файли не видаляє)";
 "Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Назавжди · git worktree remove (злиту гілку видаляє git branch -d)";
 
