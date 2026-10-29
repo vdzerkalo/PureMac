@@ -397,6 +397,11 @@ struct CleaningSettingsView: View {
                 Text("Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let problem = GitWorktreeSupport.baseBranchSettingProblem(worktreeBaseBranch) {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
 
                 Toggle("Delete the merged branch after removing a worktree", isOn: $worktreeDeleteMergedBranch)
                 Text("Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged.")

@@ -99,9 +99,12 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     }
 
     // Categories a Smart Scan or a scheduled scan covers. Git worktrees are
-    // left out: removing one runs `git worktree remove` on the user's own
-    // repositories, so it is only ever scanned and cleaned from its own
-    // category screen, never as part of "Clean All" or an unattended run.
+    // left out of both: removing one runs `git worktree remove` on the user's
+    // own repositories, so it is scanned and cleaned only from its own
+    // category screen. Rows scanned there do stay in `categoryResults`, so
+    // the Overview also refuses them: `RemovalRisk.requiresAcknowledgement`
+    // keeps them out of its totals, its Clean button, its category checkbox
+    // and `cleanAll` (manual and scheduled alike).
     static var smartScannable: [CleaningCategory] {
         scannable.filter { $0 != .gitWorktrees }
     }
@@ -202,6 +205,12 @@ struct CleanableItem: Identifiable, Hashable {
     /// The docker prune behind a virtual Docker Cache row, if this is one.
     var dockerPruneAction: DockerSupport.PruneAction? {
         category == .dockerCache ? DockerSupport.action(forPath: path) : nil
+    }
+
+    /// The exact docker command behind a Docker Cache row, including the
+    /// volume names a volumes row removes.
+    var dockerCommandLine: String? {
+        category == .dockerCache ? DockerSupport.commandLine(forPath: path) : nil
     }
 
     /// What the row adds to its category's total. An artifact row is a part

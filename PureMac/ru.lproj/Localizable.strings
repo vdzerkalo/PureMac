@@ -313,9 +313,7 @@
 /* Docker Cache helper */
 "Docker build cache" = "Кэш сборки Docker";
 "Stopped Docker containers" = "Остановленные контейнеры Docker";
-"Unused Docker images (downloaded again when needed)" = "Неиспользуемые образы Docker (будут загружены снова при необходимости)";
 "Unused Docker volumes (may contain data such as databases)" = "Неиспользуемые тома Docker (могут содержать данные, например базы данных)";
-"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "Образ диска Docker Desktop (Docker.raw) занимает на диске %@. Место, освобождённое этими действиями, возвращается macOS через несколько минут после очистки.";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "Каждый час";
@@ -956,7 +954,6 @@
 "merged, no recent activity" = "слито, без недавней активности";
 "merged, idle for %lld days" = "слито, без изменений %lld дн.";
 "Nothing goes to the Trash: Docker deletes these objects permanently." = "Ничего не попадает в Корзину: Docker удаляет эти объекты навсегда.";
-"Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower." = "Удалённые образы и кеш сборок скачиваются или собираются заново, поэтому следующий pull или build будет медленнее.";
 "Stopped containers and the files inside them are deleted; running containers are kept." = "Остановленные контейнеры и файлы в них удаляются; запущенные остаются.";
 "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash." = "Каждую папку удаляет git worktree remove: всё внутри, включая игнорируемые node_modules и .env, удаляется, а не идёт в Корзину.";
 "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Ветки остаются. Коммиты в безопасности, только если они слиты, запушены или есть в другой ветке; PureMac перепроверяет это перед удалением.";
@@ -998,3 +995,25 @@
 "Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay" = "Навсегда · удалить только папки сборки, которые игнорирует git; worktree и его отслеживаемые файлы остаются";
 "Build folders such as node_modules, .next, dist or target inside these worktrees are deleted permanently, not moved to the Trash. Git ignores them and no tracked file is inside; the worktrees and their files stay, and your next install or build recreates the folders." = "Папки сборки, такие как node_modules, .next, dist или target, в этих worktree удаляются навсегда, а не перемещаются в Корзину. Git их игнорирует, отслеживаемых файлов внутри нет; worktree и их файлы остаются, а следующая установка или сборка создаст папки снова.";
 "Stop dev servers, watchers and builds running from these worktrees first. PureMac skips worktrees it sees in use, but cannot see every tool." = "Сначала остановите dev-серверы, наблюдатели и сборки, работающие из этих worktree. PureMac пропускает worktree, которые видит используемыми, но видит не каждый инструмент.";
+/* Docker polish */
+"Dangling Docker images (untagged leftovers)" = "Dangling-образы Docker (остатки без тегов)";
+"Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling-образы Docker (остатки без тегов, размер не оценён)";
+"All unused Docker images (pulled or rebuilt when needed)" = "Все неиспользуемые образы Docker (загружаются или собираются снова при необходимости)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself." = "Образ диска Docker Desktop (Docker.raw) занимает на диске %@. По данным Docker, место, освобождённое внутри него, может возвращаться macOS несколько минут; если этого не произошло, выполните сами `docker run --privileged --pid=host docker/desktop-reclaim-space`.";
+"Build cache is deleted; the next build recreates it and is slower." = "Кэш сборки будет удалён; следующая сборка создаст его заново и будет медленнее.";
+"All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded." = "Все образы, которые не использует ни один контейнер, будут удалены, с тегами или без; образы, собранные локально и никогда не отправленные в registry, можно только собрать заново, а не скачать.";
+"Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source." = "Dangling-образы (без тега) будут удалены; если такой образ ещё нужен, его придётся собрать заново из исходников.";
+
+/* Docker review fixes */
+"Unused Docker volumes (may contain data such as databases, size not estimated)" = "Неиспользуемые тома Docker (могут содержать данные, например базы данных, размер не оценён)";
+"The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "Тома, названные в команде, будут стёрты вместе с данными (базы данных, загрузки); ни pull, ни сборка их не вернут.";
+"Reviewed inside the category before removal" = "Удаляется в самой категории после просмотра";
+
+/* Git Worktrees safety review */
+"ignored files outside build folders (%lld)" = "игнорируемые файлы вне папок сборки (%lld)";
+"nested repository in ignored folder" = "вложенный репозиторий в игнорируемой папке";
+"ignored folders too large to check completely" = "игнорируемые папки слишком велики для полной проверки";
+"Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted." = "Укажите имя ветки, например main или origin/main. HEAD, теги и хеши коммитов не принимаются.";
+
+/* Git Worktrees artifacts safety review */
+"A build folder contains a git repository, so PureMac will not delete build folders here." = "Папка сборки содержит git-репозиторий, поэтому PureMac не будет удалять здесь папки сборки.";

@@ -19,11 +19,18 @@ struct WorktreeArtifactsReport: Equatable {
     /// The worktree's own verdict at scan time.
     let worktreeVerdict: GitWorktreeSupport.Verdict
     var folders: [WorktreeArtifactFolder]
+    /// First `.git` found inside one of the folders, relative to the
+    /// worktree (a pip editable install clones into `.venv/src/<pkg>/.git`).
+    /// Such a folder may hold work that exists nowhere else, so the whole
+    /// row is blocked.
+    var nestedRepository: String?
 
     var totalBytes: Int64 { folders.reduce(0) { $0 + $1.bytes } }
 
     /// Why this row cannot be selected, if it cannot.
-    var blocker: GitWorktreeSupport.Reason? { WorktreeArtifactSupport.blocker(for: worktreeVerdict) }
+    var blocker: GitWorktreeSupport.Reason? {
+        nestedRepository != nil ? .nestedRepositoryInIgnored : WorktreeArtifactSupport.blocker(for: worktreeVerdict)
+    }
 
     var displayName: String {
         let repo = URL(fileURLWithPath: repositoryPath).lastPathComponent
@@ -88,6 +95,10 @@ enum WorktreeArtifactSupport {
     enum Check: Equatable {
         /// The folder passed; `resolved` is its real absolute path.
         case ok(resolved: String)
+        /// A `.git` file or folder sits somewhere inside the folder (`at`,
+        /// relative to the worktree). Everything else about the folder was
+        /// fine, so `resolved` can be measured, but it is never deleted.
+        case nestedRepository(resolved: String, at: String)
         /// Nothing at that path any more.
         case missing
         case refused(String)
@@ -97,7 +108,9 @@ enum WorktreeArtifactSupport {
     /// a plain relative path ending in an artifact name; a real directory,
     /// not a symlink; its realpath is exactly worktree-realpath + path (no
     /// symlink on the way, nothing escaping the worktree); same volume as the
-    /// worktree; no `.git` in it or in a folder above it (nested repository).
+    /// worktree; no `.git` in a folder above it (nested repository), and no
+    /// `.git` anywhere inside it (bounded walk, symlinks not followed; a
+    /// folder too large or unreadable to walk completely is refused).
     static func check(worktree: String, relative: String) -> Check {
         let components = relative.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard !relative.hasPrefix("/"), (1...maxDepth).contains(components.count),
@@ -117,12 +130,14 @@ enum WorktreeArtifactSupport {
         let real = GitWorktreeScanner.canonical(full)
         guard real == full, GitWorktreeSupport.isInside(real, root: root) else { return .refused("resolves outside the worktree") }
         guard info.st_dev == rootInfo.st_dev else { return .refused("is on another volume") }
-        if GitWorktreeScanner.pathExists(full + "/.git") { return .refused("contains a repository") }
         var ancestor = root
         for component in components.dropLast() {
             ancestor += "/" + component
             if GitWorktreeScanner.pathExists(ancestor + "/.git") { return .refused("is inside a nested repository") }
         }
+        let walk = GitWorktreeScanner.inspectIgnoredFolders(worktree: root, ignored: [relative + "/"])
+        if let nested = walk.nestedRepository { return .nestedRepository(resolved: real, at: nested) }
+        if walk.incomplete { return .refused("is too large or unreadable to check for nested repositories") }
         return .ok(resolved: real)
     }
 }

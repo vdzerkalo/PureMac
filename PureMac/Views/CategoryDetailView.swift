@@ -241,7 +241,7 @@ struct CategoryDetailView: View {
                                     .foregroundStyle(.secondary)
                             }
                             if let action = item.dockerPruneAction {
-                                Text(action.commandLine)
+                                Text(item.dockerCommandLine ?? action.commandLine)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
@@ -422,7 +422,7 @@ private struct CleanupFileRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(item.dockerPruneAction?.commandLine
+                Text(item.dockerCommandLine
                     ?? (item.worktreeArtifacts.map { ($0.worktreePath as NSString).abbreviatingWithTildeInPath }
                         ?? (item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath)))
                     .font(.system(size: 11))
@@ -439,7 +439,8 @@ private struct CleanupFileRow: View {
                         .monospacedDigit()
                         .lineLimit(2)
                     if let blocker = artifacts.blocker {
-                        Text(String(localized: "blocked: \(blocker.localizedDescription)"))
+                        Text(String(localized: "blocked: \(blocker.localizedDescription)")
+                             + (artifacts.nestedRepository.map { " (\($0))" } ?? ""))
                             .font(.system(size: 11))
                             .foregroundStyle(Tint.red)
                             .lineLimit(2)
@@ -468,7 +469,9 @@ private struct CleanupFileRow: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background((blocked ? Tint.red : Tint.accent).opacity(0.12), in: Capsule())
-                    .help(blocked
+                    .help(artifacts.nestedRepository != nil
+                        ? String(localized: "A build folder contains a git repository, so PureMac will not delete build folders here.")
+                        : blocked
                         ? String(localized: "The worktree is busy, so PureMac will not touch its build folders.")
                         : String(localized: "Only git-ignored build folders are deleted. The worktree stays."))
             } else if let worktree = item.gitWorktree {

@@ -101,6 +101,23 @@ enum GitWorktreeSupport {
                 return name.hasPrefix(".env")
             }
         }
+
+        /// Ignored entries that are not inside a build-artifact folder
+        /// (`artifactDirectoryNames`). `git worktree remove` deletes them
+        /// without asking, and nothing says they can be regenerated: a
+        /// config/master.key, a secrets/ folder, a vendored clone.
+        var ignoredOutsideBuildFolders: [String] {
+            ignored.filter { !GitWorktreeSupport.isInsideArtifactFolder($0) }
+        }
+    }
+
+    /// True when a `git status --ignored=matching` entry is a build-artifact
+    /// folder or sits inside one ("apps/web/.next/", "node_modules/x.js").
+    /// A file counts by the folders above it; its own name does not matter.
+    static func isInsideArtifactFolder(_ entry: String) -> Bool {
+        var parts = entry.split(separator: "/").map(String.init)
+        if !entry.hasSuffix("/") { parts = Array(parts.dropLast()) }
+        return parts.contains { artifactDirectoryNames.contains($0) }
     }
 
     /// Parse `git status --porcelain=v2 -z --untracked-files=all --ignored=matching`.
@@ -184,6 +201,13 @@ enum GitWorktreeSupport {
         var lastActivity: Date?
         var inUse = false
         var isAgentWorktree = false
+        /// A `.git` file or folder was found inside an ignored folder: a
+        /// separate repository whose commits live only there.
+        var nestedRepositoryInIgnored = false
+        /// `.env*` entries found inside ignored folders (outside build folders).
+        var envFilesInIgnoredFolders = 0
+        /// The walk of the ignored folders hit its limit or an unreadable folder.
+        var ignoredFoldersNotFullyChecked = false
     }
 
     enum Status: String, Equatable {
@@ -196,6 +220,16 @@ enum GitWorktreeSupport {
         /// `Verdict.blocksSelection` is the effective rule: it lets prunable
         /// orphans through for `git worktree prune`.
         var blocksSelection: Bool { self == .protected || self == .orphan }
+
+        /// Order used to compare a fresh verdict with the scanned one.
+        var severity: Int {
+            switch self {
+            case .safeToDelete: return 0
+            case .needsReview: return 1
+            case .protected: return 2
+            case .orphan: return 3
+            }
+        }
     }
 
     enum Reason: Equatable {
@@ -209,11 +243,38 @@ enum GitWorktreeSupport {
         case notListedByGit
         case untrackedFiles(Int)
         case envFiles
+        case ignoredOutsideBuildFolders(Int)
+        case nestedRepositoryInIgnored
+        case ignoredFoldersNotFullyChecked
         case noBaseBranch
         case notMerged
         case noOwnCommits
         case activeRecently(days: Int)
         case mergedAndIdle(days: Int)
+
+        /// The case without its payload.
+        var kind: String {
+            switch self {
+            case .trackedChanges: return "trackedChanges"
+            case .uniqueCommits: return "uniqueCommits"
+            case .stash: return "stash"
+            case .locked: return "locked"
+            case .inUse: return "inUse"
+            case .recentAgentActivity: return "recentAgentActivity"
+            case .prunable: return "prunable"
+            case .notListedByGit: return "notListedByGit"
+            case .untrackedFiles: return "untrackedFiles"
+            case .envFiles: return "envFiles"
+            case .ignoredOutsideBuildFolders: return "ignoredOutsideBuildFolders"
+            case .nestedRepositoryInIgnored: return "nestedRepositoryInIgnored"
+            case .ignoredFoldersNotFullyChecked: return "ignoredFoldersNotFullyChecked"
+            case .noBaseBranch: return "noBaseBranch"
+            case .notMerged: return "notMerged"
+            case .noOwnCommits: return "noOwnCommits"
+            case .activeRecently: return "activeRecently"
+            case .mergedAndIdle: return "mergedAndIdle"
+            }
+        }
     }
 
     struct Verdict: Equatable {
@@ -227,6 +288,20 @@ enum GitWorktreeSupport {
         /// What the UI and the clean step enforce: protected rows and orphans
         /// git does not know about can never be selected. Prunable orphans can.
         var blocksSelection: Bool { status.blocksSelection && !isPrunableOrphan }
+
+        /// Reasons here that `scanned` did not have, compared by kind (a
+        /// changed count or day number alone is not a new reason). The
+        /// all-clear "merged, idle" reason never counts as a problem.
+        func reasonsAdded(since scanned: Verdict) -> [Reason] {
+            let before = Set(scanned.reasons.map(\.kind))
+            return reasons.filter { !before.contains($0.kind) && $0.kind != "mergedAndIdle" }
+        }
+
+        /// True when the worktree looks worse now than when it was scanned:
+        /// a more severe status, or a reason the scan did not report.
+        func isWorse(than scanned: Verdict) -> Bool {
+            status.severity > scanned.status.severity || !reasonsAdded(since: scanned).isEmpty
+        }
     }
 
     static func classify(
@@ -245,6 +320,7 @@ enum GitWorktreeSupport {
         if signals.status.trackedChanges > 0 { protectedReasons.append(.trackedChanges(signals.status.trackedChanges)) }
         if signals.uniqueCommits > 0 { protectedReasons.append(.uniqueCommits(signals.uniqueCommits)) }
         if signals.hasAttributedStash { protectedReasons.append(.stash) }
+        if signals.nestedRepositoryInIgnored { protectedReasons.append(.nestedRepositoryInIgnored) }
         if signals.listed.isLocked { protectedReasons.append(.locked) }
         if signals.inUse { protectedReasons.append(.inUse) }
         if signals.isAgentWorktree, idleSeconds < recentAgentActivityWindow {
@@ -256,7 +332,10 @@ enum GitWorktreeSupport {
 
         var reviewReasons: [Reason] = []
         if !signals.status.untracked.isEmpty { reviewReasons.append(.untrackedFiles(signals.status.untracked.count)) }
-        if !signals.status.ignoredEnvFiles.isEmpty { reviewReasons.append(.envFiles) }
+        if !signals.status.ignoredEnvFiles.isEmpty || signals.envFilesInIgnoredFolders > 0 { reviewReasons.append(.envFiles) }
+        let ignoredOutside = signals.status.ignoredOutsideBuildFolders.count
+        if ignoredOutside > 0 { reviewReasons.append(.ignoredOutsideBuildFolders(ignoredOutside)) }
+        if signals.ignoredFoldersNotFullyChecked { reviewReasons.append(.ignoredFoldersNotFullyChecked) }
         let merged = signals.isAncestorOfBase || signals.cherryAllApplied
         if signals.baseRef == nil {
             reviewReasons.append(.noBaseBranch)
@@ -333,6 +412,32 @@ enum GitWorktreeSupport {
         return name.rangeOfCharacter(from: forbidden) == nil
     }
 
+    /// The full refs a base-branch setting may mean, or nil when it can only
+    /// mean something else. Only `refs/heads/*` and `refs/remotes/*` qualify:
+    /// `HEAD`, `@` and the other pseudo-refs name whatever is checked out
+    /// where git runs, and a SHA names a commit, not a branch. A short name
+    /// is tried as a local branch and as a remote-tracking branch; the caller
+    /// uses the one that exists (and refuses when both do).
+    static func baseRefCandidates(for setting: String) -> [String]? {
+        let name = setting.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isValidRevisionName(name), name != "@", name != "HEAD" else { return nil }
+        if name.range(of: "^[A-Z][A-Z_]*$", options: .regularExpression) != nil { return nil }
+        if name.range(of: "^[0-9a-fA-F]{4,64}$", options: .regularExpression) != nil { return nil }
+        if name.hasPrefix("refs/") {
+            guard name.hasPrefix("refs/heads/") || name.hasPrefix("refs/remotes/") else { return nil }
+            return [name]
+        }
+        return ["refs/heads/\(name)", "refs/remotes/\(name)"]
+    }
+
+    /// Why a base-branch setting can never work, for the Settings screen;
+    /// nil when it is empty (automatic) or could name a branch.
+    static func baseBranchSettingProblem(_ setting: String) -> String? {
+        let name = setting.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, baseRefCandidates(for: name) == nil else { return nil }
+        return String(localized: "Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted.")
+    }
+
     /// True when `path` equals `root` or sits inside it.
     static func isInside(_ path: String, root: String) -> Bool {
         let normalizedRoot = root.hasSuffix("/") ? String(root.dropLast()) : root
@@ -366,6 +471,9 @@ extension GitWorktreeSupport.Reason {
         case .notListedByGit: return String(localized: "not a worktree its repository knows about")
         case .untrackedFiles(let count): return String(localized: "untracked files (\(count))")
         case .envFiles: return String(localized: "ignored .env files would be deleted")
+        case .ignoredOutsideBuildFolders(let count): return String(localized: "ignored files outside build folders (\(count))")
+        case .nestedRepositoryInIgnored: return String(localized: "nested repository in ignored folder")
+        case .ignoredFoldersNotFullyChecked: return String(localized: "ignored folders too large to check completely")
         case .noBaseBranch: return String(localized: "no main branch to compare with")
         case .notMerged: return String(localized: "not merged into the main branch")
         case .noOwnCommits: return String(localized: "no commits of its own")

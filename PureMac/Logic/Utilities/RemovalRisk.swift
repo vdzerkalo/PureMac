@@ -18,13 +18,26 @@ enum RemovalRisk {
     ) -> [String] {
         switch category {
         case .dockerCache:
+            // One risk per kind of object the selected rows remove, worded for
+            // the exact command; the volumes risk appears only with that row.
+            let actions = Set(items.compactMap(\.dockerPruneAction))
             var risks = [
                 String(localized: "Nothing goes to the Trash: Docker deletes these objects permanently."),
-                String(localized: "Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower."),
-                String(localized: "Stopped containers and the files inside them are deleted; running containers are kept."),
             ]
-            if items.contains(where: { $0.dockerPruneAction == .unusedVolumes }) {
-                risks.append(String(localized: "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back."))
+            if actions.contains(.buildCache) {
+                risks.append(String(localized: "Build cache is deleted; the next build recreates it and is slower."))
+            }
+            if actions.contains(.stoppedContainers) {
+                risks.append(String(localized: "Stopped containers and the files inside them are deleted; running containers are kept."))
+            }
+            if actions.contains(.unusedImages) {
+                // Covers the dangling row too: `image prune -a` removes both.
+                risks.append(String(localized: "All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded."))
+            } else if actions.contains(.danglingImages) {
+                risks.append(String(localized: "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source."))
+            }
+            if actions.contains(.unusedVolumes) {
+                risks.append(String(localized: "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back."))
             }
             return risks
         case .gitWorktrees:
@@ -71,7 +84,7 @@ enum RemovalRisk {
                 : abbreviate(item.path)
             return "worktree remove \(name):\(relative)"
         }
-        if let prune = item.dockerPruneAction { return prune.commandLine }
+        if let command = item.dockerCommandLine { return command }
         if item.isActionItem { return item.name }
         return "delete \(abbreviate(item.path))"
     }
@@ -151,6 +164,9 @@ enum RemovalRisk {
     private static func note(for item: CleanableItem) -> String {
         if let artifacts = item.worktreeArtifacts {
             let worktree = artifacts.worktreeVerdict.englishSummary
+            if let nested = artifacts.nestedRepository {
+                return "BLOCKED (a build folder contains a git repository: \(nested)); worktree is \(worktree)"
+            }
             return artifacts.blocker == nil
                 ? "opt-in; regenerable build folders only; worktree is \(worktree)"
                 : "BLOCKED (worktree busy); worktree is \(worktree)"
@@ -161,7 +177,7 @@ enum RemovalRisk {
 
     private static func readOnlyChecks(for category: CleaningCategory) -> String {
         switch category {
-        case .dockerCache: return "docker ps -a, docker volume ls, docker system df -v"
+        case .dockerCache: return "docker ps -a, docker images --filter dangling=true, docker volume ls, docker system df -v"
         case .gitWorktrees: return "git status, git log, git stash list"
         default: return "list and inspect only"
         }
@@ -183,6 +199,9 @@ extension GitWorktreeSupport.Verdict {
             case .notListedByGit: return "not known to its repo"
             case .untrackedFiles(let n): return "untracked files (\(n))"
             case .envFiles: return "ignored .env files"
+            case .ignoredOutsideBuildFolders(let n): return "ignored files outside build folders (\(n))"
+            case .nestedRepositoryInIgnored: return "nested repository in ignored folder"
+            case .ignoredFoldersNotFullyChecked: return "ignored folders too large to check completely"
             case .noBaseBranch: return "no main branch"
             case .notMerged: return "not merged"
             case .noOwnCommits: return "no own commits"

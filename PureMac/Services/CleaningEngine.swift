@@ -9,12 +9,17 @@ actor CleaningEngine {
     /// Read at clean time so the re-check before a worktree removal uses the
     /// settings in force now, not those of the scan.
     private let worktreeSettings: @Sendable () -> GitWorktreeSettings
+    /// Tests point this at a fake CLI script so no real docker ever runs;
+    /// nil in the app, which searches DockerSupport.candidateBinaryPaths.
+    private let dockerBinaryPath: String?
 
     init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        dockerBinaryPath: String? = nil,
         worktreeSettings: @escaping @Sendable () -> GitWorktreeSettings = { GitWorktreeSettings.current() }
     ) {
         self.homeDirectory = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
+        self.dockerBinaryPath = dockerBinaryPath
         self.worktreeSettings = worktreeSettings
     }
 
@@ -44,8 +49,11 @@ actor CleaningEngine {
 
     // MARK: - Public API
 
-    func cleanItems(_ items: [CleanableItem], progressHandler: @Sendable (Double) -> Void) async -> CleaningResult {
+    func cleanItems(_ selectedItems: [CleanableItem], progressHandler: @Sendable (Double) -> Void) async -> CleaningResult {
         var result = CleaningResult()
+        // Docker prune rows run in DockerSupport.PruneAction.cleanOrder, not
+        // in the order they were selected.
+        let items = DockerSupport.orderedForCleaning(selectedItems)
         let total = items.count
         let exclusions = CleanupExclusions.paths()
 
@@ -135,7 +143,14 @@ actor CleaningEngine {
                 // Virtual Docker Cache rows reclaim space inside the
                 // Docker/OrbStack VM through their own prune command — there
                 // is no file to unlink.
-                let pruneOutcome = await pruneDocker(action)
+                // Volumes are removed by the names recorded at scan time,
+                // never pruned (see removeDockerVolumes).
+                let pruneOutcome: (freed: Int64, error: String?)
+                if action == .unusedVolumes {
+                    pruneOutcome = await removeDockerVolumes(DockerSupport.volumeEntries(forPath: item.path))
+                } else {
+                    pruneOutcome = await pruneDocker(action)
+                }
                 result.freedSpace += pruneOutcome.freed
                 if pruneOutcome.error == nil {
                     result.itemsCleaned += 1
@@ -450,52 +465,148 @@ actor CleaningEngine {
 
     // MARK: - Docker
 
-    /// Runs the prune behind one Docker Cache row (see
-    /// DockerSupport.PruneAction) and reports the bytes Docker says it
-    /// reclaimed. Running containers, images they use and volumes they mount
-    /// are never removed by any of these commands. With a VM-based runtime
-    /// (Docker Desktop, OrbStack) the junk lives inside the VM disk,
-    /// unreachable by any file unlink from the host. Returns a friendly error
-    /// when no CLI is installed or the daemon is not running — common with
-    /// OrbStack, which only runs on demand.
-    func pruneDocker(_ action: DockerSupport.PruneAction) async -> (freed: Int64, error: String?) {
-        guard let dockerBin = DockerSupport.locateBinary(homeDirectory: homeDirectory.path) else {
-            return (0, "Docker CLI not found — install Docker Desktop or OrbStack")
-        }
+    /// Result of one docker invocation: it ran (any exit status) or it could
+    /// not, with the message the review sheet shows.
+    private enum DockerRun {
+        case finished(status: Int32, stdout: String, stderr: String)
+        case failed(String)
+    }
 
-        // BrewProcessRunner drains both pipes while waiting (prune lists every
-        // deleted object and can overflow the 64 KB pipe buffer) and enforces
-        // a timeout, so a wedged daemon can't hang the clean forever.
-        let result: BrewProcessOutput
+    /// Runs the docker CLI with a timeout. BrewProcessRunner drains both
+    /// pipes while waiting and kills the process on timeout, so a wedged
+    /// daemon can't hang the clean forever. `keepOutputTail` is for prunes:
+    /// they list every deleted object, can print far more than the default
+    /// 4 MB cap, and put the "Total reclaimed space" summary last.
+    private func runDocker(
+        _ arguments: [String],
+        label: String,
+        timeout: TimeInterval,
+        keepOutputTail: Bool = false
+    ) async -> DockerRun {
+        guard let dockerBin = dockerBinaryPath ?? DockerSupport.locateBinary(homeDirectory: homeDirectory.path) else {
+            return .failed("Docker CLI not found — install Docker Desktop or OrbStack")
+        }
         do {
-            result = try await BrewProcessRunner.run(
+            let result = try await BrewProcessRunner.run(
                 executableURL: URL(fileURLWithPath: dockerBin),
-                arguments: action.arguments,
-                timeout: DockerSupport.pruneTimeout
+                arguments: arguments,
+                timeout: timeout,
+                keepOutputTail: keepOutputTail
+            )
+            return .finished(
+                status: result.status,
+                stdout: String(data: result.stdout, encoding: .utf8) ?? "",
+                stderr: String(data: result.stderr, encoding: .utf8) ?? ""
             )
         } catch is CancellationError {
-            return (0, nil)
+            // The process is terminated, but the daemon may have finished part
+            // of the work: not a success, so the row is not marked cleaned.
+            Logger.shared.log("\(label) was cancelled", level: .warning)
+            return .failed("\(label) was cancelled before it finished — some objects may already be removed; scan again")
         } catch ApplicationUpdaterError.timedOut {
-            Logger.shared.log("\(action.commandLine) timed out after \(Int(DockerSupport.pruneTimeout))s", level: .error)
-            return (0, "\(action.commandLine) did not finish in time — check Docker Desktop or OrbStack, then clean again")
+            Logger.shared.log("\(label) timed out after \(Int(timeout))s", level: .error)
+            return .failed("\(label) did not finish in time — check Docker Desktop or OrbStack, then clean again")
+        } catch ApplicationUpdaterError.outputLimitExceeded {
+            Logger.shared.log("\(label) printed more output than PureMac can read", level: .error)
+            return .failed("\(label) printed more output than PureMac can read — run it in Terminal to see the result")
         } catch {
-            Logger.shared.log("\(action.commandLine) failed to launch: \(error.localizedDescription)", level: .error)
-            return (0, "Couldn't run \(action.commandLine): \(error.localizedDescription)")
+            Logger.shared.log("\(label) failed to launch: \(error.localizedDescription)", level: .error)
+            return .failed("Couldn't run \(label): \(error.localizedDescription)")
         }
+    }
 
-        guard result.status == 0 else {
-            let stderrText = String(data: result.stderr, encoding: .utf8) ?? ""
-            if DockerSupport.isDaemonUnavailable(stderr: stderrText) {
-                return (0, "Docker isn't running — start Docker Desktop or OrbStack, then clean again")
+    /// Maps a non-zero exit to a row error. The stderr is logged first, so
+    /// the friendly "isn't running" text never hides what Docker said.
+    private func dockerFailure(status: Int32, stderr: String, label: String) -> String {
+        Logger.shared.log("\(label) exited \(status): \(stderr)", level: .error)
+        if DockerSupport.isDaemonUnavailable(stderr: stderr) {
+            return "Docker isn't running — start Docker Desktop or OrbStack, then clean again"
+        }
+        return "\(label) failed (exit \(status))"
+    }
+
+    /// Runs the prune behind one Docker Cache row (see
+    /// DockerSupport.PruneAction) and reports the bytes Docker says it
+    /// reclaimed. Each command prints only what it removed itself, so the
+    /// freed bytes of several rows add up without overlap. Running
+    /// containers and the images they use are never removed by any of these
+    /// commands. With a VM-based runtime (Docker Desktop, OrbStack) the junk
+    /// lives inside the VM disk, unreachable by any file unlink from the
+    /// host. Returns a friendly error when no CLI is installed or the daemon
+    /// is not running — common with OrbStack, which only runs on demand.
+    /// Volumes are not pruned: see removeDockerVolumes.
+    func pruneDocker(_ action: DockerSupport.PruneAction) async -> (freed: Int64, error: String?) {
+        guard action != .unusedVolumes else {
+            return (0, "Volumes are removed by name only — scan again")
+        }
+        let label = action.commandLine
+        switch await runDocker(action.arguments, label: label, timeout: DockerSupport.pruneTimeout, keepOutputTail: true) {
+        case .failed(let message):
+            return (0, message)
+        case .finished(let status, let stdout, let stderr):
+            guard status == 0 else {
+                return (0, dockerFailure(status: status, stderr: stderr, label: label))
             }
-            Logger.shared.log("\(action.commandLine) exited \(result.status): \(stderrText)", level: .error)
-            return (0, "\(action.commandLine) failed (exit \(result.status))")
+            let bytes = DockerSupport.parseReclaimedSpace(stdout) ?? 0
+            Logger.shared.log("\(label) reclaimed \(bytes) bytes", level: .info)
+            return (bytes, nil)
         }
+    }
 
-        let output = String(data: result.stdout, encoding: .utf8) ?? ""
-        let bytes = DockerSupport.parseReclaimedSpace(output) ?? 0
-        Logger.shared.log("\(action.commandLine) reclaimed \(bytes) bytes", level: .info)
-        return (bytes, nil)
+    /// Removes the volumes a volumes row recorded at scan time, and nothing
+    /// else. `docker volume prune -a` would also erase volumes freed by a
+    /// container prune in the same run; this removes only volumes that were
+    /// unused when the user saw the list.
+    ///
+    /// 1. Re-check, right before acting, which recorded volumes are still
+    ///    unused (`volume ls --filter dangling=true`). A volume that vanished
+    ///    or became in use is skipped silently.
+    /// 2. `docker volume rm <names>` WITHOUT `-f`: the daemon itself refuses
+    ///    a volume that is in use, so a race after step 1 cannot erase one.
+    ///    Per-volume failures are reported; the rest are still removed.
+    ///
+    /// Freed bytes are the scan-time sizes of the volumes Docker printed as
+    /// removed (`volume rm` prints names, not sizes).
+    func removeDockerVolumes(_ recorded: [DockerSupport.VolumeEntry]) async -> (freed: Int64, error: String?) {
+        guard !recorded.isEmpty else {
+            return (0, "No unused volumes were recorded for this row — scan again")
+        }
+        let listLabel = "docker volume ls"
+        let listing = await runDocker(DockerSupport.unusedVolumeNamesArguments, label: listLabel, timeout: DockerSupport.danglingLookupTimeout)
+        let unusedNow: Set<String>
+        switch listing {
+        case .failed(let message):
+            return (0, message)
+        case .finished(let status, let stdout, let stderr):
+            guard status == 0 else {
+                return (0, dockerFailure(status: status, stderr: stderr, label: listLabel))
+            }
+            unusedNow = Set(DockerSupport.parseVolumeNames(stdout))
+        }
+        let targets = recorded.filter { unusedNow.contains($0.name) }
+        if targets.count < recorded.count {
+            Logger.shared.log("docker volume rm: \(recorded.count - targets.count) recorded volume(s) no longer exist or are in use now, skipped", level: .info)
+        }
+        guard !targets.isEmpty else { return (0, nil) }
+
+        let label = "docker volume rm"
+        let arguments = DockerSupport.PruneAction.unusedVolumes.arguments + targets.map(\.name)
+        switch await runDocker(arguments, label: label, timeout: DockerSupport.pruneTimeout, keepOutputTail: true) {
+        case .failed(let message):
+            return (0, message)
+        case .finished(let status, let stdout, let stderr):
+            let outcome = DockerSupport.parseVolumeRemoval(stdout: stdout, stderr: stderr, requested: targets)
+            if status != 0, outcome.removed.isEmpty, outcome.problems.isEmpty {
+                return (0, dockerFailure(status: status, stderr: stderr, label: label))
+            }
+            if status != 0, outcome.removed.isEmpty, DockerSupport.isDaemonUnavailable(stderr: stderr) {
+                return (0, dockerFailure(status: status, stderr: stderr, label: label))
+            }
+            let freed = outcome.removed.reduce(Int64(0)) { $0 + $1.bytes }
+            Logger.shared.log("\(label) removed \(outcome.removed.count) of \(targets.count) volume(s), \(freed) bytes (scan-time sizes)", level: .info)
+            for problem in outcome.problems { Logger.shared.log(problem, level: .warning) }
+            return (freed, outcome.problems.isEmpty ? nil : outcome.problems.joined(separator: "; "))
+        }
     }
 
     // MARK: - Git Worktrees
@@ -536,6 +647,15 @@ actor CleaningEngine {
             }
             Logger.shared.log("Pruned missing worktree \(item.path) in \(repository)", level: .info)
             return (0, true, nil, nil)
+        }
+        // Worse than what the user was shown (a new reason, or a more severe
+        // status) means the worktree changed since the scan: the choice was
+        // made on stale information, so nothing is removed.
+        if fresh.verdict.isWorse(than: report.verdict) {
+            let added = fresh.verdict.reasonsAdded(since: report.verdict)
+            let why = (added.isEmpty ? fresh.verdict.reasons : added).map(\.localizedDescription).joined(separator: ", ")
+            Logger.shared.log("Skipped worktree \(item.path): worse than at the scan (\(fresh.verdict.status.rawValue): \(why))", level: .warning)
+            return (0, false, "\(item.name): changed since the scan (\(fresh.verdict.status.label): \(why)); rescan first", nil)
         }
         guard !fresh.verdict.status.blocksSelection else {
             let why = fresh.verdict.reasons.map(\.localizedDescription).joined(separator: ", ")
@@ -614,6 +734,10 @@ actor CleaningEngine {
             case .refused(let reason):
                 Logger.shared.log("Left artifact folder \(absolute): \(reason)", level: .warning)
                 problems.append("\(relative): \(reason)")
+                continue
+            case .nestedRepository(_, let at):
+                Logger.shared.log("Left artifact folder \(absolute): contains a repository at \(at)", level: .warning)
+                problems.append("\(relative): contains a repository (\(at))")
                 continue
             case .ok:
                 break
@@ -725,11 +849,19 @@ actor CleaningEngine {
 
     // MARK: - Helpers
 
-    private func isSafeToDelete(
+    /// Internal so tests can prove what both the user pass and the admin pass refuse.
+    func isSafeToDelete(
         item: CleanableItem,
         resolvedPath: String,
         includeUninstallPaths: Bool = false
     ) -> Bool {
+        // Docker/OrbStack VM disks sit under allow-listed roots; refuse them
+        // first, for every category and in both the user and admin pass.
+        if DockerSupport.isProtectedDiskPath(item.path, homeDirectory: homeDirectory)
+            || DockerSupport.isProtectedDiskPath(resolvedPath, homeDirectory: homeDirectory) {
+            Logger.shared.log("Refusing to delete Docker/OrbStack disk state: \(resolvedPath)", level: .warning)
+            return false
+        }
         if item.category == .aiApps {
             return item.path == resolvedPath && isSupportedAIAppPath(resolvedPath)
         }
@@ -791,6 +923,11 @@ actor CleaningEngine {
             )
             return false
         }
+        // Same for Docker/OrbStack disks (also checked per item above).
+        if DockerSupport.isProtectedDiskPath(resolvedPath, homeDirectory: homeDirectory) {
+            Logger.shared.log("Refusing to delete Docker/OrbStack disk state: \(resolvedPath)", level: .warning)
+            return false
+        }
 
         let allowedRoots = [
             "\(home)/Library/Caches",
@@ -819,7 +956,11 @@ actor CleaningEngine {
             "\(home)/.pnpm-store",
             "\(home)/.cache",
             "\(home)/.local/share/pnpm/store",
-            "\(home)/Library/Containers/com.docker.docker",
+            // Docker Desktop: only the folders scanDockerCache surfaces, never
+            // the container as a whole (it holds vms/…/Docker.raw).
+            "\(home)/Library/Containers/com.docker.docker/Data/cache",
+            "\(home)/Library/Containers/com.docker.docker/Data/log",
+            "\(home)/Library/Containers/com.docker.docker/Data/tmp",
             // Docker/OrbStack cache + log roots surfaced by scanDockerCache.
             // Without these the items scan fine but every delete is refused
             // as "unsafe path" — the category looked broken. Narrow roots

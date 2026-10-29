@@ -138,7 +138,7 @@ final class GitWorktreeSupportTests: XCTestCase {
                        .init(status: .needsReview, reasons: [.activeRecently(days: 2)]))
         XCTAssertEqual(Support.classify(signals { $0.isAncestorOfBase = false }).reasons, [.notMerged])
         XCTAssertEqual(Support.classify(signals { $0.baseRef = nil }).reasons, [.noBaseBranch])
-        XCTAssertEqual(Support.classify(signals { $0.status.ignored = ["config/.env"] }).reasons, [.envFiles])
+        XCTAssertEqual(Support.classify(signals { $0.status.ignored = ["config/.env"] }).reasons, [.envFiles, .ignoredOutsideBuildFolders(1)])
         XCTAssertEqual(Support.classify(signals { $0.status.untracked = ["a", "b"] }).reasons, [.untrackedFiles(2)])
         XCTAssertEqual(Support.classify(signals { $0.lastActivity = nil }).status, .safeToDelete)
     }
@@ -185,6 +185,83 @@ final class GitWorktreeSupportTests: XCTestCase {
         for bad in ["", "-D", "--upload-pack=x", "a b", "a..b", "main^", "x:y", "x@{1}", "a\nb", "/abs", "tail/", "x.lock", "a*", "a[b"] {
             XCTAssertFalse(Support.isValidRevisionName(bad), bad)
         }
+    }
+
+    // MARK: - Safety review: ignored work, re-check, base ref
+
+    func testIgnoredEntriesOutsideBuildFoldersNeedReview() {
+        let inside = ["node_modules/", "apps/web/.next/", ".venv/", "apps/api/node_modules/x/y.js", "dist/"]
+        let outside = ["config/master.key", "secrets/", "vendor/", ".env", "docs/build.txt", "notes/dist"]
+        for entry in inside { XCTAssertTrue(Support.isInsideArtifactFolder(entry), entry) }
+        for entry in outside { XCTAssertFalse(Support.isInsideArtifactFolder(entry), entry) }
+
+        var status = Support.WorkingTreeStatus()
+        status.ignored = inside + outside
+        XCTAssertEqual(status.ignoredOutsideBuildFolders, outside)
+
+        let base = signals { _ in }
+        XCTAssertEqual(Support.classify(base).status, .safeToDelete)
+        let withIgnored = signals { $0.status.ignored = ["config/master.key", "secrets/", "vendor/", "node_modules/"] }
+        XCTAssertEqual(Support.classify(withIgnored), .init(status: .needsReview, reasons: [.ignoredOutsideBuildFolders(3)]))
+        let onlyBuild = signals { $0.status.ignored = ["node_modules/", "apps/web/.next/"] }
+        XCTAssertEqual(Support.classify(onlyBuild).status, .safeToDelete)
+    }
+
+    func testNestedRepositoryInIgnoredFolderIsProtected() {
+        let nested = signals { $0.nestedRepositoryInIgnored = true; $0.status.ignored = ["vendor/"] }
+        XCTAssertEqual(Support.classify(nested), .init(status: .protected, reasons: [.nestedRepositoryInIgnored]))
+        XCTAssertTrue(Support.classify(nested).blocksSelection)
+
+        let unchecked = signals { $0.ignoredFoldersNotFullyChecked = true }
+        XCTAssertEqual(Support.classify(unchecked), .init(status: .needsReview, reasons: [.ignoredFoldersNotFullyChecked]))
+        let deepEnv = signals { $0.envFilesInIgnoredFolders = 1 }
+        XCTAssertEqual(Support.classify(deepEnv), .init(status: .needsReview, reasons: [.envFiles]))
+    }
+
+    func testAWorseVerdictAtRecheckIsDetected() {
+        typealias V = Support.Verdict
+        let safe = V(status: .safeToDelete, reasons: [.mergedAndIdle(days: 9)])
+        let review = V(status: .needsReview, reasons: [.untrackedFiles(1), .activeRecently(days: 2)])
+
+        XCTAssertFalse(safe.isWorse(than: safe))
+        XCTAssertFalse(V(status: .safeToDelete, reasons: [.mergedAndIdle(days: 40)]).isWorse(than: safe), "a day count alone is not new")
+        XCTAssertFalse(review.isWorse(than: review))
+        XCTAssertFalse(V(status: .needsReview, reasons: [.untrackedFiles(4)]).isWorse(than: review), "fewer reasons, other counts")
+        XCTAssertFalse(safe.isWorse(than: review), "better than scanned is fine")
+
+        XCTAssertTrue(review.isWorse(than: safe))
+        XCTAssertTrue(V(status: .protected, reasons: [.trackedChanges(1)]).isWorse(than: review))
+        let extended = V(status: .needsReview, reasons: [.untrackedFiles(1), .envFiles])
+        XCTAssertTrue(extended.isWorse(than: review), "same status, one more reason")
+        XCTAssertEqual(safe.reasonsAdded(since: review), [], "the all-clear reason is never a new problem")
+        XCTAssertEqual(extended.reasonsAdded(since: review), [.envFiles])
+    }
+
+    func testBaseBranchSettingAcceptsOnlyBranchRefs() {
+        XCTAssertEqual(Support.baseRefCandidates(for: "main"), ["refs/heads/main", "refs/remotes/main"])
+        XCTAssertEqual(Support.baseRefCandidates(for: " origin/develop "), ["refs/heads/origin/develop", "refs/remotes/origin/develop"])
+        XCTAssertEqual(Support.baseRefCandidates(for: "refs/remotes/origin/main"), ["refs/remotes/origin/main"])
+        XCTAssertEqual(Support.baseRefCandidates(for: "refs/heads/release/1.2"), ["refs/heads/release/1.2"])
+        let rejected = [
+            "HEAD", "@", "FETCH_HEAD", "ORIG_HEAD", "MERGE_HEAD", "refs/tags/v1", "refs/stash", "refs/notes/commits",
+            "0a1b2c3d", "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567", "-D", "a b", "main~1", "HEAD^", "@{u}", "",
+        ]
+        for name in rejected { XCTAssertNil(Support.baseRefCandidates(for: name), name) }
+
+        XCTAssertNil(Support.baseBranchSettingProblem(""), "empty means automatic")
+        XCTAssertNil(Support.baseBranchSettingProblem("origin/main"))
+        XCTAssertNotNil(Support.baseBranchSettingProblem("HEAD"))
+        XCTAssertNotNil(Support.baseBranchSettingProblem("@"))
+        XCTAssertNotNil(Support.baseBranchSettingProblem("0a1b2c3d"))
+    }
+
+    func testBranchNamedByBaseRef() {
+        XCTAssertTrue(GitWorktreeScanner.isBranch("dev", namedBy: "refs/heads/dev"))
+        XCTAssertTrue(GitWorktreeScanner.isBranch("dev", namedBy: "refs/remotes/origin/dev"))
+        XCTAssertTrue(GitWorktreeScanner.isBranch("dev", namedBy: "refs/remotes/upstream/dev"))
+        XCTAssertFalse(GitWorktreeScanner.isBranch("dev", namedBy: "refs/remotes/origin/develop"))
+        XCTAssertFalse(GitWorktreeScanner.isBranch("dev", namedBy: "refs/heads/feature/dev"))
+        XCTAssertFalse(GitWorktreeScanner.isBranch("dev", namedBy: "refs/remotes/dev"))
     }
 
     func testSettingsReadFromDefaultsAreClampedAndFiltered() throws {
@@ -452,7 +529,7 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertEqual(verdict(locked), .init(status: .protected, reasons: [.locked]))
         XCTAssertEqual(verdict(rebased)?.status, .safeToDelete, "a cherry-picked/rebased branch counts as merged")
         XCTAssertEqual(verdict(squashed), .init(status: .needsReview, reasons: [.notMerged]))
-        XCTAssertEqual(verdict(envFile), .init(status: .needsReview, reasons: [.envFiles]))
+        XCTAssertEqual(verdict(envFile), .init(status: .needsReview, reasons: [.envFiles, .ignoredOutsideBuildFolders(1)]))
         XCTAssertEqual(verdict(unicode)?.status, .safeToDelete)
         XCTAssertEqual(verdict(inUse), .init(status: .protected, reasons: [.inUse]))
         XCTAssertEqual(verdict(agentRecent), .init(status: .protected, reasons: [.recentAgentActivity]))
@@ -527,8 +604,9 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: worktree))
         XCTAssertTrue(blocked.errors.contains { $0.contains("Protected") }, "\(blocked.errors)")
 
-        // Once the edit is gone the same item is removed.
+        // Once the edit is gone (and the folder has been quiet again) the same item is removed.
         try git(["checkout", "--", "README.md"], in: worktree)
+        try age(worktree)
         let cleaned = await engine.cleanItems([item]) { _ in }
         XCTAssertEqual(cleaned.itemsCleaned, 1, "\(cleaned.errors)")
         XCTAssertEqual(cleaned.freedSpace, 1_000)
@@ -597,12 +675,13 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertLessThan(direct, 500_000)
 
         // The untracked `dist` symlink is a review reason, the ignored one is not.
-        XCTAssertEqual(report.verdict, .init(status: .needsReview, reasons: [.untrackedFiles(1)]))
+        XCTAssertEqual(report.verdict, .init(status: .needsReview, reasons: [.untrackedFiles(1), .ignoredOutsideBuildFolders(1)]))
         try FileManager.default.removeItem(atPath: "\(worktree)/dist")
         try age(worktree)
 
         let fresh = try await inspect(worktree)
-        XCTAssertEqual(fresh.verdict.status, .safeToDelete, "an ignored symlink to elsewhere is no reason to keep a worktree")
+        XCTAssertEqual(fresh.verdict, .init(status: .needsReview, reasons: [.ignoredOutsideBuildFolders(1)]),
+                       "the ignored `link-out` symlink is outside the build folders, like any other ignored entry")
         let error = await scanner().remove(path: worktree, repository: repo)
 
         XCTAssertNil(error)
@@ -1198,9 +1277,368 @@ final class GitWorktreeScannerTests: XCTestCase {
         try age(path)
 
         XCTAssertEqual(WorktreeArtifactSupport.candidates(in: path), ["dist"], "the nested worktree is not entered")
-        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: "dist"), .refused("contains a repository"))
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: "dist"),
+                       .nestedRepository(resolved: GitWorktreeScanner.canonical(path) + "/dist", at: "dist/.git"))
         XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: ".claude/worktrees/inner/node_modules"),
                        .refused("is inside a nested repository"))
+    }
+
+    // MARK: Safety review 6: a repository deep inside a build folder
+
+    func testRepositoryDeepInsideABuildFolderBlocksTheRowAndIsNeverDeleted() async throws {
+        try exclude([".venv/"])
+        let path = try makeNeedsReview("deep-repo")
+        // `pip install -e git+https://…` clones into .venv/src/<pkg>.
+        try write("[core]\n", to: "\(path)/.venv/src/pkg/.git/config")
+        try write("def work(): pass\n", to: "\(path)/.venv/src/pkg/code.py")
+        try write("x\n", to: "\(path)/.venv/lib/site.py")
+        try write(String(repeating: "n", count: 50_000), to: "\(path)/node_modules/pkg/index.js")
+        // A deeper one, and a .git that is a file (a worktree or submodule pointer).
+        try write("gitdir: /elsewhere/.git/modules/m\n", to: "\(path)/node_modules/mod/vendor/.git")
+        try age(path)
+        let resolved = GitWorktreeScanner.canonical(path)
+
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: ".venv"),
+                       .nestedRepository(resolved: resolved + "/.venv", at: ".venv/src/pkg/.git"))
+        XCTAssertEqual(WorktreeArtifactSupport.check(worktree: path, relative: "node_modules"),
+                       .nestedRepository(resolved: resolved + "/node_modules", at: "node_modules/mod/vendor/.git"))
+
+        // At scan: the folders are listed, the row is blocked and cannot be selected.
+        let report = try await inspect(path)
+        XCTAssertEqual(report.verdict, .init(status: .protected, reasons: [.nestedRepositoryInIgnored]))
+        let scanned = await scanner().artifactReport(for: report)
+        let artifacts = try XCTUnwrap(scanned)
+        XCTAssertEqual(artifacts.folders.map(\.relativePath), [".venv", "node_modules"])
+        XCTAssertNotNil(artifacts.nestedRepository)
+        XCTAssertEqual(artifacts.blocker, .nestedRepositoryInIgnored)
+        var row = artifactItem(path, folders: [])
+        row.worktreeArtifacts = artifacts
+        XCTAssertTrue(row.isSelectionBlocked)
+
+        // At clean: a stale row from before the repository existed still deletes neither folder.
+        let result = await engine().cleanItems([artifactItem(path, folders: [".venv", "node_modules"])]) { _ in }
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertEqual(result.freedSpace, 0)
+        XCTAssertTrue(result.errors.joined().contains(".venv: contains a repository (.venv/src/pkg/.git)"), "\(result.errors)")
+        XCTAssertTrue(result.errors.joined().contains("node_modules: contains a repository"), "\(result.errors)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/.venv/src/pkg/code.py"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/.venv/src/pkg/.git/config"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/node_modules/mod/vendor/.git"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/node_modules/pkg/index.js"))
+    }
+
+    func testBuildFolderWithoutRepositoriesIsStillRemoved() async throws {
+        let path = try makeNeedsReview("no-deep-repo")
+        try write(String(repeating: "n", count: 50_000), to: "\(path)/node_modules/pkg/.gitignore")
+        try write("x\n", to: "\(path)/node_modules/pkg/.github/workflows/ci.yml")
+        try age(path)
+        let report = try await inspect(path)
+        XCTAssertEqual(report.verdict, .init(status: .needsReview, reasons: [.untrackedFiles(1)]), "names like .gitignore and .github are not repositories")
+        let scanned = await scanner().artifactReport(for: report)
+        let artifacts = try XCTUnwrap(scanned)
+        XCTAssertNil(artifacts.nestedRepository)
+        XCTAssertNil(artifacts.blocker)
+
+        let result = await engine().cleanItems([artifactItem(path, folders: ["node_modules"])]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 1, "\(result.errors)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(path)/node_modules"))
+    }
+
+    // MARK: Safety review 1: the Overview never removes worktrees
+
+    @MainActor
+    func testOverviewNeverSelectsCountsOrRemovesScannedWorktrees() async throws {
+        let safe = try makeMerged("overview-safe")
+        let review = try addWorktree("wt/overview-review", branch: "overview-review")
+        try commit(in: review, file: "r.txt")
+        try git(["push", "-q", "origin", "overview-review"], in: review)
+        try age(review)
+        let gone = try addWorktree("wt/overview-gone", branch: "overview-gone")
+        try FileManager.default.removeItem(atPath: gone)
+
+        var rows: [CleanableItem] = []
+        for path in [safe, review, gone] {
+            var row = item(for: try await inspect(path))
+            row.isSelected = true // what a default-selected row would look like
+            rows.append(row)
+        }
+        XCTAssertEqual(rows.map { $0.gitWorktree?.verdict.status }, [.safeToDelete, .needsReview, .orphan])
+
+        let state = AppState(performStartupTasks: false)
+        state.categoryResults[.gitWorktrees] = CategoryResult(category: .gitWorktrees, items: rows, totalSize: 3_000)
+        state.scanState = .completed
+        let before = try git(["worktree", "list", "--porcelain"], in: repo)
+
+        XCTAssertTrue(state.isReviewedInCategoryOnly(.gitWorktrees))
+        XCTAssertTrue(rows.allSatisfy { state.isItemSelected($0) }, "selected on the category screen")
+        XCTAssertEqual(state.totalSelectedSize, 0, "the Overview total ignores worktrees")
+        XCTAssertTrue(state.overviewSelectedItems.isEmpty, "so does its confirmation list")
+
+        // The Overview category checkbox neither reads nor writes worktree selection.
+        let binding = state.categoryBinding(for: .gitWorktrees)
+        XCTAssertFalse(binding.wrappedValue)
+        state.deselectAllInCategory(.gitWorktrees)
+        binding.wrappedValue = true
+        XCTAssertTrue(rows.allSatisfy { !state.isItemSelected($0) }, "the checkbox must not select worktrees")
+
+        // Clean All, manual and scheduled, with every row selected.
+        for row in rows { state.toggleItem(row) }
+        state.cleanAll()
+        state.cleanAll(scheduled: true)
+        state.cleanAll(itemIDs: Set(rows.map(\.id)))
+        XCTAssertEqual(state.scanState, .completed, "cleanAll must not start a clean for worktree rows")
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        for path in [safe, review] { XCTAssertTrue(FileManager.default.fileExists(atPath: path), path) }
+        XCTAssertEqual(try git(["worktree", "list", "--porcelain"], in: repo), before, "no worktree remove and no prune ran")
+        XCTAssertTrue(try git(["branch", "--list", "overview-safe"], in: repo).contains("overview-safe"), "no branch -d ran")
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: "\(repo!)/.git/worktrees")),
+                       ["overview-safe", "overview-review", "overview-gone"])
+    }
+
+    // MARK: Safety review 2: no prune after a moved repository or worktree
+
+    @discardableResult
+    private func makeDetachedWorktreeWithWork(_ relative: String) throws -> String {
+        let path = "\(repo!)/\(relative)"
+        try git(["worktree", "add", "-q", "--detach", path, "main"], in: repo)
+        try commit(in: path, file: "only-here.txt", "a commit no branch has")
+        try write("staged\n", to: "\(path)/staged.txt")
+        try git(["add", "staged.txt"], in: path)
+        return path
+    }
+
+    func testPruneIsRefusedWhenTheRepositoryFolderWasMoved() async throws {
+        let w1 = try makeDetachedWorktreeWithWork(".claude/worktrees/w1")
+        let w2 = try addWorktree(".claude/worktrees/w2", branch: "w2")
+        let commitInW1 = try git(["rev-parse", "HEAD"], in: w1).trimmingCharacters(in: .whitespacesAndNewlines)
+        let moved = GitWorktreeScanner.canonical(root.path) + "/moved"
+        try FileManager.default.moveItem(atPath: repo, toPath: moved)
+
+        // Both worktrees are listed as missing, and the plain guards pass.
+        let listing = try git(["worktree", "list", "--porcelain"], in: moved)
+        XCTAssertEqual(listing.components(separatedBy: "prunable").count - 1, 2, listing)
+        var movedScanner = GitWorktreeScanner(homeDirectory: root.path, gitPath: gitPath)
+        movedScanner.repositoryHints = [moved]
+        movedScanner.workingDirectories = { [] }
+        let reports = await movedScanner.scan()
+        let prunable = reports.filter { $0.verdict.isPrunableOrphan }
+        XCTAssertEqual(prunable.count, 2, "\(reports.map(\.verdict))")
+
+        let error = await movedScanner.prune(path: w1, repository: moved)
+
+        XCTAssertNotNil(error)
+        XCTAssertTrue(error?.contains("worktree repair") == true, "\(error ?? "")")
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: "\(moved)/.git/worktrees")), ["w1", "w2"])
+
+        // Through the engine, with the rows as scanned.
+        let rows = prunable.map { item(for: $0, size: 0) }
+        let result = await engine().cleanItems(rows) { _ in }
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertEqual(result.errors.count, 2, "\(result.errors)")
+        XCTAssertTrue(result.errors.allSatisfy { $0.contains("worktree repair") }, "\(result.errors)")
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: "\(moved)/.git/worktrees")), ["w1", "w2"])
+
+        // The advice works: after the repair both worktrees are intact.
+        let newW1 = moved + "/.claude/worktrees/w1"
+        let newW2 = moved + "/.claude/worktrees/w2"
+        try git(["worktree", "repair", newW1, newW2], in: moved)
+        XCTAssertEqual(try git(["rev-parse", "HEAD"], in: newW1).trimmingCharacters(in: .whitespacesAndNewlines), commitInW1)
+        XCTAssertTrue(try git(["status", "--porcelain"], in: newW1).contains("A  staged.txt"))
+        XCTAssertFalse(try git(["worktree", "list", "--porcelain"], in: moved).contains("prunable"))
+        _ = w2
+    }
+
+    func testPruneIsRefusedWhenAWorktreeFolderWasRenamed() async throws {
+        let renamed = try makeDetachedWorktreeWithWork("wt/before")
+        let gone = try addWorktree("wt/really-gone", branch: "really-gone")
+        let after = "\(repo!)/wt/after"
+        try FileManager.default.moveItem(atPath: renamed, toPath: after)
+        try FileManager.default.removeItem(atPath: gone)
+
+        // Both look missing to git; only one was deleted.
+        let error = await scanner().prune(path: gone, repository: repo)
+
+        XCTAssertTrue(error?.contains("worktree repair") == true, "\(error ?? "")")
+        XCTAssertTrue(error?.contains(after) == true, "names the folder that must be repaired: \(error ?? "")")
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: "\(repo!)/.git/worktrees")), ["before", "really-gone"])
+
+        // Once it is repaired, the deleted one can be pruned and the renamed one survives.
+        try git(["worktree", "repair", after], in: repo)
+        let retry = await scanner().prune(path: gone, repository: repo)
+        XCTAssertNil(retry)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: "\(repo!)/.git/worktrees"), ["before"])
+        XCTAssertTrue(try git(["status", "--porcelain"], in: after).contains("A  staged.txt"))
+    }
+
+    // MARK: Safety review 3: ignored work is not Safe to delete
+
+    private func exclude(_ lines: [String]) throws {
+        let file = "\(repo!)/.git/info/exclude"
+        let existing = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
+        try write(existing + lines.joined(separator: "\n") + "\n", to: file)
+    }
+
+    func testIgnoredFilesAndNestedRepositoriesAreNotSafeToDelete() async throws {
+        try exclude(["vendor/", "config/master.key", "secrets/"])
+        // Same fixture as the review: an ignored nested repository with a commit
+        // nothing else has, an ignored key and an ignored .env in an ignored folder.
+        let nested = try makeMerged("ignored-nested")
+        try git(["init", "-q", "\(nested)/vendor/lib"], in: nested)
+        try commit(in: "\(nested)/vendor/lib", file: "unique.txt", "work that exists only in vendor/lib")
+        try write("key\n", to: "\(nested)/config/master.key")
+        try write("TOKEN=1\n", to: "\(nested)/secrets/.env")
+        let status = try git(["status", "--porcelain=v2", "--ignored=matching", "--untracked-files=normal"], in: nested)
+        XCTAssertEqual(Set(status.split(separator: "\n").map(String.init)), ["! config/master.key", "! secrets/", "! vendor/"], status)
+        try age(nested)
+
+        let keysOnly = try makeMerged("ignored-keys")
+        try write("key\n", to: "\(keysOnly)/config/master.key")
+        try write("TOKEN=1\n", to: "\(keysOnly)/secrets/.env")
+        try age(keysOnly)
+
+        let plainIgnored = try makeMerged("ignored-plain")
+        try write("log\n", to: "\(plainIgnored)/config/master.key")
+        try age(plainIgnored)
+
+        let buildOnly = try makeMerged("ignored-build-only")
+        try write("x\n", to: "\(buildOnly)/node_modules/pkg/index.js")
+        try age(buildOnly)
+
+        let depInNodeModules = try makeMerged("ignored-dep-repo")
+        try git(["init", "-q", "\(depInNodeModules)/node_modules/dep"], in: depInNodeModules)
+        try age(depInNodeModules)
+
+        let nestedReport = try await inspect(nested)
+        XCTAssertEqual(nestedReport.verdict, .init(status: .protected, reasons: [.nestedRepositoryInIgnored]))
+        let keysReport = try await inspect(keysOnly)
+        XCTAssertEqual(keysReport.verdict, .init(status: .needsReview, reasons: [.envFiles, .ignoredOutsideBuildFolders(2)]),
+                       "`secrets/.env` is found inside the ignored folder")
+        let plainReport = try await inspect(plainIgnored)
+        XCTAssertEqual(plainReport.verdict, .init(status: .needsReview, reasons: [.ignoredOutsideBuildFolders(1)]))
+        let buildReport = try await inspect(buildOnly)
+        XCTAssertEqual(buildReport.verdict.status, .safeToDelete, "build folders alone stay Safe to delete")
+        let depReport = try await inspect(depInNodeModules)
+        XCTAssertEqual(depReport.verdict, .init(status: .protected, reasons: [.nestedRepositoryInIgnored]),
+                       "a .git inside a build folder counts too")
+
+        // The engine refuses the Protected rows and leaves every byte in place.
+        let rows = [item(for: nestedReport), item(for: depReport)]
+        XCTAssertTrue(rows.allSatisfy(\.isSelectionBlocked))
+        let result = await engine().cleanItems(rows) { _ in }
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(nested)/vendor/lib/unique.txt"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(nested)/config/master.key"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(depInNodeModules)/node_modules/dep/.git"))
+    }
+
+    func testIgnoredFolderWalkIsBoundedAndNeverFollowsSymlinks() throws {
+        let worktree = root.appendingPathComponent("walk").path
+        let outside = root.appendingPathComponent("elsewhere").path
+        try FileManager.default.createDirectory(atPath: "\(outside)/repo/.git", withIntermediateDirectories: true)
+        try write("x\n", to: "\(worktree)/cache/a.txt")
+        try FileManager.default.createSymbolicLink(atPath: "\(worktree)/cache/link", withDestinationPath: "\(outside)/repo")
+        try FileManager.default.createSymbolicLink(atPath: "\(worktree)/cache/.env.link", withDestinationPath: outside)
+
+        let followed = GitWorktreeScanner.inspectIgnoredFolders(worktree: worktree, ignored: ["cache/"])
+        XCTAssertNil(followed.nestedRepository, "a symlink to a repository is not walked")
+        XCTAssertFalse(followed.incomplete)
+        XCTAssertEqual(followed.envFiles, ["cache/.env.link"], "the link itself is listed, its target is not entered")
+
+        for index in 0..<30 { try write("x\n", to: "\(worktree)/big/f\(index).txt") }
+        let bounded = GitWorktreeScanner.inspectIgnoredFolders(worktree: worktree, ignored: ["big/"], entryLimit: 10)
+        XCTAssertTrue(bounded.incomplete)
+        let unreadable = GitWorktreeScanner.inspectIgnoredFolders(worktree: worktree, ignored: ["missing/"])
+        XCTAssertTrue(unreadable.incomplete, "a folder that cannot be read has not been checked")
+
+        // .env* inside build folders is noise and is not collected; .git is always found.
+        try write("x\n", to: "\(worktree)/node_modules/pkg/.env.example")
+        try write("x\n", to: "\(worktree)/node_modules/pkg/.git")
+        let build = GitWorktreeScanner.inspectIgnoredFolders(worktree: worktree, ignored: ["node_modules/"])
+        XCTAssertEqual(build.nestedRepository, "node_modules/pkg/.git")
+        XCTAssertEqual(build.envFiles, [])
+    }
+
+    // MARK: Safety review 4: the re-check refuses a worse verdict
+
+    func testEngineRefusesAWorktreeThatGotWorseSinceTheScan() async throws {
+        let worktree = try makeMerged("gets-worse")
+        let report = try await inspect(worktree)
+        XCTAssertEqual(report.verdict.status, .safeToDelete)
+        let row = item(for: report)
+
+        // After the scan: a .env appears. Needs review is not "blocked", but it is worse.
+        try write("SECRET=1\n", to: "\(worktree)/.env")
+        let now = try await inspect(worktree)
+        XCTAssertEqual(now.verdict.status, .needsReview)
+        XCTAssertFalse(now.verdict.blocksSelection)
+
+        let result = await engine().cleanItems([row]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        let message = try XCTUnwrap(result.errors.first)
+        XCTAssertTrue(message.contains("changed since the scan"), message)
+        XCTAssertTrue(message.contains(GitWorktreeSupport.Reason.envFiles.localizedDescription), "lists the new reason: \(message)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(worktree)/.env"))
+
+        // A row the user already saw as Needs review with these reasons still goes through.
+        let seen = item(for: now)
+        let accepted = await engine().cleanItems([seen]) { _ in }
+        XCTAssertEqual(accepted.itemsCleaned, 1, "\(accepted.errors)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree))
+    }
+
+    // MARK: Safety review 5: the base branch is a branch, resolved in the repository
+
+    func testBaseBranchSettingResolvesToFullBranchRefsOnly() async throws {
+        try git(["checkout", "-q", "-b", "parking"], in: repo)
+        var resolver = scanner()
+
+        let automatic = await resolver.resolveBaseRef(in: repo)
+        XCTAssertEqual(automatic, "refs/remotes/origin/main", "automatic order")
+        resolver.baseBranchOverride = "main"
+        let local = await resolver.resolveBaseRef(in: repo)
+        XCTAssertEqual(local, "refs/heads/main")
+        resolver.baseBranchOverride = "origin/main"
+        let remote = await resolver.resolveBaseRef(in: repo)
+        XCTAssertEqual(remote, "refs/remotes/origin/main")
+        resolver.baseBranchOverride = "refs/remotes/origin/main"
+        let full = await resolver.resolveBaseRef(in: repo)
+        XCTAssertEqual(full, "refs/remotes/origin/main")
+        let sha = try git(["rev-parse", "main"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines)
+        try git(["tag", "v1"], in: repo)
+        for refused in ["HEAD", "@", "FETCH_HEAD", sha, String(sha.prefix(8)), "v1", "refs/tags/v1", "refs/stash", "nope"] {
+            resolver.baseBranchOverride = refused
+            let resolved = await resolver.resolveBaseRef(in: repo)
+            XCTAssertNil(resolved, refused)
+        }
+    }
+
+    func testHeadAsBaseBranchNeverMakesUnmergedWorkLookMerged() async throws {
+        // Pushed (so nothing is "unique"), never merged into main.
+        let path = try addWorktree("wt/unmerged-pushed", branch: "unmerged-pushed")
+        try commit(in: path, file: "u.txt")
+        try git(["push", "-q", "origin", "unmerged-pushed"], in: path)
+        try age(path)
+
+        for name in ["HEAD", "@", "FETCH_HEAD"] {
+            var withBase = scanner()
+            withBase.baseBranchOverride = name
+            let report = try await inspect(path, with: withBase)
+            XCTAssertEqual(report.verdict, .init(status: .needsReview, reasons: [.noBaseBranch]), name)
+
+            // Even with branch deletion on, the branch survives the removal.
+            let settings = GitWorktreeSettings(baseBranch: name, deleteMergedBranch: true)
+            let result = await engine(settings).cleanItems([item(for: report)]) { _ in }
+            XCTAssertTrue(result.notes.isEmpty, "\(result.notes)")
+            XCTAssertTrue(try git(["branch", "--list", "unmerged-pushed"], in: repo).contains("unmerged-pushed"), name)
+            if result.itemsCleaned == 1 {
+                // The folder is gone but the work is kept on its branch; recreate it for the next name.
+                try git(["worktree", "add", "-q", path, "unmerged-pushed"], in: repo)
+                try age(path)
+            }
+        }
     }
 }
 
