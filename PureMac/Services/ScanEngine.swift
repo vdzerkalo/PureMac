@@ -21,6 +21,10 @@ actor ScanEngine {
     /// a directory with thousands of entries doesn't flood the main actor.
     private var onPath: (@Sendable (String) -> Void)?
     private var lastReport = Date.distantPast
+    /// Share of the current category done (0...1), for categories that can
+    /// tell (Git Worktrees). Others report nothing and the bar moves per
+    /// category.
+    private var onFraction: (@Sendable (Double) -> Void)?
 
     /// `path` is an autoclosure so the String is only materialized after the
     /// throttle gate passes — a deep home-directory walk enumerates hundreds
@@ -57,10 +61,15 @@ actor ScanEngine {
 
     func scanCategory(
         _ category: CleaningCategory,
-        onPath: (@Sendable (String) -> Void)? = nil
+        onPath: (@Sendable (String) -> Void)? = nil,
+        onFraction: (@Sendable (Double) -> Void)? = nil
     ) async -> CategoryResult {
         self.onPath = onPath
-        defer { self.onPath = nil }
+        self.onFraction = onFraction
+        defer {
+            self.onPath = nil
+            self.onFraction = nil
+        }
         switch category {
         case .smartScan:
             return CategoryResult(category: category, items: [], totalSize: 0)
@@ -1016,12 +1025,16 @@ actor ScanEngine {
         // Every step goes to the ticker: a check takes seconds, so these are
         // few, and "12/48" tells a long scan from a stuck one.
         let onPath = self.onPath
+        let onFraction = self.onFraction
+        // The bar: checks fill the first three quarters, build folders the rest.
+        let checksShare = 0.75
         let reports = await scanner.scan { step in
             switch step {
             case .discovering(let path):
                 onPath?(path)
             case .inspecting(let path, let position, let total):
                 onPath?("\(position)/\(total) · \(path)")
+                onFraction?(checksShare * Double(position - 1) / Double(max(total, 1)))
             }
         }
         // Build folders of the worktrees that cannot be removed whole: one
@@ -1029,6 +1042,7 @@ actor ScanEngine {
         let total = reports.count
         let artifactReports = await GitWorktreeScanner.concurrentMap(reports, limit: GitWorktreeScanner.concurrentInspections) { [scanner] index, worktree in
             onPath?(String(localized: "Build folders \(index + 1)/\(total) · \(worktree.path)"))
+            onFraction?(checksShare + (1 - checksShare) * Double(index) / Double(max(total, 1)))
             return await scanner.artifactReport(for: worktree)
         }
         var items: [CleanableItem] = []

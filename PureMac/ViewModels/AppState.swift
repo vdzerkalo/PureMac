@@ -80,6 +80,8 @@ final class AppState: ObservableObject {
     @Published var totalFreedSpace: Int64 = 0
     @Published var scanProgress: Double = 0
     @Published var scanWasCancelled = false
+    /// Optional category added from the Overview and scanning right now.
+    @Published private(set) var categoryBeingAdded: CleaningCategory?
     @Published var lastScanDate: Date?
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = UUID()
@@ -983,19 +985,16 @@ final class AppState: ObservableObject {
         settingsDefaults.set(added, forKey: key)
     }
 
-    /// Optional categories the Overview offers to add to Smart Scan. A scan
-    /// on their own screen does not put them in the plan (`allResults`), so
-    /// the offer stays until they are added.
-    var smartScanAdditionOffers: [CleaningCategory] {
-        CleaningCategory.smartScanOptional.filter { !isAddedToSmartScan($0) }
-    }
-
     /// "Add to Smart Scan": every later Smart Scan includes the category,
     /// and it is scanned now so its row joins the results without a rescan.
+    /// The Overview keeps the plan on screen and shows this scan in the
+    /// category's own row (`categoryBeingAdded`).
     func addToSmartScan(_ category: CleaningCategory) {
-        guard !scanState.isActive, CleaningCategory.smartScanOptional.contains(category) else { return }
+        guard !scanState.isActive, !deviceBackupRemovalInProgress,
+              CleaningCategory.smartScanOptional.contains(category) else { return }
         setAddedToSmartScan(category, true)
-        scanSingleCategory(category)
+        categoryBeingAdded = category
+        beginScan(categories: [category], replacingResults: false)
     }
 
     func scanSingleCategory(_ category: CleaningCategory) {
@@ -1011,6 +1010,7 @@ final class AppState: ObservableObject {
         scanGeneration = UUID()
         scanWasCancelled = true
         scanTicker.path = ""
+        categoryBeingAdded = nil
         scanState = categoryResults.isEmpty ? .idle : .completed
     }
 
@@ -1035,23 +1035,36 @@ final class AppState: ObservableObject {
                 currentScanCategory = category.rawValue
                 scanState = .scanning(progress: progress, currentCategory: category.rawValue)
                 clearSelectionState(for: category)
-                let result = await scanEngine.scanCategory(category) { [weak self] path in
+                let result = await scanEngine.scanCategory(category, onPath: { [weak self] path in
                     Task { @MainActor [weak self] in
                         guard let self, self.scanGeneration == generation else { return }
                         self.scanTicker.path = path
                     }
-                }
+                }, onFraction: { [weak self] fraction in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.scanGeneration == generation else { return }
+                        self.advanceScanProgress(to: (Double(index) + fraction) / Double(categories.count))
+                    }
+                })
                 guard !Task.isCancelled, scanGeneration == generation else { return }
                 categoryResults[category] = applyingCleanupExclusions(to: result)
                 totalJunkSize = smartScanTotalSize
             }
             scanProgress = 1
             scanTicker.path = ""
+            categoryBeingAdded = nil
             lastScanDate = Date()
             scanState = .completed
             scanTask = nil
             loadDiskInfo()
         }
+    }
+
+    /// Moves the bar forward only, and only by whole percents: parallel
+    /// checks report out of order, and `scanProgress` redraws the Overview.
+    func advanceScanProgress(to value: Double) {
+        guard Int(value * 100) > Int(scanProgress * 100) else { return }
+        scanProgress = min(value, 1)
     }
 
     // MARK: - Cleaning
