@@ -7,6 +7,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case systemJunk = "System Junk"
     case userCache = "User Cache"
     case aiApps = "AI Apps"
+    case aiAgentData = "AI Agent Data"
     case mailAttachments = "Mail Files"
     case trashBins = "Trash Bins"
     case largeFiles = "Large & Old Files"
@@ -26,6 +27,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .systemJunk: return "gearshape.fill"
         case .userCache: return "internaldrive.fill"
         case .aiApps: return "cpu.fill"
+        case .aiAgentData: return "brain.head.profile"
         case .mailAttachments: return "envelope.fill"
         case .trashBins: return "trash.fill"
         case .largeFiles: return "doc.fill"
@@ -45,6 +47,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .systemJunk: return "System caches, logs, and temporary files"
         case .userCache: return "Application caches and browser data"
         case .aiApps: return "Local AI app logs, caches, and optional history"
+        case .aiAgentData: return "Large, regenerable data of AI agent apps. Review each item before removal."
         case .mailAttachments: return "Downloaded mail attachments"
         case .trashBins: return "Files in your Trash"
         case .largeFiles: return "Files over 100 MB or older than 1 year"
@@ -64,6 +67,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .systemJunk: return .purple
         case .userCache: return .blue
         case .aiApps: return .teal
+        case .aiAgentData: return .purple
         case .mailAttachments: return .orange
         case .trashBins: return .red
         case .largeFiles: return .yellow
@@ -92,6 +96,18 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         allCases.filter {
             $0 != .smartScan && $0 != .purgeableSpace && !appModifying.contains($0)
         }
+    }
+
+    // Categories that are only ever scanned on request and never act on their
+    // own: excluded from Smart Scan, scheduled scans, the dashboard totals and
+    // "Clean all". Every row starts unselected and is removed per category.
+    static var reviewOnly: Set<CleaningCategory> {
+        [.aiAgentData]
+    }
+
+    // Categories included in Smart Scan, scheduled scans and "Clean all".
+    static var smartScannable: [CleaningCategory] {
+        scannable.filter { !reviewOnly.contains($0) }
     }
 
     // Categories that rewrite app bundles in place (binary thinning,
@@ -150,6 +166,8 @@ struct CleanableItem: Identifiable, Hashable {
     let category: CleaningCategory
     var isSelected: Bool
     let lastModified: Date?
+    /// One-line explanation shown under the name (review-only categories).
+    var detail: String? = nil
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
@@ -224,7 +242,7 @@ struct ScheduleConfig: Codable {
     var interval: ScheduleInterval = .daily
     var autoClean: Bool = false
     var autoPurge: Bool = false
-    var categoriesToScan: [CleaningCategory] = CleaningCategory.scannable
+    var categoriesToScan: [CleaningCategory] = CleaningCategory.smartScannable
     var lastRunDate: Date?
     var nextRunDate: Date?
     var notifyOnCompletion: Bool = true

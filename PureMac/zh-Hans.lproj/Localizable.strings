@@ -926,3 +926,20 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* AI Agent Data */
+"AI Agent Data" = "AI Agent Data";
+"Large, regenerable data of AI agent apps. Review each item before removal." = "Large, regenerable data of AI agent apps. Review each item before removal.";
+"Claude iOS Simulator build output" = "Claude iOS Simulator build output";
+"Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build." = "Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build.";
+"Claude Desktop web cache" = "Claude Desktop web cache";
+"Chromium HTTP cache of Claude Desktop. Rebuilt automatically." = "Chromium HTTP cache of Claude Desktop. Rebuilt automatically.";
+"Claude Desktop code cache" = "Claude Desktop code cache";
+"Chromium compiled-script cache of Claude Desktop. Rebuilt automatically." = "Chromium compiled-script cache of Claude Desktop. Rebuilt automatically.";
+"Codex plugin backup %@" = "Codex plugin backup %@";
+"Old copy of Codex's plugin folder left by a plugin sync. The current plugins are kept elsewhere." = "Old copy of Codex's plugin folder left by a plugin sync. The current plugins are kept elsewhere.";
+"Antigravity backup: browser recordings" = "Antigravity backup: browser recordings";
+"Frames of agent browser sessions inside the one-time backup. The live recordings stay in ~/.gemini/antigravity. Backup settings are not touched." = "Frames of agent browser sessions inside the one-time backup. The live recordings stay in ~/.gemini/antigravity. Backup settings are not touched.";
+"Cursor extension download cache" = "Cursor extension download cache";
+"Downloaded extension packages (.vsix). Downloaded again when needed." = "Downloaded extension packages (.vsix). Downloaded again when needed.";
+"%@ is running. Quit it to remove this." = "%@ is running. Quit it to remove this.";
