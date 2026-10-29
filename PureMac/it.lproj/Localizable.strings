@@ -931,3 +931,16 @@
 
 "View releases" = "Visualizza versioni";
 "You're using the latest available version of PureMac." = "Stai usando l'ultima versione disponibile di PureMac.";
+
+/* Risky removals */
+"Nothing goes to the Trash: Docker deletes these objects permanently." = "Nothing goes to the Trash: Docker deletes these objects permanently.";
+"Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower." = "Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower.";
+"Stopped containers and the files inside them are deleted; running containers are kept." = "Stopped containers and the files inside them are deleted; running containers are kept.";
+"Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back.";
+"Confirm each risk before removing" = "Confirm each risk before removing";
+"Remove %lld items permanently?" = "Remove %lld items permanently?";
+"Remove permanently" = "Remove permanently";
+"This cannot be undone. Nothing is moved to the Trash." = "This cannot be undone. Nothing is moved to the Trash.";
+"Copy agent prompt" = "Copy agent prompt";
+"Copied" = "Copied";
+"Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Copy a short brief with every found item so an AI agent can check the risks with you before removal.";

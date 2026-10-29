@@ -216,3 +216,32 @@ final class DockerSupportTests: XCTestCase {
         XCTAssertFalse(DockerSupport.isDaemonUnavailable(stderr: "unknown flag: --bogus"))
     }
 }
+
+final class RemovalRiskTests: XCTestCase {
+    private func prune(_ action: DockerSupport.PruneAction, selected: Bool) -> CleanableItem {
+        CleanableItem(name: action.diskUsageType, path: DockerSupport.actionPath(for: action), size: 4_096, category: .dockerCache, isSelected: selected, lastModified: nil)
+    }
+
+    func testDockerNeedsThreeAcknowledgementsAndAFourthForVolumes() {
+        let cache = prune(.buildCache, selected: true)
+        let volumes = prune(.unusedVolumes, selected: false)
+        XCTAssertEqual(RemovalRisk.risks(for: .dockerCache, items: [cache]).count, 3)
+        XCTAssertEqual(RemovalRisk.risks(for: .dockerCache, items: [cache, volumes]).count, 4)
+        XCTAssertTrue(RemovalRisk.risks(for: .userCache, items: [cache]).isEmpty)
+        XCTAssertFalse(RemovalRisk.requiresAcknowledgement(.userCache))
+    }
+
+    func testAgentPromptListsEveryFoundItemAndMarksProposedOnes() {
+        let cache = prune(.buildCache, selected: true)
+        let volumes = prune(.unusedVolumes, selected: false)
+        let prompt = RemovalRisk.agentPrompt(category: .dockerCache, found: [cache, volumes], proposed: [cache.id])
+        let rows = prompt.split(separator: "\n").filter { $0.hasPrefix("| ") && !$0.hasPrefix("| #") }
+
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertTrue(rows[0].contains("| ✔ |") && rows[0].contains("`docker builder prune -a -f`"), String(rows[0]))
+        XCTAssertTrue(rows[1].contains("| · |") && rows[1].contains("`docker volume prune -a -f`") && rows[1].contains("erases data"), String(rows[1]))
+        XCTAssertTrue(prompt.contains("Read-only: do not delete"))
+        XCTAssertTrue(prompt.contains("No sub-agents"))
+        XCTAssertTrue(prompt.contains("Proposed: 1 of 2 items"))
+    }
+}
