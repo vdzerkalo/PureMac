@@ -573,6 +573,20 @@ final class LocalAIModelsTests: XCTestCase {
         XCTAssertTrue(fileManager.fileExists(atPath: root.path))
     }
 
+    func testRemovalRefusesACacheInCloudProviderStorage() async throws {
+        let root = home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs/hf/hub", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        try makeRepo(root, "models--org--synced", blobs: [("ccc", 300)])
+        let service = LocalAIModels(context: makeContext(env: ["HF_HUB_CACHE": root.path]))
+        let item = forgedItem(root.appendingPathComponent("models--org--synced").path)
+
+        let result = await CleaningEngine(homeDirectory: home, localAIModels: service).cleanItems([item]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.errors.joined().contains("cloud-synced"), "\(result.errors)")
+        XCTAssertTrue(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--synced/blobs/ccc").path))
+    }
+
     func testRemovingARepoUsesTheVerifiedHFCLIAndNothingElse() async throws {
         let root = try makeHub()
         try makeRepo(root, "models--org--keep", blobs: [("aaa", 100)])

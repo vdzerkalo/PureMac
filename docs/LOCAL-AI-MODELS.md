@@ -80,6 +80,7 @@ Nothing goes to the Trash: a model in the Trash on the same volume would keep th
 15. Ollama removal is by name, so the scanned digest must still match: `LocalAIModels.confirmOllamaDigest`. Tests: `testOllamaRemovalSkipsAModelWhoseDigestChangedSinceTheScan`, `testOllamaRemovalSkipsWhenTheDigestIsMissingTheModelIsGoneOrTheServerIsSilent`, `testOllamaRemovalConfirmsThroughTheListIDColumnWhenOnlyTheCLIAnswers`, `testOllamaDigestMatching`.
 16. Application Support entries are listed only if they contain a model-weight file (`.gguf`, `.safetensors`, `.npz`, `.mlpackage`, `.bin` of at least 50 000 000 bytes); `config.json` alone does not qualify. `LocalAIModelsSupport.looksLikeModelData`. Tests: `testApplicationSupportOffersOnlyRecognisableModelData`, `testModelDataRecognitionThresholds`.
 17. User exclusions (`CleanupExclusions`) still apply; they are checked before the category route.
+18. A Hugging Face entry inside iCloud Drive or a file provider (`HF_HOME` or `HF_HUB_CACHE` pointed there) is refused, before the `hf` CLI and before the fallback delete. `LocalAIModels.removalBlock` (`ProviderPaths.isProviderOwned`). Test: `testRemovalRefusesACacheInCloudProviderStorage`.
 
 ## Failure modes and logs
 
@@ -88,6 +89,7 @@ Logger entries appear in the in-app log and in the unified log (`log stream --pr
 | Symptom | Cause | Where to look |
 |---|---|---|
 | Page says Ollama is not running or `ollama` was not found | Server down, no binary at the three lookup paths, or `OLLAMA_HOST` unparsable | `Local AI Models: /api/tags failed`, `Local AI Models: ollama list exited`, `Local AI Models: OLLAMA_HOST could not be parsed` |
+| Row refused: "in iCloud Drive or another cloud-synced folder" | Hugging Face cache under `ProviderPaths.deniedRoots` or a `com~apple~` path | row error `Skipped <name>: it is in iCloud Drive or another cloud-synced folder` |
 | Page says `OLLAMA_HOST` points to another machine | Non-loopback host in PureMac's environment | `Local AI Models: OLLAMA_HOST is not a loopback address` |
 | Ollama list takes ~5 s then shows nothing | API timed out (`/api/tags timed out`) | `Local AI Models: /api/tags timed out` |
 | Ollama removal error in the cleanup alert | API delete answered non-200 (including a redirect), `ollama rm` exited non-zero or timed out, or the server stopped | `DELETE /api/delete <name> answered <status>`, `DELETE /api/delete <name> failed`, `ollama rm <name> exited <status>`, `ollama rm <name> timed out` |
