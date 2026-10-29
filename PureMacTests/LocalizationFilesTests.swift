@@ -48,6 +48,20 @@ final class LocalizationFilesTests: XCTestCase {
         }
     }
 
+    func testEnglishRemoveCountsUseSingularForOne() throws {
+        let path = try XCTUnwrap(Bundle.main.path(forResource: "en", ofType: "lproj"))
+        let english = try XCTUnwrap(Bundle(path: path))
+        let cases: [(key: String, one: String, many: String)] = [
+            ("Remove %lld items", "Remove 1 item", "Remove 3 items"),
+            ("Remove %lld items permanently?", "Remove 1 item permanently?", "Remove 3 items permanently?"),
+        ]
+        for (key, one, many) in cases {
+            let format = english.localizedString(forKey: key, value: nil, table: nil)
+            XCTAssertEqual(String.localizedStringWithFormat(format, Int64(1)), one)
+            XCTAssertEqual(String.localizedStringWithFormat(format, Int64(3)), many)
+        }
+    }
+
     func testAllLocalizableStringsFilesHaveEnglishKeyParity() throws {
         let localizationFiles = try localizableStringsFiles()
         let englishURL = try XCTUnwrap(
