@@ -154,6 +154,11 @@ struct CleanableItem: Identifiable, Hashable {
     let category: CleaningCategory
     var isSelected: Bool
     let lastModified: Date?
+    /// Rows that can hold data the user cannot re-download (Maven's `~/.m2`,
+    /// NuGet packages). They start unselected and only a per-row toggle
+    /// selects them: "Select all", the category checkbox and "Select visible"
+    /// skip them.
+    var selectOnlyByHand: Bool = false
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: size, countStyle: .file)

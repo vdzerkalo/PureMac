@@ -753,7 +753,8 @@ actor ScanEngine {
                 size: size,
                 category: .devToolCaches,
                 isSelected: isSelected,
-                lastModified: fileModDate(path: path)
+                lastModified: fileModDate(path: path),
+                selectOnlyByHand: !root.selectedByDefault
             ))
         }
 
