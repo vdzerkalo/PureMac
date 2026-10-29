@@ -562,13 +562,16 @@ actor CleaningEngine {
             return (0, message)
         case .finished(let status, let stdout, let stderr):
             let outcome = DockerSupport.parseVolumeRemoval(stdout: stdout, stderr: stderr, requested: targets)
-            if status != 0, outcome.removed.isEmpty, outcome.problems.isEmpty {
+            if status != 0, outcome.removed.isEmpty, outcome.problems.isEmpty, outcome.vanished == 0 {
                 return (0, dockerFailure(status: status, stderr: stderr, label: label))
             }
             if status != 0, outcome.removed.isEmpty, DockerSupport.isDaemonUnavailable(stderr: stderr) {
                 return (0, dockerFailure(status: status, stderr: stderr, label: label))
             }
             let freed = outcome.removed.reduce(Int64(0)) { $0 + $1.bytes }
+            if outcome.vanished > 0 {
+                Logger.shared.log("\(label): \(outcome.vanished) volume(s) vanished before removal, skipped", level: .info)
+            }
             Logger.shared.log("\(label) removed \(outcome.removed.count) of \(targets.count) volume(s), \(freed) bytes (scan-time sizes)", level: .info)
             for problem in outcome.problems { Logger.shared.log(problem, level: .warning) }
             return (freed, outcome.problems.isEmpty ? nil : outcome.problems.joined(separator: "; "))

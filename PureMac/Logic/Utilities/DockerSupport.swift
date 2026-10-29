@@ -320,17 +320,24 @@ enum DockerSupport {
         stdout: String,
         stderr: String,
         requested: [VolumeEntry]
-    ) -> (removed: [VolumeEntry], problems: [String]) {
+    ) -> (removed: [VolumeEntry], problems: [String], vanished: Int) {
         let printed = Set(parseImageIDs(stdout))
         let removed = requested.filter { printed.contains($0.name) }
-        let problems: [String] = stderr.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.lowercased().contains("no such volume") }
-            .map { line in
-                let prefix = "Error response from daemon: "
-                return "docker volume rm: " + (line.hasPrefix(prefix) ? String(line.dropFirst(prefix.count)) : line)
+        var vanished = 0
+        var problems: [String] = []
+        for line in stderr.split(whereSeparator: \.isNewline).map({ $0.trimmingCharacters(in: .whitespaces) }) where !line.isEmpty {
+            // Only a "no such volume" that names a volume we asked for is a
+            // quiet skip; any other line is reported.
+            let words = Set(line.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_" || $0 == "." || $0 == "-") }).map(String.init))
+            if line.lowercased().contains("no such volume"),
+               requested.contains(where: { words.contains($0.name) }) {
+                vanished += 1
+                continue
             }
-        return (removed, problems)
+            let prefix = "Error response from daemon: "
+            problems.append("docker volume rm: " + (line.hasPrefix(prefix) ? String(line.dropFirst(prefix.count)) : line))
+        }
+        return (removed, problems, vanished)
     }
 
     // MARK: - Dangling images
@@ -544,7 +551,11 @@ enum DockerSupport {
     /// container itself and its `Data` folder (their removal takes `vms` with
     /// it); `Library/Group Containers/group.com.docker` except its `Caches`
     /// subtree; `Library/Group Containers/<team>.dev.orbstack` and its `data`;
-    /// `.orbstack` and `.orbstack/data`; `.docker/desktop`.
+    /// `.orbstack` and `.orbstack/data`; `.docker/desktop`. An item equal to
+    /// any ancestor of those roots is refused too (`~`, `~/Library`,
+    /// `~/Library/Containers`, `~/Library/Group Containers`, `~/.docker`):
+    /// removing a parent takes the disk with it, and the first two folders are
+    /// whole-folder allow-list roots.
     static func isProtectedDiskPath(_ path: String, homeDirectory: URL) -> Bool {
         let resolvedHome = homeDirectory.resolvingSymlinksInPath()
         var homes: [String] = []
@@ -565,7 +576,9 @@ enum DockerSupport {
             let docker = home + "/library/containers/com.docker.docker"
             let group = home + "/library/group containers/group.com.docker"
             let groupContainers = home + "/library/group containers/"
+            let ancestors = [home, home + "/library", home + "/library/containers", home + "/library/group containers", home + "/.docker"]
             for candidate in candidates {
+                if ancestors.contains(candidate) { return true }
                 if candidate == docker || candidate == docker + "/data" || within(candidate, docker + "/data/vms") { return true }
                 if candidate == group || (candidate.hasPrefix(group + "/") && !within(candidate, group + "/caches")) { return true }
                 if candidate == home + "/.orbstack" || within(candidate, home + "/.orbstack/data") { return true }
