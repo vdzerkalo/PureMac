@@ -980,6 +980,7 @@
 "Scanning only reads. Removal stays on the category screen." = "Сканування лише читає. Видалення лишається на екрані категорії.";
 "Add to Smart Scan" = "Додати до розумного сканування";
 "In Smart Scan from the next scan" = "У розумному скануванні з наступного запуску";
+"In Smart Scan · scanned after the current category" = "У розумному скануванні · після поточної категорії";
 "In Smart Scan · nothing found" = "У розумному скануванні · нічого не знайдено";
 "In Smart Scan · %@ found, listed in the plan" = "У розумному скануванні · знайдено %@, є в плані";
 "Remove from Smart Scan" = "Прибрати з розумного сканування";

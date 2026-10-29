@@ -146,6 +146,9 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 20) {
             diskOverview
             scanIntroduction
+            VStack(alignment: .leading, spacing: 10) {
+                smartScanOptionsSection
+            }
 
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -428,6 +431,8 @@ struct DashboardView: View {
                 dashboardSection("Found so far", detail: "\(appState.totalItemCount) items")
                 resultRows(results: Array(appState.allResults.sorted { $0.totalSize > $1.totalSize }.prefix(6)))
             }
+
+            smartScanOptionsSection
         }
     }
 
@@ -491,14 +496,17 @@ struct DashboardView: View {
                 resultRows(results: appState.allResults.sorted { $0.totalSize > $1.totalSize })
             }
 
-            dashboardSection("Optional in Smart Scan", detail: "Off until you add them")
-            smartScanOptions
+            smartScanOptionsSection
         }
     }
 
-    private var smartScanOptions: some View {
+    /// Before, during and after a scan: adding never waits for one to end.
+    /// Header and card stay siblings, so the parent's spacing applies.
+    @ViewBuilder
+    private var smartScanOptionsSection: some View {
         let options = CleaningCategory.smartScanOptional
-        return CardSurface(padding: 0, elevation: .flat) {
+        dashboardSection("Optional in Smart Scan", detail: "Off until you add them")
+        CardSurface(padding: 0, elevation: .flat) {
             VStack(spacing: 0) {
                 ForEach(Array(options.enumerated()), id: \.element) { index, category in
                     SmartScanOptionRow(category: category)
@@ -712,7 +720,11 @@ private struct SmartScanOptionRow: View {
     let category: CleaningCategory
 
     private var isAdded: Bool { appState.isAddedToSmartScan(category) }
-    private var isScanning: Bool { appState.categoryBeingAdded == category }
+    private var isScanningNow: Bool {
+        if case .scanning = appState.scanState { return appState.currentScanCategory == category.rawValue }
+        return false
+    }
+    private var isQueued: Bool { appState.queuedScanCategories.contains(category) }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -720,7 +732,7 @@ private struct SmartScanOptionRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(LocalizedStringKey(category.rawValue))
                     .font(.system(size: 13, weight: .semibold))
-                if isScanning {
+                if isScanningNow {
                     ScanPathTicker(ticker: appState.scanTicker)
                 } else {
                     Text(status)
@@ -739,6 +751,9 @@ private struct SmartScanOptionRow: View {
         guard isAdded else {
             return String(localized: "Scanning only reads. Removal stays on the category screen.")
         }
+        if isQueued {
+            return String(localized: "In Smart Scan · scanned after the current category")
+        }
         guard let result = appState.categoryResults[category] else {
             return String(localized: "In Smart Scan from the next scan")
         }
@@ -750,7 +765,8 @@ private struct SmartScanOptionRow: View {
 
     @ViewBuilder
     private var trailing: some View {
-        if isScanning {
+        if isScanningNow, appState.categoryBeingAdded == category {
+            // Its own scan, started from the plan: the only progress shown.
             HStack(spacing: 10) {
                 Text(appState.scanProgress, format: .percent.precision(.fractionLength(0)))
                     .font(.system(size: 12.5, weight: .semibold))
@@ -765,6 +781,9 @@ private struct SmartScanOptionRow: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
+        } else if isScanningNow {
+            ProgressView()
+                .controlSize(.small)
         } else if isAdded {
             Button("Remove from Smart Scan") {
                 appState.setAddedToSmartScan(category, false)
@@ -778,7 +797,7 @@ private struct SmartScanOptionRow: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .disabled(appState.scanState.isActive)
+            .disabled(!appState.canAddToSmartScan)
         }
     }
 }
