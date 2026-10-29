@@ -150,6 +150,90 @@ final class GitWorktreeSupportTests: XCTestCase {
         XCTAssertFalse(Support.Status.needsReview.blocksSelection)
     }
 
+    func testOnlyPrunableOrphansCanBeSelected() {
+        let prunable = Support.Verdict(status: .orphan, reasons: [.prunable])
+        let unknown = Support.Verdict(status: .orphan, reasons: [.notListedByGit])
+        let protected = Support.Verdict(status: .protected, reasons: [.locked])
+        XCTAssertTrue(prunable.isPrunableOrphan)
+        XCTAssertFalse(prunable.blocksSelection)
+        XCTAssertFalse(unknown.isPrunableOrphan)
+        XCTAssertTrue(unknown.blocksSelection)
+        XCTAssertTrue(protected.blocksSelection)
+        XCTAssertFalse(Support.Verdict(status: .needsReview, reasons: [.notMerged]).blocksSelection)
+
+        func item(_ verdict: Support.Verdict) -> CleanableItem {
+            var item = CleanableItem(name: "x", path: "/r/wt/x", size: 0, category: .gitWorktrees, isSelected: false, lastModified: nil)
+            item.gitWorktree = GitWorktreeReport(path: item.path, repositoryPath: "/r", branch: "x", head: nil, verdict: verdict, lastActivity: nil)
+            return item
+        }
+        XCTAssertFalse(item(prunable).isSelectionBlocked)
+        XCTAssertTrue(item(unknown).isSelectionBlocked)
+        XCTAssertTrue(item(protected).isSelectionBlocked)
+    }
+
+    // MARK: - Artifacts, revision names, settings
+
+    func testArtifactDirectoriesComeOnlyFromIgnoredFolders() {
+        let ignored = ["node_modules/", "apps/web/.next/", ".env", "docs/build", "cache/", "src/target/", "dist/"]
+        XCTAssertEqual(Support.artifactDirectories(inIgnored: ignored), ["node_modules", "apps/web/.next", "src/target", "dist"])
+    }
+
+    func testRevisionNamesCannotInjectGitOptions() {
+        for good in ["main", "origin/main", "release/1.2", "feature/гілка", "refs/remotes/origin/develop"] {
+            XCTAssertTrue(Support.isValidRevisionName(good), good)
+        }
+        for bad in ["", "-D", "--upload-pack=x", "a b", "a..b", "main^", "x:y", "x@{1}", "a\nb", "/abs", "tail/", "x.lock", "a*", "a[b"] {
+            XCTAssertFalse(Support.isValidRevisionName(bad), bad)
+        }
+    }
+
+    func testSettingsReadFromDefaultsAreClampedAndFiltered() throws {
+        let suite = "PureMac-WorktreeSettings-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(GitWorktreeSettings.current(defaults: defaults), GitWorktreeSettings())
+        XCTAssertEqual(GitWorktreeSettings().inactiveDays, Support.defaultInactiveDays)
+        XCTAssertFalse(GitWorktreeSettings().deleteMergedBranch, "deleting merged branches is opt-in")
+
+        defaults.set(0, forKey: GitWorktreeSettings.inactiveDaysKey)
+        XCTAssertEqual(GitWorktreeSettings.current(defaults: defaults).inactiveDays, 1)
+        defaults.set(9_999, forKey: GitWorktreeSettings.inactiveDaysKey)
+        XCTAssertEqual(GitWorktreeSettings.current(defaults: defaults).inactiveDays, 365)
+        defaults.set(3, forKey: GitWorktreeSettings.inactiveDaysKey)
+        defaults.set(["/Users/x/Code", "relative", "/"], forKey: GitWorktreeSettings.extraRootsKey)
+        defaults.set("  origin/develop \n", forKey: GitWorktreeSettings.baseBranchKey)
+        defaults.set(true, forKey: GitWorktreeSettings.deleteMergedBranchKey)
+
+        XCTAssertEqual(GitWorktreeSettings.current(defaults: defaults), GitWorktreeSettings(
+            inactiveDays: 3, extraRoots: ["/Users/x/Code"], baseBranch: "origin/develop", deleteMergedBranch: true))
+    }
+
+    func testUnmountedVolumeIsRecognised() {
+        let missing = "/Volumes/PureMac-not-mounted-\(UUID().uuidString)"
+        XCTAssertEqual(GitWorktreeScanner.unmountedVolume(of: missing + "/repo/wt/x"), missing)
+        XCTAssertNil(GitWorktreeScanner.unmountedVolume(of: "/Users/t/repo/wt/x"))
+        XCTAssertNil(GitWorktreeScanner.unmountedVolume(of: "/Volumes"))
+    }
+
+    /// The artifact list must stay a subset of the CLI's `Purger.artifactNames`
+    /// plus the documented extras, so the app and `puremac clean dev` agree
+    /// on what a build artifact is.
+    func testArtifactNamesMatchTheCommandLineTool() throws {
+        let purger = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("cli/Sources/puremac/Core/Purger.swift")
+        let source = try String(contentsOf: purger, encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "artifactNames: Set<String> = ["))
+        let list = try XCTUnwrap(source[start.upperBound...].range(of: "]"))
+        let block = source[start.upperBound..<list.lowerBound]
+        let names = Set(block.split(separator: "\"").enumerated().filter { $0.offset % 2 == 1 }.map { String($0.element) })
+        XCTAssertFalse(names.isEmpty, "could not read Purger.artifactNames")
+
+        let missing = Support.artifactDirectoryNames.subtracting(names).subtracting(Support.artifactNamesOnlyHere)
+        XCTAssertEqual(missing, [], "add these to Purger.artifactNames or to GitWorktreeSupport.artifactNamesOnlyHere")
+        XCTAssertTrue(Support.artifactNamesOnlyHere.isSubset(of: Support.artifactDirectoryNames))
+    }
+
     func testLocateGitAvoidsShimWithoutDeveloperTools() {
         XCTAssertEqual(GitWorktreeScanner.locateGit(isExecutable: { $0 == "/opt/homebrew/bin/git" }, developerToolsInstalled: { false }),
                        "/opt/homebrew/bin/git")
@@ -175,7 +259,7 @@ final class GitWorktreeScannerTests: XCTestCase {
         repo = GitWorktreeScanner.canonical(root.path) + "/repo"
         try git(["init", "--bare", "-q", "-b", "main", origin], in: root.path)
         try git(["clone", "-q", origin, repo], in: root.path)
-        try write(".env\nnode_modules/\n", to: "\(repo!)/.gitignore")
+        try write(".env\nnode_modules/\nlink-out\n", to: "\(repo!)/.gitignore")
         try write("hello\n", to: "\(repo!)/README.md")
         try git(["add", "."], in: repo)
         try git(["commit", "-q", "-m", "initial"], in: repo)
@@ -450,12 +534,431 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertEqual(cleaned.freedSpace, 1_000)
         XCTAssertFalse(FileManager.default.fileExists(atPath: worktree))
     }
+
+    // MARK: Polish: symlinks, sizes, settings, branches, prune
+
+    private func item(for report: GitWorktreeReport, size: Int64 = 1_000) -> CleanableItem {
+        var item = CleanableItem(
+            name: report.displayName,
+            path: report.path,
+            size: size,
+            category: .gitWorktrees,
+            isSelected: false,
+            lastModified: report.lastActivity
+        )
+        item.gitWorktree = report
+        return item
+    }
+
+    private func inspect(_ path: String, with scanner: GitWorktreeScanner? = nil) async throws -> GitWorktreeReport {
+        let report = await (scanner ?? self.scanner()).reinspect(path: path, repository: repo)
+        return try XCTUnwrap(report)
+    }
+
+    private func engine(_ settings: GitWorktreeSettings = GitWorktreeSettings()) -> CleaningEngine {
+        CleaningEngine(homeDirectory: root, worktreeSettings: { settings })
+    }
+
+    /// A merged, old, clean worktree (Safe to delete with default settings).
+    private func makeMerged(_ name: String, days: Double = 30) throws -> String {
+        let path = try addWorktree("wt/\(name)", branch: name)
+        try commit(in: path, file: "\(name).txt")
+        try mergeIntoMain(name)
+        try age(path, days: days)
+        return path
+    }
+
+    func testSymlinkInsideWorktreeIsNeitherFollowedNorCounted() async throws {
+        let outside = root.appendingPathComponent("outside").path
+        try write(String(repeating: "precious ", count: 100_000), to: "\(outside)/precious.txt")
+        let outsideBefore = try Data(contentsOf: URL(fileURLWithPath: "\(outside)/precious.txt"))
+
+        let worktree = try makeMerged("with-link")
+        try write(String(repeating: "x", count: 300_000), to: "\(worktree)/node_modules/pkg/index.js")
+        try FileManager.default.createSymbolicLink(atPath: "\(worktree)/link-out", withDestinationPath: outside)
+        // A symlink named like an artifact folder must not be followed either.
+        try FileManager.default.createSymbolicLink(atPath: "\(worktree)/dist", withDestinationPath: outside)
+        try age(worktree)
+        for link in ["link-out", "dist"] {
+            let touch = Process()
+            touch.executableURL = URL(fileURLWithPath: "/usr/bin/touch")
+            touch.arguments = ["-h", "-t", "202601011200", "\(worktree)/\(link)"]
+            try touch.run()
+            touch.waitUntilExit()
+        }
+
+        let report = try await inspect(worktree)
+        XCTAssertEqual(report.artifactDirectories, ["node_modules"])
+        let sizes = GitWorktreeScanner.measure(path: worktree, artifactDirectories: report.artifactDirectories)
+        XCTAssertGreaterThanOrEqual(sizes.artifacts, 300_000)
+        XCTAssertLessThan(sizes.artifacts, 400_000, "only node_modules counts as artifacts")
+        XCTAssertLessThan(sizes.code, 100_000, "the 900 KB file behind the symlinks is not counted")
+        let direct = GitWorktreeScanner.allocatedBytes(under: URL(fileURLWithPath: worktree))
+        XCTAssertLessThan(direct, 500_000)
+
+        // The untracked `dist` symlink is a review reason, the ignored one is not.
+        XCTAssertEqual(report.verdict, .init(status: .needsReview, reasons: [.untrackedFiles(1)]))
+        try FileManager.default.removeItem(atPath: "\(worktree)/dist")
+        try age(worktree)
+
+        let fresh = try await inspect(worktree)
+        XCTAssertEqual(fresh.verdict.status, .safeToDelete, "an ignored symlink to elsewhere is no reason to keep a worktree")
+        let error = await scanner().remove(path: worktree, repository: repo)
+
+        XCTAssertNil(error)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(outside)/precious.txt"))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: "\(outside)/precious.txt")), outsideBefore)
+    }
+
+    func testSizeBreakdownSplitsIgnoredArtifactsFromCode() async throws {
+        let worktree = try makeMerged("sizes")
+        try write(String(repeating: "c", count: 50_000), to: "\(worktree)/src/code.swift")
+        try write(String(repeating: "n", count: 200_000), to: "\(worktree)/node_modules/a/index.js")
+        try write(String(repeating: "n", count: 100_000), to: "\(worktree)/app/node_modules/b/index.js")
+        // `build` here is neither ignored nor tracked by git, so it is code.
+        try write(String(repeating: "b", count: 80_000), to: "\(worktree)/build/out.bin")
+
+        let report = try await inspect(worktree)
+        XCTAssertEqual(Set(report.artifactDirectories), ["node_modules", "app/node_modules"])
+        let sizes = GitWorktreeScanner.measure(path: worktree, artifactDirectories: report.artifactDirectories)
+
+        XCTAssertGreaterThanOrEqual(sizes.artifacts, 300_000)
+        XCTAssertLessThan(sizes.artifacts, 340_000)
+        XCTAssertGreaterThanOrEqual(sizes.code, 130_000, "src + untracked build + the checked-out files")
+        XCTAssertLessThan(sizes.code, 200_000)
+
+        var measured = report
+        measured.artifactBytes = sizes.artifacts
+        measured.codeBytes = sizes.code
+        let text = try XCTUnwrap(measured.sizeBreakdownText)
+        XCTAssertTrue(text.contains(" · "), text)
+        XCTAssertTrue(text.contains(ByteCountFormatter.string(fromByteCount: sizes.artifacts, countStyle: .file)), text)
+        XCTAssertTrue(text.contains(ByteCountFormatter.string(fromByteCount: sizes.code, countStyle: .file)), text)
+        XCTAssertNil(report.sizeBreakdownText, "no breakdown before the scan measured it")
+    }
+
+    func testInactiveDaysSettingIsHonoured() async throws {
+        let worktree = try makeMerged("three-days", days: 3)
+
+        var sevenDays = scanner()
+        sevenDays.inactiveDays = 7
+        let tooRecent = try await inspect(worktree, with: sevenDays)
+        XCTAssertEqual(tooRecent.verdict, .init(status: .needsReview, reasons: [.activeRecently(days: 3)]))
+
+        var twoDays = scanner()
+        twoDays.inactiveDays = 2
+        let idle = try await inspect(worktree, with: twoDays)
+        XCTAssertEqual(idle.verdict.status, .safeToDelete)
+
+        var tenDays = scanner()
+        tenDays.inactiveDays = 10
+        let waiting = try await inspect(worktree, with: tenDays)
+        XCTAssertEqual(waiting.verdict.status, .needsReview)
+    }
+
+    func testBaseBranchOverrideIsHonoured() async throws {
+        let worktree = try makeMerged("merged-later")
+        // `release` stays on the initial commit, so nothing merged later is in it.
+        let initial = try git(["rev-list", "--max-parents=0", "main"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines)
+        try git(["branch", "release", initial], in: repo)
+
+        let auto = try await inspect(worktree)
+        XCTAssertEqual(auto.verdict.status, .safeToDelete)
+
+        var toRelease = scanner()
+        toRelease.baseBranchOverride = "release"
+        let notInRelease = try await inspect(worktree, with: toRelease)
+        XCTAssertEqual(notInRelease.verdict, .init(status: .needsReview, reasons: [.notMerged]))
+
+        var toOriginMain = scanner()
+        toOriginMain.baseBranchOverride = "origin/main"
+        let inMain = try await inspect(worktree, with: toOriginMain)
+        XCTAssertEqual(inMain.verdict.status, .safeToDelete)
+
+        for unusable in ["does-not-exist", "-D", "--output=/tmp/x", "a b"] {
+            var broken = scanner()
+            broken.baseBranchOverride = unusable
+            let noBase = try await inspect(worktree, with: broken)
+            XCTAssertEqual(noBase.verdict, .init(status: .needsReview, reasons: [.noBaseBranch]), unusable)
+        }
+    }
+
+    func testExtraRootsAreSearchedForRepositories() async throws {
+        let worktree = try makeMerged("found-via-root")
+        let nested = root.appendingPathComponent("code/deep/er/est/too-deep").path
+        try git(["init", "-q", nested], in: root.path)
+        try FileManager.default.createDirectory(atPath: "\(root.path)/code/node_modules/skipped/.git", withIntermediateDirectories: true)
+
+        let found = GitWorktreeScanner.repositoryFolders(under: [root.path, "relative", "/", root.appendingPathComponent("missing").path])
+            .map(GitWorktreeScanner.canonical)
+        XCTAssertTrue(found.contains(repo), "\(found)")
+        XCTAssertFalse(found.contains(where: { $0.hasSuffix("too-deep") || $0.contains("node_modules") }), "\(found)")
+        XCTAssertFalse(found.contains(where: { $0.hasSuffix("origin.git") }), "a bare repository has no .git entry")
+        XCTAssertFalse(found.contains(where: { $0.hasPrefix(repo + "/") }), "the inside of a repository is not walked")
+
+        var viaRoot = GitWorktreeScanner(homeDirectory: root.path, gitPath: gitPath)
+        viaRoot.workingDirectories = { [] }
+        viaRoot.extraRoots = [root.path]
+        let reports = await viaRoot.scan()
+        XCTAssertEqual(verdicts(reports)[GitWorktreeScanner.canonical(worktree)]?.status, .safeToDelete)
+
+        var withoutRoots = GitWorktreeScanner(homeDirectory: root.path, gitPath: gitPath)
+        withoutRoots.workingDirectories = { [] }
+        let none = await withoutRoots.scan()
+        XCTAssertTrue(none.isEmpty, "without hints or roots nothing outside the agent folders is looked at")
+    }
+
+    func testRemovalNoLongerPrunesOtherMissingWorktrees() async throws {
+        let missing = try addWorktree("wt/missing", branch: "missing")
+        try FileManager.default.removeItem(atPath: missing)
+        let done = try makeMerged("remove-me")
+
+        let error = await scanner().remove(path: done, repository: repo)
+
+        XCTAssertNil(error)
+        XCTAssertTrue(try git(["worktree", "list", "--porcelain"], in: repo).contains("/wt/missing"),
+                      "removing one worktree must not forget a missing one nobody selected")
+    }
+
+    // MARK: Branch deletion
+
+    func testMergedBranchIsDeletedOnlyWhenEnabledAndSafe() async throws {
+        let merged = try makeMerged("branch-merged")
+        let report = try await inspect(merged)
+        XCTAssertEqual(report.verdict.status, .safeToDelete)
+
+        // Toggle off: the branch stays.
+        let off = await engine().cleanItems([item(for: report)]) { _ in }
+        XCTAssertEqual(off.itemsCleaned, 1, "\(off.errors)")
+        XCTAssertTrue(try git(["branch", "--list", "branch-merged"], in: repo).contains("branch-merged"))
+        XCTAssertTrue(off.notes.isEmpty)
+
+        // Toggle on: the same kind of worktree loses its merged branch.
+        let second = try makeMerged("branch-merged-2")
+        let secondReport = try await inspect(second)
+        let on = await engine(GitWorktreeSettings(deleteMergedBranch: true)).cleanItems([item(for: secondReport)]) { _ in }
+        XCTAssertEqual(on.itemsCleaned, 1, "\(on.errors)")
+        XCTAssertTrue(on.notes.isEmpty, "\(on.notes)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: second))
+        XCTAssertEqual(try git(["branch", "--list", "branch-merged-2"], in: repo), "")
+    }
+
+    func testBranchIsKeptWhenWorktreeWasNotSafeToDelete() async throws {
+        // Pushed but not merged: removable by git, verdict Needs review.
+        let path = try addWorktree("wt/pushed-only", branch: "pushed-only")
+        try commit(in: path, file: "p.txt")
+        try git(["push", "-q", "origin", "pushed-only"], in: path)
+        try age(path)
+        let report = try await inspect(path)
+        XCTAssertEqual(report.verdict, .init(status: .needsReview, reasons: [.notMerged]))
+
+        let result = await engine(GitWorktreeSettings(deleteMergedBranch: true)).cleanItems([item(for: report)]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 1, "\(result.errors)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        XCTAssertTrue(try git(["branch", "--list", "pushed-only"], in: repo).contains("pushed-only"))
+        XCTAssertTrue(result.notes.isEmpty)
+    }
+
+    func testGitDecidesWhetherTheBranchIsMerged() async throws {
+        // Cherry-picked into main: Safe to delete for PureMac, but not an
+        // ancestor of main, so `git branch -d` refuses. The removal still counts.
+        let path = try addWorktree("wt/cherried", branch: "cherried")
+        try commit(in: path, file: "ch.txt", "cherry content")
+        try git(["push", "-q", "origin", "cherried"], in: path)
+        let sha = try git(["rev-parse", "HEAD"], in: path).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("x\n", to: "\(repo!)/main-moves.txt")
+        try git(["add", "main-moves.txt"], in: repo)
+        try git(["commit", "-q", "-m", "main moves"], in: repo)
+        try git(["cherry-pick", sha], in: repo)
+        try git(["push", "-q", "origin", "main"], in: repo)
+        try age(path)
+        let report = try await inspect(path)
+        XCTAssertEqual(report.verdict.status, .safeToDelete)
+
+        let result = await engine(GitWorktreeSettings(deleteMergedBranch: true)).cleanItems([item(for: report)]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 1, "\(result.errors)")
+        XCTAssertTrue(result.errors.isEmpty, "a refused branch is a note, not an error")
+        XCTAssertEqual(result.notes.count, 1)
+        XCTAssertTrue(result.notes.first?.contains("branch cherried kept") == true, "\(result.notes)")
+        XCTAssertTrue(try git(["branch", "--list", "cherried"], in: repo).contains("cherried"))
+    }
+
+    func testBranchCheckedOutElsewhereOrBaseBranchIsNeverDeleted() async throws {
+        let first = try makeMerged("shared-branch")
+        let safe = try await inspect(first)
+        XCTAssertEqual(safe.verdict.status, .safeToDelete)
+        let removal = await scanner().remove(path: first, repository: repo)
+        XCTAssertNil(removal)
+        // Another worktree checks the same branch out.
+        try git(["worktree", "add", "-q", "\(repo!)/wt/second-holder", "shared-branch"], in: repo)
+
+        let heldNote = await scanner().deleteMergedBranch(of: safe, repository: repo)
+        XCTAssertTrue(heldNote?.contains("checked out in") == true, "\(heldNote ?? "")")
+        XCTAssertTrue(try git(["branch", "--list", "shared-branch"], in: repo).contains("shared-branch"))
+
+        // Not Safe to delete: refused before git is asked.
+        let review = GitWorktreeReport(path: first, repositoryPath: repo, branch: "shared-branch", head: nil,
+                                       verdict: .init(status: .needsReview, reasons: [.notMerged]), lastActivity: nil)
+        let reviewNote = await scanner().deleteMergedBranch(of: review, repository: repo)
+        XCTAssertNotNil(reviewNote)
+
+        // The base branch, even when nothing has it checked out.
+        try git(["checkout", "-q", "-b", "parking"], in: repo)
+        let onMain = GitWorktreeReport(path: first, repositoryPath: repo, branch: "main", head: nil,
+                                       verdict: .init(status: .safeToDelete, reasons: []), lastActivity: nil)
+        let baseNote = await scanner().deleteMergedBranch(of: onMain, repository: repo)
+        XCTAssertTrue(baseNote?.contains("base branch") == true, "\(baseNote ?? "")")
+        XCTAssertTrue(try git(["branch", "--list", "main"], in: repo).contains("main"))
+    }
+
+    // MARK: Prune
+
+    func testPrunableOrphanIsPrunedThroughTheEngine() async throws {
+        let gone = try addWorktree("wt/gone", branch: "gone")
+        let bystander = try addWorktree("wt/bystander", branch: "bystander")
+        try age(bystander)
+        try FileManager.default.removeItem(atPath: gone)
+        let report = try await inspect(gone)
+        XCTAssertTrue(report.verdict.isPrunableOrphan)
+        let row = item(for: report, size: 0)
+        XCTAssertFalse(row.isSelectionBlocked)
+        XCTAssertFalse(row.isSelected, "never preselected")
+        let adminDirs = try FileManager.default.contentsOfDirectory(atPath: "\(repo!)/.git/worktrees")
+        XCTAssertEqual(Set(adminDirs), ["gone", "bystander"])
+
+        let result = await engine().cleanItems([row]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 1, "\(result.errors)")
+        XCTAssertEqual(result.freedSpace, 0)
+        XCTAssertTrue(result.cleanedPaths.contains(gone))
+        XCTAssertFalse(try git(["worktree", "list", "--porcelain"], in: repo).contains("/wt/gone"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: "\(repo!)/.git/worktrees"), ["bystander"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(bystander)/README.md"), "a live worktree is untouched")
+        XCTAssertTrue(try git(["branch", "--list", "gone"], in: repo).contains("gone"), "prune keeps the branch")
+    }
+
+    func testPruneIsRefusedWhenTheFolderReappeared() async throws {
+        let gone = try addWorktree("wt/comes-back", branch: "comes-back")
+        try FileManager.default.removeItem(atPath: gone)
+        let report = try await inspect(gone)
+        XCTAssertTrue(report.verdict.isPrunableOrphan)
+
+        // Someone recreates the folder after the scan; git still calls it prunable.
+        try write("new work\n", to: "\(gone)/notes.txt")
+        let result = await engine().cleanItems([item(for: report, size: 0)]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.errors.contains { $0.contains("is back") }, "\(result.errors)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(gone)/notes.txt"))
+        XCTAssertTrue(try git(["worktree", "list", "--porcelain"], in: repo).contains("/wt/comes-back"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: "\(repo!)/.git/worktrees"), ["comes-back"])
+    }
+
+    func testPruneRefusedWhenAnotherMissingWorktreeLiesOnAnUnmountedVolume() async throws {
+        let gone = try addWorktree("wt/plain-gone", branch: "plain-gone")
+        let away = try addWorktree("wt/on-usb", branch: "on-usb")
+        try FileManager.default.removeItem(atPath: gone)
+        try FileManager.default.removeItem(atPath: away)
+        // Re-point the second worktree's admin record at an unmounted volume.
+        let volume = "/Volumes/PureMac-not-mounted-\(UUID().uuidString)"
+        try write("\(volume)/wt/on-usb/.git\n", to: "\(repo!)/.git/worktrees/on-usb/gitdir")
+
+        let listing = try git(["worktree", "list", "--porcelain"], in: repo)
+        XCTAssertTrue(listing.contains("\(volume)/wt/on-usb"), listing)
+        let error = await scanner().prune(path: gone, repository: repo)
+
+        XCTAssertTrue(error?.contains("not mounted") == true, "\(error ?? "")")
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: "\(repo!)/.git/worktrees")), ["plain-gone", "on-usb"])
+    }
+
+    func testPruneIsOnlyForTheRowScannedAsPrunable() async throws {
+        // A normal row whose folder vanished after the scan is not pruned silently.
+        let vanishing = try makeMerged("vanishing")
+        let report = try await inspect(vanishing)
+        XCTAssertEqual(report.verdict.status, .safeToDelete)
+        try FileManager.default.removeItem(atPath: vanishing)
+
+        let result = await engine().cleanItems([item(for: report)]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.errors.contains { $0.contains("rescan") }, "\(result.errors)")
+        XCTAssertTrue(try git(["worktree", "list", "--porcelain"], in: repo).contains("/wt/vanishing"))
+    }
+
+    func testOrphanFolderGitDoesNotKnowStaysDisplayOnly() async throws {
+        let ghost = "\(repo!)/.claude/worktrees/ghost"
+        try write("gitdir: /nonexistent/worktrees/ghost\n", to: "\(ghost)/.git")
+        try write("keep me\n", to: "\(ghost)/work.txt")
+        let reports = await scanner().scan()
+        let ghostReport = try XCTUnwrap(reports.first { GitWorktreeScanner.canonical($0.path) == GitWorktreeScanner.canonical(ghost) })
+        XCTAssertEqual(ghostReport.verdict, .init(status: .orphan, reasons: [.notListedByGit]))
+        let row = item(for: ghostReport)
+        XCTAssertTrue(row.isSelectionBlocked)
+
+        let result = await engine().cleanItems([row]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(ghost)/work.txt"))
+    }
+}
+
+@MainActor
+final class WorktreeScheduledCleanupTests: XCTestCase {
+    func testWorktreesAreNeverPartOfSmartScanOrScheduledCleanup() {
+        XCTAssertTrue(CleaningCategory.scannable.contains(.gitWorktrees))
+        XCTAssertFalse(CleaningCategory.smartScannable.contains(.gitWorktrees))
+
+        let state = AppState(performStartupTasks: false)
+        var item = CleanableItem(name: "r · done", path: "/nonexistent/r/wt/done", size: 4_096, category: .gitWorktrees,
+                                 isSelected: true, lastModified: nil)
+        item.gitWorktree = GitWorktreeReport(path: item.path, repositoryPath: "/nonexistent/r", branch: "done", head: nil,
+                                             verdict: .init(status: .safeToDelete, reasons: [.mergedAndIdle(days: 9)]), lastActivity: nil)
+        state.categoryResults[.gitWorktrees] = CategoryResult(category: .gitWorktrees, items: [item], totalSize: item.size)
+        state.scanState = .completed
+        XCTAssertTrue(state.isItemSelected(item))
+
+        state.cleanAll(scheduled: true)
+
+        XCTAssertEqual(state.scanState, .completed, "a scheduled run must not start cleaning worktrees")
+        XCTAssertEqual(state.categoryResults[.gitWorktrees]?.items.map(\.id), [item.id])
+    }
 }
 
 final class WorktreeRemovalRiskTests: XCTestCase {
     func testWorktreesNeedThreeAcknowledgements() {
         XCTAssertTrue(RemovalRisk.requiresAcknowledgement(.gitWorktrees))
-        XCTAssertEqual(RemovalRisk.risks(for: .gitWorktrees, items: []).count, 3)
+        XCTAssertEqual(RemovalRisk.risks(for: .gitWorktrees, items: [], worktreeSettings: GitWorktreeSettings()).count, 3)
+    }
+
+    func testBranchDeletionAndPruneChangeTheRisksShown() {
+        func item(_ verdict: GitWorktreeSupport.Verdict) -> CleanableItem {
+            var item = CleanableItem(name: "x", path: "/r/wt/x", size: 0, category: .gitWorktrees, isSelected: false, lastModified: nil)
+            item.gitWorktree = GitWorktreeReport(path: item.path, repositoryPath: "/r", branch: "x", head: nil, verdict: verdict, lastActivity: nil)
+            return item
+        }
+        let removable = item(.init(status: .safeToDelete, reasons: [.mergedAndIdle(days: 9)]))
+        let prunable = item(.init(status: .orphan, reasons: [.prunable]))
+        let off = GitWorktreeSettings()
+        let on = GitWorktreeSettings(deleteMergedBranch: true)
+
+        let keep = RemovalRisk.risks(for: .gitWorktrees, items: [removable], worktreeSettings: off)
+        let drop = RemovalRisk.risks(for: .gitWorktrees, items: [removable], worktreeSettings: on)
+        XCTAssertEqual(keep.count, 3)
+        XCTAssertEqual(drop.count, 3)
+        XCTAssertNotEqual(keep[1], drop[1], "the second risk changes with the branch setting")
+        XCTAssertTrue(drop[1].contains("git branch -d"))
+
+        let pruneOnly = RemovalRisk.risks(for: .gitWorktrees, items: [prunable], worktreeSettings: on)
+        XCTAssertEqual(pruneOnly.count, 1)
+        XCTAssertTrue(pruneOnly[0].contains("git worktree prune"))
+        XCTAssertEqual(RemovalRisk.risks(for: .gitWorktrees, items: [removable, prunable], worktreeSettings: off).count, 4)
+
+        let prompt = RemovalRisk.agentPrompt(category: .gitWorktrees, found: [removable, prunable], proposed: [], worktreeSettings: on)
+        XCTAssertTrue(prompt.contains("`worktree prune r`") || prompt.contains("`worktree prune /r`"), prompt)
+        XCTAssertTrue(prompt.contains("then `git branch -d` for safe rows"))
     }
 
     func testAgentPromptListsEveryFoundItemAndMarksProposedOnes() {
