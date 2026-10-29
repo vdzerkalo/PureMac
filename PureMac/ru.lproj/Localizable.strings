@@ -737,7 +737,7 @@
 "Refreshing package data and comparing installed versions." = "Refreshing package data and comparing installed versions.";
 "Refused to delete %lld protected item(s) (home credential directory or similar)." = "Refused to delete %lld protected item(s) (home credential directory or similar).";
 "Remove %lld files" = "Remove %lld files";
-"Remove %lld items" = "Remove %lld items";
+"Remove %lld items" = "Удалить элементов: %lld";
 "Remove apps and their related files" = "Remove apps and their related files";
 "Remove selected app files?" = "Remove selected app files?";
 "Remove selected files?" = "Remove selected files?";
@@ -983,6 +983,7 @@
 "Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Ветки worktree, которые можно удалить, удаляет git branch -d, только если git согласен, что они слиты. Коммиты в безопасности, только если они слиты, запушены или есть в другой ветке; PureMac проверяет это ещё раз непосредственно перед удалением.";
 "git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not." = "git worktree prune удаляет только записи git о worktree, чьей папки уже нет; файлы не трогает. Действует на все отсутствующие worktree этого репозитория, выбранные или нет.";
 "artifacts %@ · code %@" = "артефакты %@ · код %@";
+"no build folders · code %@" = "папок сборки нет · код %@";
 "Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Навсегда · git worktree prune (забывает отсутствующую папку, файлы не удаляет)";
 "Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Навсегда · git worktree remove (слитую ветку удаляет git branch -d)";
 
