@@ -228,7 +228,11 @@ struct CategoryDetailView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if items.contains(where: { $0.category == .localAIModels }) {
-                    Text("Ollama models are removed with ollama rm. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them.")
+                    Text("Ollama models are removed through Ollama itself. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Files linked from outside the cache are not detected.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -286,7 +290,7 @@ struct CategoryDetailView: View {
 
     private func removalMethod(_ item: CleanableItem) -> String {
         if item.ollamaModelName != nil {
-            return String(localized: "Permanent · Remove with ollama rm")
+            return String(localized: "Permanent · Remove through Ollama")
         }
         if item.category == .localAIModels {
             return String(localized: "Permanent · Delete model files")

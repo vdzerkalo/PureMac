@@ -127,7 +127,8 @@ struct LocalAIModels: Sendable {
     // MARK: Ollama
 
     private enum OllamaListing {
-        case models([LocalAIModelsSupport.OllamaModel])
+        /// `viaAPI` is false when the models came from `ollama list`.
+        case models([LocalAIModelsSupport.OllamaModel], viaAPI: Bool)
         case unavailable
         case remoteHost
     }
@@ -142,7 +143,7 @@ struct LocalAIModels: Sendable {
             return ScanOutcome(notes: [
                 String(localized: "Ollama is not running or the ollama command was not found. Start Ollama and scan again to list its models."),
             ])
-        case .models(let models):
+        case .models(let models, _):
             let detail = String(localized: "Ollama model · freed space can be smaller when models share files")
             let items = models
                 .filter { Support.isValidOllamaModelName($0.name) }
@@ -183,7 +184,7 @@ struct LocalAIModels: Sendable {
         do {
             let response = try await context.fetch(request)
             if response.status == 200, let models = Support.parseOllamaTagsJSON(response.data) {
-                return .models(models)
+                return .models(models, viaAPI: true)
             }
             Logger.shared.log("Local AI Models: /api/tags answered \(response.status) with an unreadable body", level: .warning)
         } catch let error as URLError where error.code == .timedOut {
@@ -203,7 +204,7 @@ struct LocalAIModels: Sendable {
                 Logger.shared.log("Local AI Models: ollama list exited \(output.status)", level: .info)
                 return .unavailable
             }
-            return .models(Support.parseOllamaListTable(text))
+            return .models(Support.parseOllamaListTable(text), viaAPI: false)
         } catch {
             Logger.shared.log("Local AI Models: ollama list failed: \(error.localizedDescription)", level: .warning)
             return .unavailable
@@ -352,9 +353,11 @@ struct LocalAIModels: Sendable {
     }
 
     /// Every symlink in the places a link into a row can live: the hub root,
-    /// its non-standard folders, and the Application Support model folders.
-    /// Repo folders are not walked: their snapshot links are the normal
-    /// layout and any that leave the repo already disqualify that repo.
+    /// every repo folder (listed or not: a repo that links into another repo
+    /// would break if the target went), every non-standard hub folder, and the
+    /// Application Support model folders. Links from outside these places, for
+    /// example a project folder made by `hf download --local-dir`, are not
+    /// found; that limit is stated in the review text and the docs.
     private func symlinkIndex() -> [Support.SymlinkRecord] {
         var records: [Support.SymlinkRecord] = []
         if let root = hubRoot() {
@@ -367,8 +370,8 @@ struct LocalAIModels: Sendable {
                     if let target = Support.canonicalPath(path) {
                         records.append(Support.SymlinkRecord(path: path, target: target))
                     }
-                } else if info.type == .directory, recognised, Support.isListableHubEntryName(name),
-                          Support.parseHubRepoFolder(name) == nil {
+                } else if info.type == .directory, Support.isListableHubEntryName(name),
+                          Support.parseHubRepoFolder(name) != nil || recognised {
                     records += Support.collectSymlinks(under: path, fileManager: fileManager)
                 }
             }
@@ -397,9 +400,12 @@ struct LocalAIModels: Sendable {
 
     // MARK: Ollama
 
-    /// `ollama rm <name>` and nothing else. Model blobs are shared between
-    /// models, so files are never unlinked by hand; the freed amount is the
-    /// listed size, an upper bound.
+    /// Removes one model by name, after confirming its digest. When the API
+    /// answered that check, `DELETE /api/delete` (this file's redirect-refusing
+    /// client); only when the API is unreachable and `ollama list` answered,
+    /// `ollama rm <name>`. Model blobs are shared between models, so files are
+    /// never unlinked by hand; the freed amount is the listed size, an upper
+    /// bound.
     func removeOllamaModel(name: String, expectedDigest: String?, reportedSize: Int64) async -> RemovalOutcome {
         guard Support.isValidOllamaModelName(name) else {
             return RemovalOutcome(error: "Refusing to remove Ollama model with an unsafe name: \(name)")
@@ -409,12 +415,35 @@ struct LocalAIModels: Sendable {
         }
         // A tag can be re-pulled after the scan; removal is by name, so make
         // sure the name still means the model the user reviewed.
-        if let message = await confirmOllamaDigest(name: name, expected: expectedDigest) {
+        let viaAPI: Bool
+        switch await confirmOllamaDigest(name: name, expected: expectedDigest) {
+        case .skip(let message):
             Logger.shared.log(message, level: .warning)
             return RemovalOutcome(error: message)
+        case .confirmed(let answeredByAPI):
+            viaAPI = answeredByAPI
         }
 
-        if let executable = firstExecutable(in: context.ollamaExecutableCandidates) {
+        if viaAPI {
+            // The server answered, so delete through our own request: the
+            // `ollama` CLI follows 307/308 redirects, this one never does.
+            var request = URLRequest(url: endpoint.baseURL.appendingPathComponent("api/delete"))
+            request.httpMethod = "DELETE"
+            request.timeoutInterval = context.removeTimeout
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["model": name, "name": name])
+            do {
+                let response = try await context.fetch(request)
+                guard response.status == 200 else {
+                    Logger.shared.log("DELETE /api/delete \(name) answered \(response.status)", level: .error)
+                    return RemovalOutcome(error: "Ollama refused to remove \(name) (HTTP \(response.status))")
+                }
+            } catch {
+                Logger.shared.log("DELETE /api/delete \(name) failed: \(error.localizedDescription)", level: .error)
+                return RemovalOutcome(error: "Couldn't remove Ollama model \(name): \(error.localizedDescription)")
+            }
+        } else if let executable = firstExecutable(in: context.ollamaExecutableCandidates) {
+            // The API did not answer but `ollama list` did: use the CLI.
             do {
                 let output = try await context.runCommand(
                     URL(fileURLWithPath: executable), ["rm", name], context.removeTimeout, context.environment
@@ -435,45 +464,35 @@ struct LocalAIModels: Sendable {
                 return RemovalOutcome(error: "Couldn't run ollama rm \(name): \(error.localizedDescription)")
             }
         } else {
-            // No CLI on this Mac: ask the running server to delete the model.
-            var request = URLRequest(url: endpoint.baseURL.appendingPathComponent("api/delete"))
-            request.httpMethod = "DELETE"
-            request.timeoutInterval = context.removeTimeout
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: ["model": name, "name": name])
-            do {
-                let response = try await context.fetch(request)
-                guard response.status == 200 else {
-                    Logger.shared.log("DELETE /api/delete \(name) answered \(response.status)", level: .error)
-                    return RemovalOutcome(error: "Ollama refused to remove \(name) (HTTP \(response.status))")
-                }
-            } catch {
-                Logger.shared.log("DELETE /api/delete \(name) failed: \(error.localizedDescription)", level: .error)
-                return RemovalOutcome(error: "Ollama isn't running — start it, then remove \(name) again")
-            }
+            return RemovalOutcome(error: "Ollama isn't running — start it, then remove \(name) again")
         }
 
         Logger.shared.log("Removed Ollama model \(name) (listed size \(reportedSize) bytes)", level: .info)
         return RemovalOutcome(freed: reportedSize, cleaned: true)
     }
 
-    /// Returns a reason to skip, or nil when the server (or `ollama list`)
-    /// still reports the scanned digest for `name`.
-    private func confirmOllamaDigest(name: String, expected: String?) async -> String? {
+    private enum DigestCheck {
+        case confirmed(viaAPI: Bool)
+        case skip(String)
+    }
+
+    /// Confirms the server (or `ollama list`) still reports the scanned
+    /// digest for `name`, and says which of the two answered.
+    private func confirmOllamaDigest(name: String, expected: String?) async -> DigestCheck {
         guard let expected, !expected.isEmpty else {
-            return "Skipped \(name): no digest was recorded at scan time, so it cannot be confirmed. Scan again"
+            return .skip("Skipped \(name): no digest was recorded at scan time, so it cannot be confirmed. Scan again")
         }
         switch await listOllamaModels() {
-        case .models(let models):
+        case .models(let models, let viaAPI):
             guard let current = models.first(where: { $0.name == name }) else {
-                return "Skipped \(name): Ollama no longer lists it. Scan again"
+                return .skip("Skipped \(name): Ollama no longer lists it. Scan again")
             }
             guard Support.ollamaDigestsMatch(expected, current.digest) else {
-                return "Skipped \(name): the model changed since the scan (different digest). Scan again"
+                return .skip("Skipped \(name): the model changed since the scan (different digest). Scan again")
             }
-            return nil
+            return .confirmed(viaAPI: viaAPI)
         case .unavailable, .remoteHost:
-            return "Skipped \(name): Ollama did not answer, so the model could not be confirmed"
+            return .skip("Skipped \(name): Ollama did not answer, so the model could not be confirmed")
         }
     }
 

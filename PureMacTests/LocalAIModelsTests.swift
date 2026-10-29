@@ -334,22 +334,34 @@ final class LocalAIModelsTests: XCTestCase {
         let models = base.appendingPathComponent("models", isDirectory: true)
         let gguf = base.appendingPathComponent("gguf_models", isDirectory: true)
         for directory in [models, gguf] { try fileManager.createDirectory(at: directory, withIntermediateDirectories: true) }
+        func sparse(_ url: URL, bytes: UInt64) throws {
+            XCTAssertTrue(fileManager.createFile(atPath: url.path, contents: nil))
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: bytes)
+            try handle.close()
+        }
         // Recognised.
         try Data(count: 100).write(to: gguf.appendingPathComponent("a.GGUF"))
         try Data(count: 100).write(to: gguf.appendingPathComponent("b.safetensors"))
         try Data(count: 100).write(to: gguf.appendingPathComponent("c.npz"))
-        try Data(count: 100).write(to: gguf.appendingPathComponent("d.bin"))
+        try sparse(gguf.appendingPathComponent("d.bin"), bytes: 50_000_000)
         try fileManager.createDirectory(at: models.appendingPathComponent("e.mlpackage/Data"), withIntermediateDirectories: true)
         try Data(count: 100).write(to: models.appendingPathComponent("e.mlpackage/Data/w"))
         try fileManager.createDirectory(at: models.appendingPathComponent("with-config/deep"), withIntermediateDirectories: true)
         try Data(count: 100).write(to: models.appendingPathComponent("with-config/deep/config.json"))
+        try Data(count: 100).write(to: models.appendingPathComponent("with-config/deep/model.safetensors"))
         try fileManager.createDirectory(at: models.appendingPathComponent("org/repo"), withIntermediateDirectories: true)
         try Data(count: 100).write(to: models.appendingPathComponent("org/repo/model.safetensors"))
-        // Not model data.
+        // Not model data: other files, a small .bin, a config.json on its own.
         try Data(count: 100).write(to: gguf.appendingPathComponent("notes.txt"))
+        try sparse(gguf.appendingPathComponent("cache.bin"), bytes: 49_999_999)
         try Data(count: 100).write(to: models.appendingPathComponent("settings.json"))
         try fileManager.createDirectory(at: models.appendingPathComponent("photos"), withIntermediateDirectories: true)
         try Data(count: 100).write(to: models.appendingPathComponent("photos/a.jpg"))
+        try fileManager.createDirectory(at: models.appendingPathComponent("config-only"), withIntermediateDirectories: true)
+        try Data(count: 100).write(to: models.appendingPathComponent("config-only/config.json"))
+        try fileManager.createDirectory(at: models.appendingPathComponent("small-bins"), withIntermediateDirectories: true)
+        try Data(count: 100).write(to: models.appendingPathComponent("small-bins/a.bin"))
 
         let outcome = LocalAIModels(context: makeContext()).scanHuggingFace()
 
@@ -358,6 +370,25 @@ final class LocalAIModelsTests: XCTestCase {
             "models/e.mlpackage", "models/with-config", "models/org",
         ])
         XCTAssertEqual(outcome.notes.count, 1, "the skipped-items note; no hub repos so no date note")
+    }
+
+    func testModelDataRecognitionThresholds() throws {
+        let dir = sandbox.appendingPathComponent("recognition", isDirectory: true)
+        try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+        func make(_ name: String, bytes: UInt64) throws -> String {
+            let url = dir.appendingPathComponent(name)
+            XCTAssertTrue(fileManager.createFile(atPath: url.path, contents: nil))
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: bytes)
+            try handle.close()
+            return url.path
+        }
+        XCTAssertFalse(Support.looksLikeModelData(atPath: try make("a.bin", bytes: 49_999_999)))
+        XCTAssertTrue(Support.looksLikeModelData(atPath: try make("b.bin", bytes: 50_000_000)))
+        XCTAssertTrue(Support.looksLikeModelData(atPath: try make("c.gguf", bytes: 1)))
+        XCTAssertFalse(Support.looksLikeModelData(atPath: try make("config.json", bytes: 10)))
+        XCTAssertFalse(Support.looksLikeModelData(atPath: try make("d.txt", bytes: 10)))
+        XCTAssertFalse(Support.looksLikeModelData(atPath: sandbox.appendingPathComponent("missing").path))
     }
 
     // MARK: - Links into rows
@@ -414,6 +445,53 @@ final class LocalAIModelsTests: XCTestCase {
         XCTAssertEqual(result.errors.count, 2)
         XCTAssertTrue(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--name").path))
         XCTAssertTrue(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--other").path))
+    }
+
+    func testARepoThatLinksIntoAnotherRepoBlocksTheTargetEvenWhenTheLinkingRepoIsNotListed() async throws {
+        let root = try makeHub()
+        try makeRepo(root, "models--org--target", blobs: [("aaa", 100)])
+        // Repo A keeps its files in the shared store (so it is not listed) but
+        // also holds a link into repo B's snapshot.
+        let shared = root.appendingPathComponent("blobs/ab", isDirectory: true)
+        try fileManager.createDirectory(at: shared, withIntermediateDirectories: true)
+        try Data(count: 4096).write(to: shared.appendingPathComponent("abcdef"))
+        let linking = root.appendingPathComponent("models--org--linking", isDirectory: true)
+        try fileManager.createDirectory(at: linking.appendingPathComponent("blobs"), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: linking.appendingPathComponent("snapshots/rev1"), withIntermediateDirectories: true)
+        try fileManager.createSymbolicLink(atPath: linking.appendingPathComponent("blobs/abcdef").path, withDestinationPath: "../../blobs/ab/abcdef")
+        let intoTarget = linking.appendingPathComponent("snapshots/rev1/borrowed.bin")
+        try fileManager.createSymbolicLink(atPath: intoTarget.path, withDestinationPath: root.appendingPathComponent("models--org--target/blobs/aaa").path)
+        let service = LocalAIModels(context: makeContext())
+
+        let scan = service.scanHuggingFace()
+        XCTAssertEqual(scan.items.map(\.name), ["org/target"], "the linking repo is hidden as shared-store")
+        let target = try XCTUnwrap(scan.items.first)
+        XCTAssertTrue(try XCTUnwrap(target.detail).contains("models--org--linking/snapshots/rev1/borrowed.bin"), target.detail ?? "")
+
+        let result = await CleaningEngine(homeDirectory: home, localAIModels: service).cleanItems([target]) { _ in }
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(try XCTUnwrap(result.errors.first).contains(intoTarget.path))
+        XCTAssertTrue(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--target/blobs/aaa").path))
+    }
+
+    func testAProjectFolderInsideTheCacheThatLinksToCachedBlobsBlocksTheRepo() async throws {
+        // What `hf download --local-dir` used to leave behind: files that are links into the cache.
+        let root = try makeHub()
+        try makeRepo(root, "models--org--name", blobs: [("aaa", 100)])
+        let project = root.appendingPathComponent("my-project", isDirectory: true)
+        try fileManager.createDirectory(at: project.appendingPathComponent("weights"), withIntermediateDirectories: true)
+        try Data(count: 10).write(to: project.appendingPathComponent("readme.txt"))
+        try fileManager.createSymbolicLink(
+            atPath: project.appendingPathComponent("weights/model.safetensors").path,
+            withDestinationPath: root.appendingPathComponent("models--org--name/blobs/aaa").path
+        )
+        let service = LocalAIModels(context: makeContext())
+        let repo = try XCTUnwrap(service.scanHuggingFace().items.first { $0.name == "org/name" })
+
+        let result = await CleaningEngine(homeDirectory: home, localAIModels: service).cleanItems([repo]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--name/blobs/aaa").path))
     }
 
     func testCollectSymlinksIsBoundedAndDoesNotFollowLinks() throws {
@@ -807,19 +885,49 @@ final class LocalAIModelsTests: XCTestCase {
 
     // MARK: - Ollama removal
 
-    func testOllamaRemovalRunsOllamaRmWithTheModelNameAndNothingElse() async throws {
+    func testOllamaRemovalUsesOllamaRmOnlyWhenTheAPIIsUnreachable() async throws {
         let ollama = try writeFakeOllama()
-        let service = LocalAIModels(context: makeContext(ollama: [ollama], fetch: tagsFetch([("qwen3.5:9b", digest9b)])))
+        // Default fetch: connection refused, so the digest is confirmed by `ollama list`.
+        let service = LocalAIModels(context: makeContext(ollama: [ollama]))
         let item = ollamaItem("qwen3.5:9b", size: 6_600_000_000)
 
         let result = await CleaningEngine(homeDirectory: home, localAIModels: service).cleanItems([item]) { _ in }
 
-        XCTAssertEqual(invocations(), ["rm qwen3.5:9b"])
+        XCTAssertEqual(invocations(), ["list", "rm qwen3.5:9b"])
         XCTAssertEqual(result.itemsCleaned, 1)
         XCTAssertEqual(result.freedSpace, 6_600_000_000)
         XCTAssertEqual(result.cleanedPaths, [item.path])
         XCTAssertTrue(result.errors.isEmpty)
         XCTAssertTrue(result.requiresAdmin.isEmpty)
+    }
+
+    func testOllamaRemovalPrefersTheRedirectRefusingAPIDeleteWhenTheAPIAnswered() async throws {
+        let ollama = try writeFakeOllama()
+        let seen = LockedBox<[URLRequest]>([])
+        let service = LocalAIModels(context: makeContext(
+            ollama: [ollama],
+            fetch: tagsFetch([("qwen3.5:9b", digest9b)]) { request in seen.mutate { $0.append(request) } }
+        ))
+
+        let result = await CleaningEngine(homeDirectory: home, localAIModels: service)
+            .cleanItems([ollamaItem("qwen3.5:9b", size: 5)]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 1)
+        XCTAssertTrue(invocations().isEmpty, "the CLI follows redirects itself, so it is not used while the API answers")
+        XCTAssertEqual(seen.value.map { $0.httpMethod }, ["GET", "DELETE"])
+    }
+
+    func testOllamaRemovalDoesNotFallBackToTheCLIWhenTheAPIDeleteIsRedirectedOrRefused() async throws {
+        for status in [307, 308, 500] {
+            let ollama = try writeFakeOllama()
+            let service = LocalAIModels(context: makeContext(
+                ollama: [ollama], fetch: tagsFetch([("qwen3.5:9b", digest9b)], deleteStatus: status)
+            ))
+            let outcome = await service.removeOllamaModel(name: "qwen3.5:9b", expectedDigest: digest9b, reportedSize: 5)
+            XCTAssertFalse(outcome.cleaned, "\(status)")
+            XCTAssertNotNil(outcome.error, "\(status)")
+            XCTAssertTrue(invocations().isEmpty, "\(status)")
+        }
     }
 
     func testOllamaRemovalRefusesUnsafeNamesAndRemoteHosts() async throws {
@@ -838,22 +946,22 @@ final class LocalAIModelsTests: XCTestCase {
     }
 
     func testOllamaRemovalReportsFailuresAndTimeouts() async throws {
-        let failing = try writeScript("ollama-fail", #"echo "$*" >> "$FAKE_LOG"; echo "Error: model not found" >&2; exit 1"#)
-        let outcome = await LocalAIModels(context: makeContext(ollama: [failing], fetch: tagsFetch([("gone:latest", digest9b)])))
+        let failing = try writeOllamaListing("ollama-fail", model: "gone:latest", rm: #"echo "Error: model not found" >&2; exit 1"#)
+        let outcome = await LocalAIModels(context: makeContext(ollama: [failing]))
             .removeOllamaModel(name: "gone:latest", expectedDigest: digest9b, reportedSize: 5)
         XCTAssertFalse(outcome.cleaned)
         XCTAssertEqual(outcome.freed, 0)
         XCTAssertTrue(try XCTUnwrap(outcome.error).contains("model not found"))
 
-        let down = try writeScript("ollama-down", #"echo "Error: could not connect to ollama server" >&2; exit 1"#)
-        let downOutcome = await LocalAIModels(context: makeContext(ollama: [down], fetch: tagsFetch([("x:latest", digest9b)])))
+        let down = try writeOllamaListing("ollama-down", model: "x:latest", rm: #"echo "Error: could not connect to ollama server" >&2; exit 1"#)
+        let downOutcome = await LocalAIModels(context: makeContext(ollama: [down]))
             .removeOllamaModel(name: "x:latest", expectedDigest: digest9b, reportedSize: 5)
         XCTAssertFalse(downOutcome.cleaned)
         XCTAssertNotNil(downOutcome.error)
 
-        let hang = try writeScript("ollama-hang-rm", #"exec sleep 30"#)
+        let hang = try writeOllamaListing("ollama-hang-rm", model: "x:latest", rm: "exec sleep 30")
         let started = Date()
-        let hung = await LocalAIModels(context: makeContext(ollama: [hang], removeTimeout: 0.5, fetch: tagsFetch([("x:latest", digest9b)])))
+        let hung = await LocalAIModels(context: makeContext(ollama: [hang], removeTimeout: 0.5))
             .removeOllamaModel(name: "x:latest", expectedDigest: digest9b, reportedSize: 5)
         XCTAssertFalse(hung.cleaned)
         XCTAssertNotNil(hung.error)
@@ -1137,6 +1245,22 @@ final class LocalAIModelsTests: XCTestCase {
           rm -rf "$5/$folder"
           exit 0
         fi
+        exit 2
+        """)
+    }
+
+    /// Fake `ollama` whose `list` shows one model with ID 6488c96fa5fa and
+    /// whose `rm` runs `rm` (a shell snippet).
+    private func writeOllamaListing(_ name: String, model: String, rm: String) throws -> String {
+        try writeScript(name, """
+        echo "$*" >> "$FAKE_LOG"
+        case "$1" in
+          list)
+            printf 'NAME  ID  SIZE  MODIFIED\\n'
+            printf '%s  6488c96fa5fa  1 GB  now\\n' '\(model)'
+            exit 0 ;;
+          rm) \(rm) ;;
+        esac
         exit 2
         """)
     }

@@ -59,8 +59,8 @@ actor CleaningEngine {
             }
 
             if item.category == .localAIModels {
-                // Models are removed only through LocalAIModels: `ollama rm`
-                // for Ollama, and `hf cache rm` or one validated folder delete
+                // Models are removed only through LocalAIModels: the Ollama API
+                // (or `ollama rm` when the API is unreachable), and `hf cache rm` or one validated folder delete
                 // for Hugging Face. This never reaches the generic allow-list
                 // below, and never the admin pass.
                 let outcome = await localAIModels.remove(item)

@@ -486,25 +486,31 @@ enum LocalAIModelsSupport {
         }
     }
 
-    static let modelDataExtensions: Set<String> = ["gguf", "safetensors", "bin", "npz", "mlpackage"]
+    /// Extensions that are weights whatever their size.
+    static let modelWeightExtensions: Set<String> = ["gguf", "safetensors", "npz", "mlpackage"]
+    /// `.bin` is also used for plenty of non-model data, so only a large one counts.
+    static let minimumBinWeightBytes: Int64 = 50_000_000
 
     /// An Application Support entry is offered only when it is recognisable
-    /// model data: a model file, an `.mlpackage`, or a folder whose bounded
-    /// walk finds model files or a `config.json`.
+    /// model data: a weight file (`.gguf`, `.safetensors`, `.npz`, an
+    /// `.mlpackage`, or a `.bin` of at least 50 MB), or a folder whose bounded
+    /// walk finds one. A `config.json` alone is not enough.
     static func looksLikeModelData(
         atPath path: String,
         fileManager: FileManager = .default,
         maxDepth: Int = walkMaxDepth,
         maxEntries: Int = walkMaxEntries
     ) -> Bool {
-        func isModelName(_ name: String) -> Bool {
-            modelDataExtensions.contains((name as NSString).pathExtension.lowercased())
+        func isWeight(_ name: String, _ info: EntryInfo) -> Bool {
+            let ext = (name as NSString).pathExtension.lowercased()
+            if ext == "mlpackage" { return info.type == .file || info.type == .directory }
+            guard info.type == .file else { return false }
+            if ext == "bin" { return info.size >= minimumBinWeightBytes }
+            return modelWeightExtensions.contains(ext)
         }
         guard let info = entryInfo(atPath: path) else { return false }
-        let name = (path as NSString).lastPathComponent
-        if info.type == .file { return isModelName(name) }
+        if isWeight((path as NSString).lastPathComponent, info) { return true }
         guard info.type == .directory else { return false }
-        if isModelName(name) { return true }
         var visited = 0
         var pending = [(path: path, depth: 0)]
         while let (directory, depth) = pending.popLast() {
@@ -514,8 +520,7 @@ enum LocalAIModelsSupport {
                 if visited > maxEntries { return false }
                 let full = directory + "/" + child
                 guard let childInfo = entryInfo(atPath: full) else { continue }
-                if child.lowercased() == "config.json", childInfo.type == .file { return true }
-                if isModelName(child), childInfo.type == .file || childInfo.type == .directory { return true }
+                if isWeight(child, childInfo) { return true }
                 if childInfo.type == .directory, depth + 1 < maxDepth { pending.append((full, depth + 1)) }
             }
         }

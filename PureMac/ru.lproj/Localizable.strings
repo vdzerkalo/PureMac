@@ -942,10 +942,11 @@
 "Hugging Face dataset" = "Набор данных Hugging Face";
 "Hugging Face space" = "Space Hugging Face";
 "%@ · %lld revision(s)" = "%@ · ревизий: %lld";
-"Ollama models are removed with ollama rm. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them." = "Модели Ollama удаляются командой ollama rm. Файлы, общие для нескольких моделей, остаются на диске, поэтому может освободиться меньше места, чем показано. Репозитории и папки Hugging Face удаляются и скачиваются заново, когда понадобятся.";
-"Permanent · Remove with ollama rm" = "Безвозвратно · Удалить через ollama rm";
+"Ollama models are removed through Ollama itself. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them." = "Модели Ollama удаляются через сам Ollama. Файлы, общие для нескольких моделей, остаются на диске, поэтому может освободиться меньше места, чем показано. Репозитории и папки Hugging Face удаляются и скачиваются заново, когда понадобятся.";
+"Permanent · Remove through Ollama" = "Безвозвратно · Удалить через Ollama";
 "Permanent · Delete model files" = "Безвозвратно · Удалить файлы моделей";
 
 /* Local AI Models: links and unrecognised files */
 "Linked from %@ · cannot be removed" = "Есть ссылка из %@ · удалить нельзя";
 "%lld item(s) in Application Support/huggingface were not listed because they do not look like model data." = "Элементов в Application Support/huggingface: %lld. Они не показаны, так как не похожи на данные моделей.";
+"Files linked from outside the cache are not detected." = "Файлы, на которые ссылаются извне кеша, не обнаруживаются.";
