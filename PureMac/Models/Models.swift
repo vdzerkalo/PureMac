@@ -14,6 +14,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case xcodeJunk = "Xcode Junk"
     case brewCache = "Brew Cache"
     case nodeCache = "Node Cache"
+    case devToolCaches = "Dev Tool Caches"
     case dockerCache = "Docker Cache"
     case gitWorktrees = "Git Worktrees"
     case universalBinaries = "Universal Binaries"
@@ -34,6 +35,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .xcodeJunk: return "hammer.fill"
         case .brewCache: return "mug.fill"
         case .nodeCache: return "leaf.fill"
+        case .devToolCaches: return "wrench.and.screwdriver.fill"
         case .dockerCache: return "shippingbox.fill"
         case .gitWorktrees: return "arrow.triangle.branch"
         case .universalBinaries: return "cpu"
@@ -54,6 +56,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .xcodeJunk: return "Derived data, archives, and simulator runtimes"
         case .brewCache: return "Homebrew download cache"
         case .nodeCache: return "npm, yarn, and pnpm download caches"
+        case .devToolCaches: return "Package, build, and download caches of developer tools"
         case .dockerCache: return "Docker images, containers, and build cache"
         case .gitWorktrees: return "Leftover git worktrees from AI agents and old branches"
         case .universalBinaries: return "Unused CPU architecture slices in app binaries"
@@ -74,6 +77,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .xcodeJunk: return .cyan
         case .brewCache: return .mint
         case .nodeCache: return .pink
+        case .devToolCaches: return .green
         case .dockerCache: return .indigo
         case .gitWorktrees: return .orange
         case .universalBinaries: return .brown
@@ -165,6 +169,11 @@ struct CleanableItem: Identifiable, Hashable {
     let category: CleaningCategory
     var isSelected: Bool
     let lastModified: Date?
+    /// Rows that can hold data the user cannot re-download (Maven's `~/.m2`,
+    /// NuGet packages). They start unselected and only a per-row toggle
+    /// selects them: "Select all", the category checkbox and "Select visible"
+    /// skip them.
+    var selectOnlyByHand: Bool = false
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
@@ -225,6 +234,22 @@ struct CleanableItem: Identifiable, Hashable {
     /// category checkbox) skips them; only a click on the row itself selects one.
     var requiresExplicitSelection: Bool {
         worktreeArtifacts != nil || (dockerPruneAction?.requiresExplicitSelection ?? false)
+    }
+
+    /// The one rule every bulk selection path obeys: select all, the category
+    /// checkbox, "Select visible" and `AppState.setSelection(true, …)` skip a
+    /// row for which this is true. Only a click on the row itself can select
+    /// it (and then only if `isSelectionBlocked` allows). ORs every reason a
+    /// category has: hand-select-only rows (Maven, NuGet, model rows), rows
+    /// that erase unrecoverable data or delete build folders next to whole
+    /// worktrees (`requiresExplicitSelection`: Docker volumes, worktree
+    /// artifact rows) and rows that cannot be removed at all
+    /// (`isSelectionBlocked`: protected and unlisted worktrees, artifact rows
+    /// of a busy worktree). A row whose owning app runs (AI Agent Data) is
+    /// blocked by `AppState.isExcludedFromBulkSelection`, which adds that live
+    /// condition to this one.
+    var isExcludedFromBulkSelection: Bool {
+        selectOnlyByHand || requiresExplicitSelection || isSelectionBlocked
     }
 
     func hash(into hasher: inout Hasher) {

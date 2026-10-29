@@ -23,7 +23,7 @@ struct CategoryDetailView: View {
     /// Protected and orphan worktrees and explicit-only rows (Docker volumes)
     /// stay visible but never take part in "Select visible".
     private var selectableVisibleItems: [CleanableItem] {
-        visibleItems.filter { !$0.isSelectionBlocked && !$0.requiresExplicitSelection }
+        visibleItems.filter { !appState.isExcludedFromBulkSelection($0) }
     }
 
     var body: some View {
@@ -152,9 +152,9 @@ struct CategoryDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                // Rows that need an explicit click (Docker volumes) or can't be
-                // removed at all (protected worktrees) are left out of the bulk
-                // selection, but "Deselect visible" clears everything visible.
+                // Rows that need an explicit click (Docker volumes, Maven, models)
+                // or can't be removed at all (protected worktrees) are left out of
+                // the bulk selection, but "Deselect visible" clears everything visible.
                 let bulkItems = selectableVisibleItems
                 let allBulkSelected = bulkItems.allSatisfy(appState.isItemSelected)
                 Button(allBulkSelected ? "Deselect visible" : "Select visible") {

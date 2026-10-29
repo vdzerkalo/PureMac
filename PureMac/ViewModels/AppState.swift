@@ -680,11 +680,21 @@ final class AppState: ObservableObject {
     func setSelection(_ selected: Bool, for items: [CleanableItem]) {
         guard !scanState.isActive else { return }
         for item in items where isItemSelected(item) != selected {
+            // Bulk selection never selects a row that must be clicked by hand.
+            if selected && isExcludedFromBulkSelection(item) { continue }
             toggleItem(item)
         }
     }
 
     // MARK: - Selection
+
+    /// The bulk-selection rule for one row (see
+    /// `CleanableItem.isExcludedFromBulkSelection`). Every bulk path calls it:
+    /// `selectAllInCategory`, `categoryBinding`, `setSelection(true, …)` and
+    /// "Select visible".
+    func isExcludedFromBulkSelection(_ item: CleanableItem) -> Bool {
+        item.isExcludedFromBulkSelection
+    }
 
     func isItemSelected(_ item: CleanableItem) -> Bool {
         if item.isSelected {
@@ -712,7 +722,7 @@ final class AppState: ObservableObject {
 
     func selectAllInCategory(_ category: CleaningCategory) {
         guard let result = categoryResults[category] else { return }
-        for item in result.items where !item.isSelectionBlocked && !item.requiresExplicitSelection {
+        for item in result.items where !isExcludedFromBulkSelection(item) {
             if item.isSelected {
                 deselectedItems.remove(item.id)
             } else {
@@ -1093,7 +1103,8 @@ final class AppState: ObservableObject {
         return items.filter {
             !$0.isActionItem &&
                 !result.cleanedPaths.contains($0.path) &&
-                !result.protectedPaths.contains($0.path)
+                !result.protectedPaths.contains($0.path) &&
+                !result.skippedPaths.contains($0.path)
         }
     }
 
