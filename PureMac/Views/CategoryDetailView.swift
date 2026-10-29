@@ -241,7 +241,7 @@ struct CategoryDetailView: View {
                                     .foregroundStyle(.secondary)
                             }
                             if let action = item.dockerPruneAction {
-                                Text(action.commandLine)
+                                Text(item.dockerCommandLine ?? action.commandLine)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
@@ -405,7 +405,7 @@ private struct CleanupFileRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(item.dockerPruneAction?.commandLine
+                Text(item.dockerCommandLine
                     ?? (item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)

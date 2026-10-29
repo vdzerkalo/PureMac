@@ -197,6 +197,12 @@ struct CleanableItem: Identifiable, Hashable {
         category == .dockerCache ? DockerSupport.action(forPath: path) : nil
     }
 
+    /// The exact docker command behind a Docker Cache row, including the
+    /// volume names a volumes row removes.
+    var dockerCommandLine: String? {
+        category == .dockerCache ? DockerSupport.commandLine(forPath: path) : nil
+    }
+
     /// Rows whose removal cannot be undone by any download or rebuild.
     /// Bulk selection (Select visible, the category checkbox) skips them;
     /// only a click on the row itself selects one.

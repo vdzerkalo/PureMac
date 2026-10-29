@@ -272,9 +272,7 @@
 /* Docker Cache helper */
 "Docker build cache" = "ذاكرة التخزين المؤقت لبناء Docker";
 "Stopped Docker containers" = "حاويات Docker المتوقفة";
-"Unused Docker images (downloaded again when needed)" = "صور Docker غير المستخدمة (يُعاد تنزيلها عند الحاجة)";
 "Unused Docker volumes (may contain data such as databases)" = "وحدات تخزين Docker غير المستخدمة (قد تحتوي على بيانات مثل قواعد البيانات)";
-"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "تستخدم صورة قرص Docker Desktop (Docker.raw) مساحة %@ على القرص. تعود المساحة التي تحررها هذه الإجراءات إلى macOS بعد بضع دقائق من التنظيف.";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "كل ساعة";
@@ -956,7 +954,6 @@
 "merged, no recent activity" = "merged, no recent activity";
 "merged, idle for %lld days" = "merged, idle for %lld days";
 "Nothing goes to the Trash: Docker deletes these objects permanently." = "Nothing goes to the Trash: Docker deletes these objects permanently.";
-"Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower." = "Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower.";
 "Stopped containers and the files inside them are deleted; running containers are kept." = "Stopped containers and the files inside them are deleted; running containers are kept.";
 "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash." = "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash.";
 "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing.";
@@ -988,3 +985,17 @@
 "artifacts %@ · code %@" = "artifacts %@ · code %@";
 "Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Permanent · git worktree prune (forgets the missing folder, deletes no files)";
 "Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Permanent · git worktree remove (merged branch is deleted with git branch -d)";
+
+/* Docker polish */
+"Dangling Docker images (untagged leftovers)" = "Dangling Docker images (untagged leftovers)";
+"Dangling Docker images (untagged leftovers, size not estimated)" = "Dangling Docker images (untagged leftovers, size not estimated)";
+"All unused Docker images (pulled or rebuilt when needed)" = "All unused Docker images (pulled or rebuilt when needed)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself." = "Docker Desktop's disk image (Docker.raw) uses %@ on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself.";
+"Build cache is deleted; the next build recreates it and is slower." = "Build cache is deleted; the next build recreates it and is slower.";
+"All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded." = "All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded.";
+"Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source." = "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source.";
+
+/* Docker review fixes */
+"Unused Docker volumes (may contain data such as databases, size not estimated)" = "Unused Docker volumes (may contain data such as databases, size not estimated)";
+"The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back.";
+"Reviewed inside the category before removal" = "Reviewed inside the category before removal";

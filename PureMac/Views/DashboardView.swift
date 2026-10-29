@@ -531,6 +531,7 @@ struct DashboardView: View {
                     CategoryResultRow(
                         result: result,
                         selectedCount: appState.selectedCountInCategory(result.category),
+                        reviewedInCategory: appState.isReviewedInCategoryOnly(result.category),
                         selection: appState.categoryBinding(for: result.category)
                     ) {
                         onNavigate(.cleaning(result.category))
@@ -614,9 +615,7 @@ struct DashboardView: View {
     }
 
     private func prepareCleanupConfirmation() {
-        pendingCleanItems = appState.allResults
-            .flatMap(\.items)
-            .filter(appState.isItemSelected)
+        pendingCleanItems = appState.overviewSelectedItems
         showConfirmation = !pendingCleanItems.isEmpty
     }
 
@@ -687,6 +686,8 @@ private struct DashboardToolCard: View {
 private struct CategoryResultRow: View {
     let result: CategoryResult
     let selectedCount: Int
+    /// Docker: removed only from its own screen, after the risk review.
+    let reviewedInCategory: Bool
     @Binding var selection: Bool
     let open: () -> Void
 
@@ -695,6 +696,7 @@ private struct CategoryResultRow: View {
             Toggle("", isOn: $selection)
                 .labelsHidden()
                 .toggleStyle(AnimatedCheckboxStyle(tint: Tint.accent))
+                .disabled(reviewedInCategory)
             IconTile(systemName: result.category.icon, tint: result.category.color, size: 30, corner: 8)
             Button(action: open) {
                 HStack {
@@ -702,7 +704,9 @@ private struct CategoryResultRow: View {
                         Text(LocalizedStringKey(result.category.rawValue))
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.primary)
-                        Text("\(selectedCount) of \(result.itemCount) selected")
+                        Text(reviewedInCategory
+                             ? String(localized: "Reviewed inside the category before removal")
+                             : String(localized: "\(selectedCount) of \(result.itemCount) selected"))
                             .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
                     }
