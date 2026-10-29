@@ -873,22 +873,19 @@ actor ScanEngine {
         // tagged images are untouched. The empty path mirrors the purgeable-
         // space convention: this is an action, not a file unlink, so the UI
         // must not offer reveal-in-Finder or attempt removeItem on it.
-        // Works for both Docker Desktop and OrbStack (both ship a docker CLI
-        // at these locations).
-        let dockerBinPaths = ["/usr/local/bin/docker", "/opt/homebrew/bin/docker"]
-        for dockerBin in dockerBinPaths where fileManager.fileExists(atPath: dockerBin) {
-            if Task.isCancelled { break }
-            if let reclaimable = await reclaimableDockerSpace(dockerBin: dockerBin), reclaimable > 0 {
-                items.append(CleanableItem(
-                    name: String(localized: "Docker prune (stopped containers, dangling images, build cache)"),
-                    path: "",
-                    size: reclaimable,
-                    category: .dockerCache,
-                    isSelected: false,
-                    lastModified: nil
-                ))
-            }
-            break
+        // Works for both Docker Desktop and OrbStack (see
+        // DockerSupport.candidateBinaryPaths for where each ships its CLI).
+        if !Task.isCancelled,
+           let dockerBin = DockerSupport.locateBinary(homeDirectory: home),
+           let reclaimable = await reclaimableDockerSpace(dockerBin: dockerBin), reclaimable > 0 {
+            items.append(CleanableItem(
+                name: String(localized: "Docker prune (stopped containers, dangling images, build cache)"),
+                path: "",
+                size: reclaimable,
+                category: .dockerCache,
+                isSelected: false,
+                lastModified: nil
+            ))
         }
 
         let totalSize = items.reduce(0) { $0 + $1.size }
@@ -945,15 +942,16 @@ actor ScanEngine {
         return CategoryResult(category: .languageFiles, items: items, totalSize: totalSize)
     }
 
-    /// Sum the reclaimable bytes reported by `docker system df --format json`.
-    /// Returns nil when Docker isn't running or the command fails — callers
-    /// should treat that as "no reclaimable info available", not as an error.
+    /// Bytes `docker system prune -f` is expected to free, from
+    /// `docker system df`. Returns nil when Docker isn't running or the
+    /// command fails — callers should treat that as "no reclaimable info
+    /// available", not as an error.
     private func reclaimableDockerSpace(dockerBin: String) async -> Int64? {
         let result: BrewProcessOutput
         do {
             result = try await BrewProcessRunner.run(
                 executableURL: URL(fileURLWithPath: dockerBin),
-                arguments: ["system", "df", "--format", "{{.Reclaimable}}"],
+                arguments: DockerSupport.systemDFArguments,
                 timeout: 10
             )
         } catch is CancellationError {
@@ -965,39 +963,9 @@ actor ScanEngine {
         guard result.status == 0,
               let output = String(data: result.stdout, encoding: .utf8)
         else { return nil }
-        // Each line looks like e.g. "1.234GB (45%)" — parse the leading number.
-        var total: Int64 = 0
-        for line in output.split(separator: "\n") {
-            let raw = line.split(separator: " ").first.map(String.init) ?? ""
-            if let bytes = parseHumanBytes(raw) {
-                total += bytes
-            }
-        }
-        return total
+        return DockerSupport.systemPruneEstimate(DockerSupport.parseSystemDF(output))
     }
 
-    /// Parse Docker's compact size format ("1.23GB", "456MB", "789kB") into bytes.
-    private func parseHumanBytes(_ s: String) -> Int64? {
-        let trimmed = s.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        let units: [(String, Double)] = [
-            ("TB", 1_000_000_000_000),
-            ("GB", 1_000_000_000),
-            ("MB", 1_000_000),
-            ("kB", 1_000),
-            ("KB", 1_000),
-            ("B", 1),
-        ]
-        for (suffix, multiplier) in units {
-            if trimmed.hasSuffix(suffix) {
-                let numberPart = String(trimmed.dropLast(suffix.count))
-                if let value = Double(numberPart) {
-                    return Int64(value * multiplier)
-                }
-            }
-        }
-        return nil
-    }
     // MARK: - Helpers
 
     private func scanDirectory(
