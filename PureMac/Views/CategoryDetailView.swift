@@ -155,10 +155,19 @@ struct CategoryDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(visibleItems.allSatisfy(appState.isItemSelected) ? "Deselect visible" : "Select visible") {
-                    appState.setSelection(!visibleItems.allSatisfy(appState.isItemSelected), for: visibleItems)
+                // Rows marked selectOnlyByHand are skipped by "Select visible",
+                // so only the rows it can actually select decide the label.
+                let bulkSelectable = visibleItems.filter { !$0.selectOnlyByHand }
+                let canSelectMore = bulkSelectable.contains { !appState.isItemSelected($0) }
+                let canDeselect = visibleItems.contains(where: appState.isItemSelected)
+                Button(canSelectMore ? "Select visible" : "Deselect visible") {
+                    if canSelectMore {
+                        appState.setSelection(true, for: bulkSelectable)
+                    } else {
+                        appState.setSelection(false, for: visibleItems)
+                    }
                 }
-                .disabled(visibleItems.isEmpty || appState.scanState.isActive)
+                .disabled((!canSelectMore && !canDeselect) || appState.scanState.isActive)
                 .buttonStyle(.borderless)
             }
         }

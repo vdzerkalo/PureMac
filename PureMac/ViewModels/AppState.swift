@@ -671,6 +671,9 @@ final class AppState: ObservableObject {
     func setSelection(_ selected: Bool, for items: [CleanableItem]) {
         guard !scanState.isActive else { return }
         for item in items where isItemSelected(item) != selected {
+            // Rows that opt out of bulk selection are only ever selected by
+            // clicking the row itself; deselecting in bulk still works.
+            if selected && item.selectOnlyByHand { continue }
             toggleItem(item)
         }
     }
@@ -702,7 +705,7 @@ final class AppState: ObservableObject {
 
     func selectAllInCategory(_ category: CleaningCategory) {
         guard let result = categoryResults[category] else { return }
-        for item in result.items {
+        for item in result.items where !item.selectOnlyByHand {
             if item.isSelected {
                 deselectedItems.remove(item.id)
             } else {

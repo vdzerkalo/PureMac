@@ -176,6 +176,9 @@ struct CleanableItem: Identifiable, Hashable {
     /// Optional second line shown under the name instead of the path
     /// (Local AI Models uses it for the model kind and sharing caveats).
     var detail: String? = nil
+    /// Bulk selection (select visible, category checkbox, select all) skips
+    /// this row; only a click on the row itself selects it.
+    var selectOnlyByHand: Bool = false
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
@@ -188,10 +191,26 @@ struct CleanableItem: Identifiable, Hashable {
             || path.hasPrefix(Self.ollamaModelPathPrefix)
     }
 
-    var ollamaModelName: String? {
+    /// Ollama rows are `ollama-model:<name>#<digest>`. `#` cannot occur in a
+    /// valid model name, so the first one separates the digest recorded at
+    /// scan time (checked again right before `ollama rm`).
+    private var ollamaPathPayload: Substring? {
         guard category == .localAIModels, path.hasPrefix(Self.ollamaModelPathPrefix) else { return nil }
-        let name = String(path.dropFirst(Self.ollamaModelPathPrefix.count))
+        return path.dropFirst(Self.ollamaModelPathPrefix.count)
+    }
+
+    var ollamaModelName: String? {
+        guard let payload = ollamaPathPayload else { return nil }
+        let name = String(payload.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
         return name.isEmpty ? nil : name
+    }
+
+    var ollamaModelDigest: String? {
+        guard let payload = ollamaPathPayload,
+              let hash = payload.firstIndex(of: "#")
+        else { return nil }
+        let digest = String(payload[payload.index(after: hash)...])
+        return digest.isEmpty ? nil : digest
     }
 
     var simctlRuntimeIdentifier: String? {

@@ -50,18 +50,40 @@ struct LocalAIModelsContext: Sendable {
                     environment: environment
                 )
             },
-            fetch: { request in
-                let configuration = URLSessionConfiguration.ephemeral
-                // Per-request limits are set on each URLRequest; these are ceilings.
-                configuration.timeoutIntervalForRequest = 120
-                configuration.timeoutIntervalForResource = 130
-                configuration.waitsForConnectivity = false
-                // Loopback only: never let a system proxy see the request.
-                configuration.connectionProxyDictionary = [:]
-                let (data, response) = try await URLSession(configuration: configuration).data(for: request)
-                return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
-            }
+            fetch: liveFetch()
         )
+    }
+
+    /// Loopback HTTP with redirects refused. Whatever listens on the port could
+    /// answer a `DELETE /api/delete` with a 307 to another host, and URLSession
+    /// would resend the method and the model name there. A refused redirect
+    /// comes back as its 3xx status, which callers treat as a failure.
+    /// `configuration` is a parameter so tests can add a stub protocol.
+    static func liveFetch(configuration: URLSessionConfiguration = .ephemeral) -> HTTPFetcher {
+        { request in
+            // Per-request limits are set on each URLRequest; these are ceilings.
+            configuration.timeoutIntervalForRequest = 120
+            configuration.timeoutIntervalForResource = 130
+            configuration.waitsForConnectivity = false
+            // Loopback only: never let a system proxy see the request.
+            configuration.connectionProxyDictionary = [:]
+            let session = URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: nil)
+            defer { session.finishTasksAndInvalidate() }
+            let (data, response) = try await session.data(for: request)
+            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+    }
+}
+
+final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }
 
@@ -128,12 +150,15 @@ struct LocalAIModels: Sendable {
                 .map { model in
                     CleanableItem(
                         name: model.name,
-                        path: CleanableItem.ollamaModelPathPrefix + model.name,
+                        // The digest rides along so removal can confirm it is
+                        // still the same model (see `confirmOllamaDigest`).
+                        path: CleanableItem.ollamaModelPathPrefix + model.name + (model.digest.map { "#" + $0 } ?? ""),
                         size: model.sizeBytes,
                         category: .localAIModels,
                         isSelected: false,
                         lastModified: model.modifiedAt,
-                        detail: detail
+                        detail: detail,
+                        selectOnlyByHand: true
                     )
                 }
             return ScanOutcome(items: items)
@@ -190,7 +215,17 @@ struct LocalAIModels: Sendable {
     func scanHuggingFace() -> ScanOutcome {
         var outcome = ScanOutcome()
         var sharedRepoCount = 0
+        var skippedSupportCount = 0
         var hasHubRepos = false
+        // Links that point into a row make that row unsafe to remove.
+        let links = symlinkIndex()
+        func blockedDetail(_ path: String, default normal: String) -> String {
+            guard let link = Support.linkPointingInto(path, links: links) else { return normal }
+            return String(
+                format: String(localized: "Linked from %@ · cannot be removed"),
+                (link.path as NSString).abbreviatingWithTildeInPath
+            )
+        }
 
         if let root = hubRoot() {
             let names = ((try? fileManager.contentsOfDirectory(atPath: root)) ?? []).sorted()
@@ -216,7 +251,8 @@ struct LocalAIModels: Sendable {
                         category: .localAIModels,
                         isSelected: false,
                         lastModified: inspection.lastUsed,
-                        detail: repoDetail(kind: repo.kind, revisions: inspection.revisionCount)
+                        detail: blockedDetail(path, default: repoDetail(kind: repo.kind, revisions: inspection.revisionCount)),
+                        selectOnlyByHand: true
                     ))
                 } else if recognised {
                     let size = Support.treeBytes(atPath: path, fileManager: fileManager)
@@ -228,7 +264,11 @@ struct LocalAIModels: Sendable {
                         category: .localAIModels,
                         isSelected: false,
                         lastModified: info.modified,
-                        detail: String(localized: "Non-standard folder in the Hugging Face cache · review before removing")
+                        detail: blockedDetail(
+                            path,
+                            default: String(localized: "Non-standard folder in the Hugging Face cache · review before removing")
+                        ),
+                        selectOnlyByHand: true
                     ))
                 }
             }
@@ -240,6 +280,12 @@ struct LocalAIModels: Sendable {
             for name in names where Support.isListableHubEntryName(name) {
                 let path = root + "/" + name
                 guard let info = Support.entryInfo(atPath: path), info.type == .file || info.type == .directory else { continue }
+                // Only recognisable model data is offered; anything else in
+                // these folders is left alone and counted in a note.
+                guard Support.looksLikeModelData(atPath: path, fileManager: fileManager) else {
+                    skippedSupportCount += 1
+                    continue
+                }
                 let size = Support.treeBytes(atPath: path, fileManager: fileManager)
                 guard size > 0 else { continue }
                 outcome.items.append(CleanableItem(
@@ -249,7 +295,11 @@ struct LocalAIModels: Sendable {
                     category: .localAIModels,
                     isSelected: false,
                     lastModified: info.modified,
-                    detail: String(localized: "Model files in Application Support/huggingface · review before removing")
+                    detail: blockedDetail(
+                        path,
+                        default: String(localized: "Model files in Application Support/huggingface · review before removing")
+                    ),
+                    selectOnlyByHand: true
                 ))
             }
         }
@@ -258,6 +308,12 @@ struct LocalAIModels: Sendable {
             outcome.notes.append(String(
                 format: String(localized: "%lld Hugging Face repo(s) keep their files in a shared store outside the repo folder and are not listed. Removing them would not free space."),
                 Int64(sharedRepoCount)
+            ))
+        }
+        if skippedSupportCount > 0 {
+            outcome.notes.append(String(
+                format: String(localized: "%lld item(s) in Application Support/huggingface were not listed because they do not look like model data."),
+                Int64(skippedSupportCount)
             ))
         }
         if hasHubRepos {
@@ -295,6 +351,34 @@ struct LocalAIModels: Sendable {
         return Support.entryInfo(atPath: root + "/CACHEDIR.TAG")?.type == .file
     }
 
+    /// Every symlink in the places a link into a row can live: the hub root,
+    /// its non-standard folders, and the Application Support model folders.
+    /// Repo folders are not walked: their snapshot links are the normal
+    /// layout and any that leave the repo already disqualify that repo.
+    private func symlinkIndex() -> [Support.SymlinkRecord] {
+        var records: [Support.SymlinkRecord] = []
+        if let root = hubRoot() {
+            let names = (try? fileManager.contentsOfDirectory(atPath: root)) ?? []
+            let recognised = isRecognisedHub(root: root, names: names)
+            for name in names {
+                let path = root + "/" + name
+                guard let info = Support.entryInfo(atPath: path) else { continue }
+                if info.type == .symlink {
+                    if let target = Support.canonicalPath(path) {
+                        records.append(Support.SymlinkRecord(path: path, target: target))
+                    }
+                } else if info.type == .directory, recognised, Support.isListableHubEntryName(name),
+                          Support.parseHubRepoFolder(name) == nil {
+                    records += Support.collectSymlinks(under: path, fileManager: fileManager)
+                }
+            }
+        }
+        for root in Support.appSupportModelRoots(homePath: homePath) where isValidAppSupportRoot(root) {
+            records += Support.collectSymlinks(under: root, fileManager: fileManager)
+        }
+        return records
+    }
+
     private func isValidAppSupportRoot(_ root: String) -> Bool {
         Support.entryInfo(atPath: root)?.type == .directory && Support.canonicalPath(root) == root
     }
@@ -306,7 +390,7 @@ struct LocalAIModels: Sendable {
             return RemovalOutcome(error: "Not a Local AI Models item: \(item.name)")
         }
         if let name = item.ollamaModelName {
-            return await removeOllamaModel(name: name, reportedSize: item.size)
+            return await removeOllamaModel(name: name, expectedDigest: item.ollamaModelDigest, reportedSize: item.size)
         }
         return await removeHubEntry(path: item.path, reportedSize: item.size)
     }
@@ -316,12 +400,18 @@ struct LocalAIModels: Sendable {
     /// `ollama rm <name>` and nothing else. Model blobs are shared between
     /// models, so files are never unlinked by hand; the freed amount is the
     /// listed size, an upper bound.
-    func removeOllamaModel(name: String, reportedSize: Int64) async -> RemovalOutcome {
+    func removeOllamaModel(name: String, expectedDigest: String?, reportedSize: Int64) async -> RemovalOutcome {
         guard Support.isValidOllamaModelName(name) else {
             return RemovalOutcome(error: "Refusing to remove Ollama model with an unsafe name: \(name)")
         }
         guard let endpoint = Support.ollamaEndpoint(environment: context.environment), endpoint.isLoopback else {
             return RemovalOutcome(error: "OLLAMA_HOST does not point to this Mac; Ollama models were not removed")
+        }
+        // A tag can be re-pulled after the scan; removal is by name, so make
+        // sure the name still means the model the user reviewed.
+        if let message = await confirmOllamaDigest(name: name, expected: expectedDigest) {
+            Logger.shared.log(message, level: .warning)
+            return RemovalOutcome(error: message)
         }
 
         if let executable = firstExecutable(in: context.ollamaExecutableCandidates) {
@@ -365,6 +455,26 @@ struct LocalAIModels: Sendable {
 
         Logger.shared.log("Removed Ollama model \(name) (listed size \(reportedSize) bytes)", level: .info)
         return RemovalOutcome(freed: reportedSize, cleaned: true)
+    }
+
+    /// Returns a reason to skip, or nil when the server (or `ollama list`)
+    /// still reports the scanned digest for `name`.
+    private func confirmOllamaDigest(name: String, expected: String?) async -> String? {
+        guard let expected, !expected.isEmpty else {
+            return "Skipped \(name): no digest was recorded at scan time, so it cannot be confirmed. Scan again"
+        }
+        switch await listOllamaModels() {
+        case .models(let models):
+            guard let current = models.first(where: { $0.name == name }) else {
+                return "Skipped \(name): Ollama no longer lists it. Scan again"
+            }
+            guard Support.ollamaDigestsMatch(expected, current.digest) else {
+                return "Skipped \(name): the model changed since the scan (different digest). Scan again"
+            }
+            return nil
+        case .unavailable, .remoteHost:
+            return "Skipped \(name): Ollama did not answer, so the model could not be confirmed"
+        }
     }
 
     // MARK: Hugging Face
@@ -437,15 +547,12 @@ struct LocalAIModels: Sendable {
             return RemovalOutcome(error: message)
         }
 
-        if case .repo(let root, let name, let cliTarget) = target {
-            guard let inspection = Support.inspectHubRepo(atPath: path) else {
-                return RemovalOutcome(error: "Couldn't read \(name)")
-            }
-            if inspection.linksOutsideRepo {
-                let message = "Skipped \(name): its files live in a shared store outside the repo folder, so removing the folder would not free space"
-                Logger.shared.log(message, level: .warning)
-                return RemovalOutcome(error: message)
-            }
+        if let message = removalBlock(for: target, path: path) {
+            Logger.shared.log(message, level: .warning)
+            return RemovalOutcome(error: message)
+        }
+
+        if case .repo(let root, _, let cliTarget) = target {
             if let cliTarget, let hf = await verifiedHFExecutable() {
                 if await removeWithHFCLI(executable: hf, target: cliTarget, root: root), Support.entryInfo(atPath: path) == nil {
                     Logger.shared.log("Removed Hugging Face repo \(cliTarget) with hf cache rm", level: .info)
@@ -457,8 +564,14 @@ struct LocalAIModels: Sendable {
 
         // Re-validate immediately before unlinking: the CLI attempt above can
         // take a while and the folder may have been swapped for a link.
-        guard classify(path: path) != nil else {
+        // Full re-check, not just the path: a failed or timed-out CLI may have
+        // left the folder half deleted, linked, or newly linked-to.
+        guard let current = classify(path: path) else {
             let message = "Aborting removal: \(path) changed between validation and delete"
+            Logger.shared.log(message, level: .warning)
+            return RemovalOutcome(error: message)
+        }
+        if let message = removalBlock(for: current, path: path) {
             Logger.shared.log(message, level: .warning)
             return RemovalOutcome(error: message)
         }
@@ -471,6 +584,24 @@ struct LocalAIModels: Sendable {
         }
         Logger.shared.log("Removed \(path) (\(reportedSize) bytes)", level: .info)
         return RemovalOutcome(freed: reportedSize, cleaned: true)
+    }
+
+    /// Why `path` must not be removed right now, or nil. Runs before the CLI
+    /// and again before the fallback delete.
+    private func removalBlock(for target: HubTarget, path: String) -> String? {
+        if case .repo(_, let name, _) = target {
+            guard let inspection = Support.inspectHubRepo(atPath: path) else {
+                return "Couldn't read \(name)"
+            }
+            if inspection.linksOutsideRepo {
+                return "Skipped \(name): its files live in a shared store outside the repo folder, so removing the folder would not free space"
+            }
+        }
+        if let canonical = Support.canonicalPath(path),
+           let link = Support.linkPointingInto(canonical, links: symlinkIndex()) {
+            return "Skipped \(target.name): \(link.path) links into it, so removing it would break that link"
+        }
+        return nil
     }
 
     /// The `hf` CLI is used only when this install documents the flags we

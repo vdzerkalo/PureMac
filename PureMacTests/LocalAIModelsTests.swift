@@ -218,6 +218,7 @@ final class LocalAIModelsTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(model.lastModified).timeIntervalSince1970, refDate.timeIntervalSince1970, accuracy: 1)
         XCTAssertEqual(model.category, .localAIModels)
         XCTAssertFalse(model.isSelected)
+        XCTAssertTrue(outcome.items.allSatisfy(\.selectOnlyByHand))
         XCTAssertEqual(outcome.items.first { $0.name == "org/data" }?.size, 2048)
         XCTAssertEqual(outcome.notes.count, 1, "only the approximate-date note; nothing was skipped")
     }
@@ -328,6 +329,151 @@ final class LocalAIModelsTests: XCTestCase {
         XCTAssertTrue(outcome.items.allSatisfy { !$0.isSelected })
     }
 
+    func testApplicationSupportOffersOnlyRecognisableModelData() async throws {
+        let base = home.appendingPathComponent("Library/Application Support/huggingface", isDirectory: true)
+        let models = base.appendingPathComponent("models", isDirectory: true)
+        let gguf = base.appendingPathComponent("gguf_models", isDirectory: true)
+        for directory in [models, gguf] { try fileManager.createDirectory(at: directory, withIntermediateDirectories: true) }
+        // Recognised.
+        try Data(count: 100).write(to: gguf.appendingPathComponent("a.GGUF"))
+        try Data(count: 100).write(to: gguf.appendingPathComponent("b.safetensors"))
+        try Data(count: 100).write(to: gguf.appendingPathComponent("c.npz"))
+        try Data(count: 100).write(to: gguf.appendingPathComponent("d.bin"))
+        try fileManager.createDirectory(at: models.appendingPathComponent("e.mlpackage/Data"), withIntermediateDirectories: true)
+        try Data(count: 100).write(to: models.appendingPathComponent("e.mlpackage/Data/w"))
+        try fileManager.createDirectory(at: models.appendingPathComponent("with-config/deep"), withIntermediateDirectories: true)
+        try Data(count: 100).write(to: models.appendingPathComponent("with-config/deep/config.json"))
+        try fileManager.createDirectory(at: models.appendingPathComponent("org/repo"), withIntermediateDirectories: true)
+        try Data(count: 100).write(to: models.appendingPathComponent("org/repo/model.safetensors"))
+        // Not model data.
+        try Data(count: 100).write(to: gguf.appendingPathComponent("notes.txt"))
+        try Data(count: 100).write(to: models.appendingPathComponent("settings.json"))
+        try fileManager.createDirectory(at: models.appendingPathComponent("photos"), withIntermediateDirectories: true)
+        try Data(count: 100).write(to: models.appendingPathComponent("photos/a.jpg"))
+
+        let outcome = LocalAIModels(context: makeContext()).scanHuggingFace()
+
+        XCTAssertEqual(Set(outcome.items.map(\.name)), [
+            "gguf_models/a.GGUF", "gguf_models/b.safetensors", "gguf_models/c.npz", "gguf_models/d.bin",
+            "models/e.mlpackage", "models/with-config", "models/org",
+        ])
+        XCTAssertEqual(outcome.notes.count, 1, "the skipped-items note; no hub repos so no date note")
+    }
+
+    // MARK: - Links into rows
+
+    func testRowsThatAreLinkTargetsAreBlockedAtScanAndRemovalAndNameTheLink() async throws {
+        let root = try makeHub()
+        try makeRepo(root, "models--org--name", blobs: [("aaa", 100)])
+        let mlx = root.appendingPathComponent("mlx-community", isDirectory: true)
+        try fileManager.createDirectory(at: mlx, withIntermediateDirectories: true)
+        try Data(count: 50).write(to: mlx.appendingPathComponent("other.bin"))
+        let link = mlx.appendingPathComponent("name")
+        try fileManager.createSymbolicLink(atPath: link.path, withDestinationPath: root.appendingPathComponent("models--org--name/snapshots/rev1").path)
+        let service = LocalAIModels(context: makeContext())
+
+        let scan = service.scanHuggingFace()
+        let repo = try XCTUnwrap(scan.items.first { $0.name == "org/name" })
+        let folder = try XCTUnwrap(scan.items.first { $0.name == "mlx-community" })
+        XCTAssertTrue(try XCTUnwrap(repo.detail).contains("mlx-community/name"), "detail names the linking path: \(repo.detail ?? "")")
+        XCTAssertFalse(try XCTUnwrap(folder.detail).contains("mlx-community/name"), "links inside a row do not block that row")
+
+        let engine = CleaningEngine(homeDirectory: home, localAIModels: service)
+        let blocked = await engine.cleanItems([repo]) { _ in }
+        XCTAssertEqual(blocked.itemsCleaned, 0)
+        XCTAssertTrue(try XCTUnwrap(blocked.errors.first).contains(link.path))
+        XCTAssertTrue(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--name/blobs/aaa").path))
+
+        // The row that holds the link can still go, and then the repo is free to go too.
+        let folderResult = await engine.cleanItems([folder]) { _ in }
+        XCTAssertEqual(folderResult.itemsCleaned, 1)
+        let freed = await engine.cleanItems([repo]) { _ in }
+        XCTAssertEqual(freed.itemsCleaned, 1, "\(freed.errors)")
+    }
+
+    func testALinkCreatedAfterTheScanBlocksRemovalAndLinksAtTheHubRootAndInApplicationSupportCount() async throws {
+        let root = try makeHub()
+        try makeRepo(root, "models--org--name", blobs: [("aaa", 100)])
+        try makeRepo(root, "models--org--other", blobs: [("bbb", 100)])
+        let service = LocalAIModels(context: makeContext())
+        let scan = service.scanHuggingFace()
+        let name = try XCTUnwrap(scan.items.first { $0.name == "org/name" })
+        let other = try XCTUnwrap(scan.items.first { $0.name == "org/other" })
+        XCTAssertFalse(try XCTUnwrap(name.detail).isEmpty)
+
+        // After the scan: a link at the hub root into one repo, and an
+        // Application Support link into the other.
+        try fileManager.createSymbolicLink(atPath: root.appendingPathComponent("alias").path, withDestinationPath: root.appendingPathComponent("models--org--name/snapshots/rev1").path)
+        let support = home.appendingPathComponent("Library/Application Support/huggingface/models", isDirectory: true)
+        try fileManager.createDirectory(at: support, withIntermediateDirectories: true)
+        try fileManager.createSymbolicLink(atPath: support.appendingPathComponent("served").path, withDestinationPath: root.appendingPathComponent("models--org--other").path)
+
+        let result = await CleaningEngine(homeDirectory: home, localAIModels: service).cleanItems([name, other]) { _ in }
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertEqual(result.errors.count, 2)
+        XCTAssertTrue(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--name").path))
+        XCTAssertTrue(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--other").path))
+    }
+
+    func testCollectSymlinksIsBoundedAndDoesNotFollowLinks() throws {
+        let tree = sandbox.appendingPathComponent("walk", isDirectory: true)
+        try fileManager.createDirectory(at: tree.appendingPathComponent("a/b/c"), withIntermediateDirectories: true)
+        let outside = sandbox.appendingPathComponent("walk-outside", isDirectory: true)
+        try fileManager.createDirectory(at: outside, withIntermediateDirectories: true)
+        try fileManager.createSymbolicLink(atPath: outside.appendingPathComponent("hidden-link").path, withDestinationPath: tree.path)
+        try fileManager.createSymbolicLink(atPath: tree.appendingPathComponent("a/dir-link").path, withDestinationPath: outside.path)
+        try fileManager.createSymbolicLink(atPath: tree.appendingPathComponent("a/b/c/deep").path, withDestinationPath: tree.path)
+        try fileManager.createSymbolicLink(atPath: tree.appendingPathComponent("dangling").path, withDestinationPath: "/nonexistent-target")
+
+        let all = Support.collectSymlinks(under: tree.path)
+        XCTAssertEqual(Set(all.map { ($0.path as NSString).lastPathComponent }), ["dir-link", "deep"], "dangling skipped, linked dirs not entered")
+        let shallow = Support.collectSymlinks(under: tree.path, maxDepth: 2)
+        XCTAssertEqual(Set(shallow.map { ($0.path as NSString).lastPathComponent }), ["dir-link"])
+        XCTAssertEqual(Support.collectSymlinks(under: tree.path, maxEntries: 1).count <= 1, true)
+    }
+
+    // MARK: - Bulk selection
+
+    @MainActor
+    func testBulkSelectionPathsNeverSelectLocalAIModelRowsButDeselectAndClickStillWork() throws {
+        let state = AppState(performStartupTasks: false)
+        let rows = ["a", "b", "c"].map { name in
+            CleanableItem(
+                name: name, path: "/tmp/\(name)", size: 10, category: .localAIModels,
+                isSelected: false, lastModified: nil, selectOnlyByHand: true
+            )
+        }
+        let ordinary = CleanableItem(name: "z", path: "/tmp/z", size: 10, category: .localAIModels, isSelected: false, lastModified: nil)
+        state.categoryResults[.localAIModels] = CategoryResult(category: .localAIModels, items: rows + [ordinary], totalSize: 40)
+
+        // Select visible.
+        state.setSelection(true, for: rows + [ordinary])
+        XCTAssertEqual(rows.filter(state.isItemSelected).count, 0)
+        XCTAssertTrue(state.isItemSelected(ordinary), "rows without the flag keep bulk behaviour")
+        state.deselectAllInCategory(.localAIModels)
+
+        // Select all in category.
+        state.selectAllInCategory(.localAIModels)
+        XCTAssertEqual(rows.filter(state.isItemSelected).count, 0)
+
+        // The category checkbox.
+        state.deselectAllInCategory(.localAIModels)
+        state.categoryBinding(for: .localAIModels).wrappedValue = true
+        XCTAssertEqual(rows.filter(state.isItemSelected).count, 0)
+
+        // A click on the row itself selects it, and bulk deselect clears it.
+        state.itemBinding(for: rows[0]).wrappedValue = true
+        XCTAssertTrue(state.isItemSelected(rows[0]))
+        state.toggleItem(rows[1])
+        XCTAssertTrue(state.isItemSelected(rows[1]))
+        state.setSelection(false, for: rows)
+        XCTAssertEqual(rows.filter(state.isItemSelected).count, 0)
+        state.toggleItem(rows[2])
+        state.deselectAllInCategory(.localAIModels)
+        XCTAssertFalse(state.isItemSelected(rows[2]))
+    }
+
     // MARK: - Hugging Face removal
 
     func testRemovingARepoWithoutTheHFCLIDeletesOnlyThatFolder() async throws {
@@ -396,6 +542,23 @@ final class LocalAIModelsTests: XCTestCase {
             XCTAssertEqual(result.itemsCleaned, 1, mode)
             XCTAssertTrue(result.errors.isEmpty, "\(mode): \(result.errors)")
             XCTAssertFalse(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--drop").path), mode)
+            try fileManager.removeItem(at: root.deletingLastPathComponent())
+        }
+    }
+
+    func testFallbackAfterAFailedHFCLIRunsTheFullInspectionAgain() async throws {
+        for mode in ["tamper", "linkin"] {
+            let root = try makeHub()
+            try makeRepo(root, "models--org--drop", blobs: [("bbb", 200)])
+            let hf = try writeFakeHF()
+            let service = LocalAIModels(context: makeContext(env: ["FAKE_HF_MODE": mode], hf: [hf]))
+            let drop = try XCTUnwrap(service.scanHuggingFace().items.first)
+
+            let result = await CleaningEngine(homeDirectory: home, localAIModels: service).cleanItems([drop]) { _ in }
+
+            XCTAssertEqual(result.itemsCleaned, 0, mode)
+            XCTAssertEqual(result.errors.count, 1, mode)
+            XCTAssertTrue(fileManager.fileExists(atPath: root.appendingPathComponent("models--org--drop/blobs/bbb").path), mode)
             try fileManager.removeItem(at: root.deletingLastPathComponent())
         }
     }
@@ -569,7 +732,7 @@ final class LocalAIModelsTests: XCTestCase {
         XCTAssertEqual(outcome.items.map(\.name), ["qwen3.5:35b-a3b", "qwen3.5:9b"], "largest first; unsafe names dropped")
         XCTAssertEqual(outcome.items.map(\.size), [23_000_000_000, 6_600_000_000])
         XCTAssertEqual(outcome.items.map(\.path), ["ollama-model:qwen3.5:35b-a3b", "ollama-model:qwen3.5:9b"])
-        XCTAssertTrue(outcome.items.allSatisfy { !$0.isSelected && $0.category == .localAIModels && $0.lastModified != nil })
+        XCTAssertTrue(outcome.items.allSatisfy { !$0.isSelected && $0.selectOnlyByHand && $0.category == .localAIModels && $0.lastModified != nil })
         XCTAssertTrue(outcome.notes.isEmpty)
         XCTAssertEqual(requested.value.map { $0.url?.absoluteString }, ["http://127.0.0.1:11434/api/tags"])
         XCTAssertEqual(requested.value.first?.httpMethod, "GET")
@@ -646,7 +809,7 @@ final class LocalAIModelsTests: XCTestCase {
 
     func testOllamaRemovalRunsOllamaRmWithTheModelNameAndNothingElse() async throws {
         let ollama = try writeFakeOllama()
-        let service = LocalAIModels(context: makeContext(ollama: [ollama]))
+        let service = LocalAIModels(context: makeContext(ollama: [ollama], fetch: tagsFetch([("qwen3.5:9b", digest9b)])))
         let item = ollamaItem("qwen3.5:9b", size: 6_600_000_000)
 
         let result = await CleaningEngine(homeDirectory: home, localAIModels: service).cleanItems([item]) { _ in }
@@ -663,12 +826,12 @@ final class LocalAIModelsTests: XCTestCase {
         let ollama = try writeFakeOllama()
         let service = LocalAIModels(context: makeContext(ollama: [ollama]))
         for name in ["-rf", "--all", "a b", "x;y", "", "$(id)"] {
-            let outcome = await service.removeOllamaModel(name: name, reportedSize: 1)
+            let outcome = await service.removeOllamaModel(name: name, expectedDigest: digest9b, reportedSize: 1)
             XCTAssertFalse(outcome.cleaned, name)
             XCTAssertNotNil(outcome.error, name)
         }
         let remote = LocalAIModels(context: makeContext(env: ["OLLAMA_HOST": "ollama.example.com"], ollama: [ollama]))
-        let outcome = await remote.removeOllamaModel(name: "qwen3.5:9b", reportedSize: 1)
+        let outcome = await remote.removeOllamaModel(name: "qwen3.5:9b", expectedDigest: digest9b, reportedSize: 1)
         XCTAssertFalse(outcome.cleaned)
         XCTAssertNotNil(outcome.error)
         XCTAssertTrue(invocations().isEmpty)
@@ -676,22 +839,22 @@ final class LocalAIModelsTests: XCTestCase {
 
     func testOllamaRemovalReportsFailuresAndTimeouts() async throws {
         let failing = try writeScript("ollama-fail", #"echo "$*" >> "$FAKE_LOG"; echo "Error: model not found" >&2; exit 1"#)
-        let outcome = await LocalAIModels(context: makeContext(ollama: [failing]))
-            .removeOllamaModel(name: "gone:latest", reportedSize: 5)
+        let outcome = await LocalAIModels(context: makeContext(ollama: [failing], fetch: tagsFetch([("gone:latest", digest9b)])))
+            .removeOllamaModel(name: "gone:latest", expectedDigest: digest9b, reportedSize: 5)
         XCTAssertFalse(outcome.cleaned)
         XCTAssertEqual(outcome.freed, 0)
         XCTAssertTrue(try XCTUnwrap(outcome.error).contains("model not found"))
 
         let down = try writeScript("ollama-down", #"echo "Error: could not connect to ollama server" >&2; exit 1"#)
-        let downOutcome = await LocalAIModels(context: makeContext(ollama: [down]))
-            .removeOllamaModel(name: "x:latest", reportedSize: 5)
+        let downOutcome = await LocalAIModels(context: makeContext(ollama: [down], fetch: tagsFetch([("x:latest", digest9b)])))
+            .removeOllamaModel(name: "x:latest", expectedDigest: digest9b, reportedSize: 5)
         XCTAssertFalse(downOutcome.cleaned)
         XCTAssertNotNil(downOutcome.error)
 
         let hang = try writeScript("ollama-hang-rm", #"exec sleep 30"#)
         let started = Date()
-        let hung = await LocalAIModels(context: makeContext(ollama: [hang], removeTimeout: 0.5))
-            .removeOllamaModel(name: "x:latest", reportedSize: 5)
+        let hung = await LocalAIModels(context: makeContext(ollama: [hang], removeTimeout: 0.5, fetch: tagsFetch([("x:latest", digest9b)])))
+            .removeOllamaModel(name: "x:latest", expectedDigest: digest9b, reportedSize: 5)
         XCTAssertFalse(hung.cleaned)
         XCTAssertNotNil(hung.error)
         XCTAssertLessThan(Date().timeIntervalSince(started), 15)
@@ -699,27 +862,127 @@ final class LocalAIModelsTests: XCTestCase {
 
     func testOllamaRemovalFallsBackToTheDeleteAPIWhenThereIsNoCLI() async throws {
         let seen = LockedBox<[URLRequest]>([])
-        let context = makeContext { request in
-            seen.mutate { $0.append(request) }
-            return (Data(), 200)
-        }
+        let context = makeContext(fetch: tagsFetch([("qwen3.5:9b", digest9b)]) { request in seen.mutate { $0.append(request) } })
 
-        let outcome = await LocalAIModels(context: context).removeOllamaModel(name: "qwen3.5:9b", reportedSize: 42)
+        let outcome = await LocalAIModels(context: context)
+            .removeOllamaModel(name: "qwen3.5:9b", expectedDigest: digest9b, reportedSize: 42)
 
         XCTAssertTrue(outcome.cleaned)
         XCTAssertEqual(outcome.freed, 42)
-        let request = try XCTUnwrap(seen.value.first)
-        XCTAssertEqual(seen.value.count, 1)
-        XCTAssertEqual(request.httpMethod, "DELETE")
+        let deletes = seen.value.filter { $0.httpMethod == "DELETE" }
+        let request = try XCTUnwrap(deletes.first)
+        XCTAssertEqual(deletes.count, 1)
         XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:11434/api/delete")
         let body = try XCTUnwrap(request.httpBody)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
         XCTAssertEqual(json["model"], "qwen3.5:9b")
 
-        let refused = LocalAIModels(context: makeContext { _ in (Data(), 404) })
-        let notFound = await refused.removeOllamaModel(name: "qwen3.5:9b", reportedSize: 42)
+        let refused = LocalAIModels(context: makeContext(fetch: tagsFetch([("qwen3.5:9b", digest9b)], deleteStatus: 404)))
+        let notFound = await refused.removeOllamaModel(name: "qwen3.5:9b", expectedDigest: digest9b, reportedSize: 42)
         XCTAssertFalse(notFound.cleaned)
         XCTAssertNotNil(notFound.error)
+    }
+
+    func testOllamaRemovalSkipsAModelWhoseDigestChangedSinceTheScan() async throws {
+        let ollama = try writeFakeOllama()
+        let repulled = String(repeating: "f", count: 64)
+        let seen = LockedBox<[URLRequest]>([])
+        let context = makeContext(ollama: [ollama], fetch: tagsFetch([("qwen3.5:9b", repulled)]) { request in seen.mutate { $0.append(request) } })
+
+        let outcome = await LocalAIModels(context: context)
+            .removeOllamaModel(name: "qwen3.5:9b", expectedDigest: digest9b, reportedSize: 1)
+
+        XCTAssertFalse(outcome.cleaned)
+        XCTAssertNotNil(outcome.error)
+        XCTAssertTrue(invocations().isEmpty, "ollama rm must not run")
+        XCTAssertTrue(seen.value.filter { $0.httpMethod == "DELETE" }.isEmpty)
+    }
+
+    func testOllamaRemovalSkipsWhenTheDigestIsMissingTheModelIsGoneOrTheServerIsSilent() async throws {
+        let ollama = try writeScript("ollama-never-rm", #"echo "$*" >> "$FAKE_LOG"; exit 1"#)
+        // No digest recorded at scan time.
+        let noDigest = await LocalAIModels(context: makeContext(ollama: [ollama], fetch: tagsFetch([("a:latest", digest9b)])))
+            .removeOllamaModel(name: "a:latest", expectedDigest: nil, reportedSize: 1)
+        XCTAssertFalse(noDigest.cleaned)
+        // The tag is no longer listed.
+        let gone = await LocalAIModels(context: makeContext(ollama: [ollama], fetch: tagsFetch([("other:latest", digest9b)])))
+            .removeOllamaModel(name: "a:latest", expectedDigest: digest9b, reportedSize: 1)
+        XCTAssertFalse(gone.cleaned)
+        // Neither API nor `ollama list` can confirm.
+        let silent = await LocalAIModels(context: makeContext(ollama: [ollama]))
+            .removeOllamaModel(name: "a:latest", expectedDigest: digest9b, reportedSize: 1)
+        XCTAssertFalse(silent.cleaned)
+        XCTAssertFalse(invocations().contains { $0.hasPrefix("rm") }, "ollama rm never ran: \(invocations())")
+    }
+
+    func testOllamaRemovalConfirmsThroughTheListIDColumnWhenOnlyTheCLIAnswers() async throws {
+        let ollama = try writeFakeOllama()
+        let service = LocalAIModels(context: makeContext(ollama: [ollama]))
+
+        // The CLI lists 6488c96fa5fa for qwen3.5:9b; the scan recorded the full digest.
+        let ok = await service.removeOllamaModel(name: "qwen3.5:9b", expectedDigest: digest9b, reportedSize: 7)
+        XCTAssertTrue(ok.cleaned)
+        XCTAssertEqual(invocations(), ["list", "rm qwen3.5:9b"])
+
+        let changed = await service.removeOllamaModel(name: "qwen3.5:9b", expectedDigest: String(repeating: "a", count: 64), reportedSize: 7)
+        XCTAssertFalse(changed.cleaned)
+        XCTAssertEqual(invocations(), ["list", "rm qwen3.5:9b", "list"])
+    }
+
+    func testOllamaDigestMatching() {
+        XCTAssertTrue(Support.ollamaDigestsMatch(digest9b, "6488c96fa5fa"))
+        XCTAssertTrue(Support.ollamaDigestsMatch("6488C96FA5FA", digest9b))
+        XCTAssertFalse(Support.ollamaDigestsMatch(digest9b, "6488c96fa5fb"))
+        XCTAssertFalse(Support.ollamaDigestsMatch("6488", "6488"), "too short to identify a model")
+        XCTAssertFalse(Support.ollamaDigestsMatch(nil, digest9b))
+        XCTAssertEqual(Support.normalizedOllamaDigest("sha256:ABCDEF012345"), "abcdef012345")
+        XCTAssertNil(Support.normalizedOllamaDigest("-"))
+        XCTAssertNil(Support.normalizedOllamaDigest("xyz"))
+    }
+
+    func testOllamaScanRecordsTheDigestInTheRowPathAndKeepsRowsOutOfBulkSelection() async throws {
+        let context = makeContext(fetch: tagsFetch([("qwen3.5:9b", digest9b)]))
+
+        let outcome = await LocalAIModels(context: context).scanOllama()
+
+        let item = try XCTUnwrap(outcome.items.first)
+        XCTAssertEqual(item.path, "ollama-model:qwen3.5:9b#\(digest9b)")
+        XCTAssertEqual(item.ollamaModelName, "qwen3.5:9b")
+        XCTAssertEqual(item.ollamaModelDigest, digest9b)
+        XCTAssertTrue(item.selectOnlyByHand)
+    }
+
+    // MARK: - Redirects
+
+    func testLiveFetchDoesNotFollowRedirects() async throws {
+        RedirectingProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RedirectingProtocol.self]
+        let fetch = LocalAIModelsContext.liveFetch(configuration: configuration)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:11434/api/delete")!)
+        request.httpMethod = "DELETE"
+        request.httpBody = Data(#"{"model":"x"}"#.utf8)
+
+        let status: Int?
+        do { status = try await fetch(request).status } catch { status = nil }
+
+        XCTAssertNotEqual(status, 200)
+        XCTAssertEqual(RedirectingProtocol.loadedURLs, ["http://127.0.0.1:11434/api/delete"], "the redirect target was never requested")
+    }
+
+    func testRedirectDelegateRefusesEveryRedirect() throws {
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.dataTask(with: URL(string: "http://127.0.0.1:1/")!)
+        let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: "http://127.0.0.1:1/")!, statusCode: 307, httpVersion: nil, headerFields: ["Location": "http://example.com/"]))
+        var answered = false
+        var followed: URLRequest?
+        RefuseRedirects().urlSession(session, task: task, willPerformHTTPRedirection: response, newRequest: URLRequest(url: URL(string: "http://example.com/")!)) {
+            answered = true
+            followed = $0
+        }
+        XCTAssertTrue(answered)
+        XCTAssertNil(followed)
+        session.invalidateAndCancel()
     }
 
     // MARK: - ScanEngine wiring
@@ -804,11 +1067,29 @@ final class LocalAIModelsTests: XCTestCase {
         CleanableItem(name: "forged", path: path, size: 1, category: .localAIModels, isSelected: true, lastModified: nil)
     }
 
-    private func ollamaItem(_ name: String, size: Int64) -> CleanableItem {
+    private let digest9b = "6488c96fa5fa" + String(repeating: "0", count: 52)
+
+    private func ollamaItem(_ name: String, size: Int64, digest: String? = nil) -> CleanableItem {
         CleanableItem(
-            name: name, path: CleanableItem.ollamaModelPathPrefix + name,
+            name: name, path: CleanableItem.ollamaModelPathPrefix + name + "#" + (digest ?? digest9b),
             size: size, category: .localAIModels, isSelected: true, lastModified: nil
         )
+    }
+
+    /// Stub server: GET answers `/api/tags` with these (name, digest) pairs,
+    /// any other method gets `deleteStatus`. `onRequest` sees every request.
+    private func tagsFetch(
+        _ models: [(String, String)],
+        deleteStatus: Int = 200,
+        onRequest: (@Sendable (URLRequest) -> Void)? = nil
+    ) -> LocalAIModelsContext.HTTPFetcher {
+        let entries = models.map { #"{"name":"\#($0.0)","size":1000,"digest":"\#($0.1)"}"# }.joined(separator: ",")
+        let body = Data(#"{"models":[\#(entries)]}"#.utf8)
+        return { request in
+            onRequest?(request)
+            if request.httpMethod == "DELETE" { return (Data(), deleteStatus) }
+            return (body, 200)
+        }
     }
 
     @discardableResult
@@ -836,7 +1117,8 @@ final class LocalAIModelsTests: XCTestCase {
 
     /// Mimics `hf cache rm <type>/<org>/<name> --cache-dir <dir> --yes` for
     /// cache dirs inside the test sandbox only. FAKE_HF_MODE: old (help has no
-    /// flags), noop (reports success, removes nothing), fail (exit 1).
+    /// flags), noop (reports success, removes nothing), fail (exit 1), tamper
+    /// and linkin (fail after changing the cache; see the script).
     private func writeFakeHF() throws -> String {
         try writeScript("hf", """
         echo "$*" >> "$FAKE_LOG"
@@ -848,6 +1130,10 @@ final class LocalAIModelsTests: XCTestCase {
           case "$FAKE_HF_MODE" in noop) exit 0 ;; fail) exit 1 ;; esac
           case "$5" in "$FAKE_SANDBOX"/*) ;; *) exit 3 ;; esac
           folder=$(echo "$3" | sed -e 's#^model/#models--#' -e 's#^dataset/#datasets--#' -e 's#^space/#spaces--#' -e 's#/#--#g')
+          # tamper: fail after pointing a link inside the repo at a folder outside it.
+          # linkin: fail after creating a link elsewhere in the cache that points into the repo.
+          if [ "$FAKE_HF_MODE" = tamper ]; then ln -s "$FAKE_SANDBOX" "$5/$folder/blobs/escape"; exit 1; fi
+          if [ "$FAKE_HF_MODE" = linkin ]; then ln -s "$5/$folder" "$5/late-link"; exit 1; fi
           rm -rf "$5/$folder"
           exit 0
         fi
@@ -879,4 +1165,46 @@ private final class LockedBox<Value>: @unchecked Sendable {
         defer { lock.unlock() }
         change(&stored)
     }
+}
+
+/// Answers every request with a 307 to a second URL and records each URL that
+/// is actually loaded, so a followed redirect shows up as a second entry.
+private final class RedirectingProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var urls: [String] = []
+
+    static var loadedURLs: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return urls
+    }
+
+    static func reset() {
+        lock.lock()
+        urls = []
+        lock.unlock()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.lock.lock()
+        Self.urls.append(request.url?.absoluteString ?? "")
+        Self.lock.unlock()
+        guard let url = request.url else { return }
+        if url.host == "127.0.0.1", url.port == 11434 {
+            let target = URL(string: "http://127.0.0.2:9/stolen")!
+            let response = HTTPURLResponse(url: url, statusCode: 307, httpVersion: nil, headerFields: ["Location": target.absoluteString])!
+            client?.urlProtocol(self, wasRedirectedTo: URLRequest(url: target), redirectResponse: response)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
+        } else {
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
 }

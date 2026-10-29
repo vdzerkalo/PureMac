@@ -12,6 +12,15 @@ enum LocalAIModelsSupport {
         let name: String
         let sizeBytes: Int64
         let modifiedAt: Date?
+        /// Full sha256 from the API, or the 12-character ID column of the CLI.
+        let digest: String?
+
+        init(name: String, sizeBytes: Int64, modifiedAt: Date?, digest: String? = nil) {
+            self.name = name
+            self.sizeBytes = sizeBytes
+            self.modifiedAt = modifiedAt
+            self.digest = digest
+        }
     }
 
     struct OllamaEndpoint: Equatable {
@@ -113,7 +122,8 @@ enum LocalAIModelsSupport {
             return OllamaModel(
                 name: name,
                 sizeBytes: size,
-                modifiedAt: (entry["modified_at"] as? String).flatMap(parseISODate)
+                modifiedAt: (entry["modified_at"] as? String).flatMap(parseISODate),
+                digest: normalizedOllamaDigest(entry["digest"] as? String)
             )
         }
     }
@@ -131,8 +141,28 @@ enum LocalAIModelsSupport {
             guard columns.count >= 3, columns[0] != "NAME",
                   let size = parseOllamaSize(columns[2]), size > 0
             else { return nil }
-            return OllamaModel(name: columns[0], sizeBytes: size, modifiedAt: nil)
+            return OllamaModel(name: columns[0], sizeBytes: size, modifiedAt: nil, digest: normalizedOllamaDigest(columns[1]))
         }
+    }
+
+    /// Lowercase hex without a `sha256:` prefix, at least 12 characters, or nil.
+    static func normalizedOllamaDigest(_ raw: String?) -> String? {
+        guard var value = raw?.trimmingCharacters(in: .whitespaces).lowercased() else { return nil }
+        if value.hasPrefix("sha256:") { value = String(value.dropFirst("sha256:".count)) }
+        guard value.count >= 12, value.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdef").contains($0) }) else {
+            return nil
+        }
+        return value
+    }
+
+    /// Digests from the API are 64 hex characters, from `ollama list` 12.
+    /// They match when one is a prefix of the other and at least 12 long.
+    /// Anything shorter or empty never matches.
+    static func ollamaDigestsMatch(_ lhs: String?, _ rhs: String?) -> Bool {
+        guard let lhs = lhs?.lowercased(), let rhs = rhs?.lowercased(), lhs.count >= 12, rhs.count >= 12 else {
+            return false
+        }
+        return lhs.hasPrefix(rhs) || rhs.hasPrefix(lhs)
     }
 
     static func parseOllamaSize(_ text: String) -> Int64? {
@@ -400,5 +430,95 @@ enum LocalAIModelsSupport {
         }
         result.lastUsed = newest == .distantPast ? repoInfo.modified : newest
         return result
+    }
+
+    // MARK: - Links into rows and model-data recognition
+
+    struct SymlinkRecord: Equatable {
+        /// Where the link lives.
+        let path: String
+        /// Fully resolved target (`realpath`). Dangling links are not recorded.
+        let target: String
+    }
+
+    static let walkMaxDepth = 8
+    static let walkMaxEntries = 50_000
+
+    /// Every symlink found under `root`, by a bounded walk that uses `lstat`
+    /// and never descends into a link. Used to find links that point INTO a
+    /// row: removing the target would break whatever the link serves.
+    static func collectSymlinks(
+        under root: String,
+        fileManager: FileManager = .default,
+        maxDepth: Int = walkMaxDepth,
+        maxEntries: Int = walkMaxEntries
+    ) -> [SymlinkRecord] {
+        guard entryInfo(atPath: root)?.type == .directory else { return [] }
+        var records: [SymlinkRecord] = []
+        var visited = 0
+        var pending = [(path: root, depth: 0)]
+        while let (directory, depth) = pending.popLast() {
+            guard let names = try? fileManager.contentsOfDirectory(atPath: directory) else { continue }
+            for name in names {
+                visited += 1
+                if visited > maxEntries { return records }
+                let full = directory + "/" + name
+                guard let info = entryInfo(atPath: full) else { continue }
+                switch info.type {
+                case .symlink:
+                    if let target = canonicalPath(full) { records.append(SymlinkRecord(path: full, target: target)) }
+                case .directory where depth + 1 < maxDepth:
+                    pending.append((full, depth + 1))
+                default:
+                    break
+                }
+            }
+        }
+        return records
+    }
+
+    /// The first link (outside the row itself) whose target is the row or
+    /// something inside it, or nil. `rowPath` must already be canonical.
+    static func linkPointingInto(_ rowPath: String, links: [SymlinkRecord]) -> SymlinkRecord? {
+        links.first { link in
+            !link.path.hasPrefix(rowPath + "/")
+                && (link.target == rowPath || link.target.hasPrefix(rowPath + "/"))
+        }
+    }
+
+    static let modelDataExtensions: Set<String> = ["gguf", "safetensors", "bin", "npz", "mlpackage"]
+
+    /// An Application Support entry is offered only when it is recognisable
+    /// model data: a model file, an `.mlpackage`, or a folder whose bounded
+    /// walk finds model files or a `config.json`.
+    static func looksLikeModelData(
+        atPath path: String,
+        fileManager: FileManager = .default,
+        maxDepth: Int = walkMaxDepth,
+        maxEntries: Int = walkMaxEntries
+    ) -> Bool {
+        func isModelName(_ name: String) -> Bool {
+            modelDataExtensions.contains((name as NSString).pathExtension.lowercased())
+        }
+        guard let info = entryInfo(atPath: path) else { return false }
+        let name = (path as NSString).lastPathComponent
+        if info.type == .file { return isModelName(name) }
+        guard info.type == .directory else { return false }
+        if isModelName(name) { return true }
+        var visited = 0
+        var pending = [(path: path, depth: 0)]
+        while let (directory, depth) = pending.popLast() {
+            guard let names = try? fileManager.contentsOfDirectory(atPath: directory) else { continue }
+            for child in names {
+                visited += 1
+                if visited > maxEntries { return false }
+                let full = directory + "/" + child
+                guard let childInfo = entryInfo(atPath: full) else { continue }
+                if child.lowercased() == "config.json", childInfo.type == .file { return true }
+                if isModelName(child), childInfo.type == .file || childInfo.type == .directory { return true }
+                if childInfo.type == .directory, depth + 1 < maxDepth { pending.append((full, depth + 1)) }
+            }
+        }
+        return false
     }
 }

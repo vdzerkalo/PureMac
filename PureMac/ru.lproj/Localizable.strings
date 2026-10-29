@@ -945,3 +945,7 @@
 "Ollama models are removed with ollama rm. Files shared between models stay on disk, so less space may be freed than listed. Hugging Face repos and folders are deleted and downloaded again the next time something needs them." = "Модели Ollama удаляются командой ollama rm. Файлы, общие для нескольких моделей, остаются на диске, поэтому может освободиться меньше места, чем показано. Репозитории и папки Hugging Face удаляются и скачиваются заново, когда понадобятся.";
 "Permanent · Remove with ollama rm" = "Безвозвратно · Удалить через ollama rm";
 "Permanent · Delete model files" = "Безвозвратно · Удалить файлы моделей";
+
+/* Local AI Models: links and unrecognised files */
+"Linked from %@ · cannot be removed" = "Есть ссылка из %@ · удалить нельзя";
+"%lld item(s) in Application Support/huggingface were not listed because they do not look like model data." = "Элементов в Application Support/huggingface: %lld. Они не показаны, так как не похожи на данные моделей.";
