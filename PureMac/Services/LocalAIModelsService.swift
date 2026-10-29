@@ -608,6 +608,12 @@ struct LocalAIModels: Sendable {
     /// Why `path` must not be removed right now, or nil. Runs before the CLI
     /// and again before the fallback delete.
     private func removalBlock(for target: HubTarget, path: String) -> String? {
+        // Same rule as the generic route (issue #142): a cache placed in iCloud
+        // Drive or a file provider (HF_HOME, HF_HUB_CACHE) is not deleted,
+        // through the hf CLI or otherwise.
+        if ProviderPaths.isProviderOwned(path, homeDirectory: context.homeDirectory) {
+            return "Skipped \(target.name): it is in iCloud Drive or another cloud-synced folder"
+        }
         if case .repo(_, let name, _) = target {
             guard let inspection = Support.inspectHubRepo(atPath: path) else {
                 return "Couldn't read \(name)"
