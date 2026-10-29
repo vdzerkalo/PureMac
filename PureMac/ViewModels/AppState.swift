@@ -1177,10 +1177,11 @@ final class AppState: ObservableObject {
         // root-owned bundles that Full Disk Access cannot make writable, so
         // they must not steer the user into a Grant Access loop that can
         // never succeed. Only junk-file survivors count toward that hint.
-        // AI agent data is moved to the Trash from the user's own folders; it
-        // fails because the owning app runs or the path changed, not for FDA.
+        // Categories reviewed on their own screen (Docker, worktrees, models,
+        // AI agent data) fail because a check refused the row, not for FDA,
+        // and the FDA retry skips them anyway.
         let fdaFixableSurvivors = survivors.filter {
-            !CleaningCategory.appModifying.contains($0.category) && $0.category != .aiAgentData
+            !CleaningCategory.appModifying.contains($0.category) && !isReviewedInCategoryOnly($0.category)
         }
         let likelyFDA = !fdaGranted && !fdaFixableSurvivors.isEmpty
         cleanErrorIsFDAFixable = likelyFDA
