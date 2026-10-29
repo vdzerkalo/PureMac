@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		013EF7B96BF046D4DB38FBC5 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 241E0895B09C71AB423B2F9E /* Localizable.strings */; };
+		095455B297A6032FA72E55A0 /* Localizable.stringsdict in Resources */ = {isa = PBXBuildFile; fileRef = CA4BF871ED56BA293ADD6C05 /* Localizable.stringsdict */; };
 		0BB6BC2EAFB02407FBC6CDA6 /* ApplicationUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59873E44B520DE069F80CCD6 /* ApplicationUpdater.swift */; };
 		0C8FEDE0B91C02A386617DC9 /* DockerSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADF93920B0C4329490BD8F41 /* DockerSupport.swift */; };
 		0CC9A41781D1B1883279693E /* ProtectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F270D47D1DD94D4577482B90 /* ProtectionView.swift */; };
@@ -140,6 +141,7 @@
 		1B8BE07AD70610A91E735E78 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/ServicesMenu.strings"; sourceTree = "<group>"; };
 		1C0D9A6F75D0B8ADDB32FC2A /* uk */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = uk; path = uk.lproj/Localizable.strings; sourceTree = "<group>"; };
 		1D3AC5F17D7CA94FAB1E8D7A /* StringNormalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StringNormalization.swift; sourceTree = "<group>"; };
+		1D53A58BC87A898F935BB3D5 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = en; path = en.lproj/Localizable.stringsdict; sourceTree = "<group>"; };
 		1FC5F44AB9CA4CD2DE774973 /* XcodeBuildMCPDerivedDataSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XcodeBuildMCPDerivedDataSupport.swift; sourceTree = "<group>"; };
 		22B679C0120F1E3DDCB27FE2 /* CleaningEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleaningEngineTests.swift; sourceTree = "<group>"; };
 		231FF7CBB5F621B66F2AB8A5 /* FDADemoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FDADemoView.swift; sourceTree = "<group>"; };
@@ -470,6 +472,7 @@
 				7C1729F88C0E5563E1A3DB40 /* Extensions */,
 				B55B1419D88851567DFB783A /* InfoPlist.strings */,
 				241E0895B09C71AB423B2F9E /* Localizable.strings */,
+				CA4BF871ED56BA293ADD6C05 /* Localizable.stringsdict */,
 				F283C00EB52AB140F61500A3 /* Logic */,
 				3CF46713F75B81F0F86D1C6F /* Models */,
 				6184B2EC3D01E6E95633406E /* Services */,
@@ -601,6 +604,7 @@
 				DDD6BA35DBF32E7A6B5F6F8B /* Assets.xcassets in Resources */,
 				BB10A9AFDA394F918E068351 /* InfoPlist.strings in Resources */,
 				013EF7B96BF046D4DB38FBC5 /* Localizable.strings in Resources */,
+				095455B297A6032FA72E55A0 /* Localizable.stringsdict in Resources */,
 				39BEE5E2BEC526CCADFC9DDD /* ServicesMenu.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -777,6 +781,14 @@
 				AD97E55BA95BE2AEA858A80B /* zh-Hans */,
 			);
 			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+		CA4BF871ED56BA293ADD6C05 /* Localizable.stringsdict */ = {
+			isa = PBXVariantGroup;
+			children = (
+				1D53A58BC87A898F935BB3D5 /* en */,
+			);
+			name = Localizable.stringsdict;
 			sourceTree = "<group>";
 		};
 /* End PBXVariantGroup section */
