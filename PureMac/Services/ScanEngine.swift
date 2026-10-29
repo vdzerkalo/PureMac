@@ -70,6 +70,8 @@ actor ScanEngine {
             return scanUserCache()
         case .aiApps:
             return scanAIApps()
+        case .aiAgentData:
+            return scanAIAgentData()
         case .mailAttachments:
             return scanMailAttachments()
         case .trashBins:
@@ -288,6 +290,40 @@ actor ScanEngine {
         })
         let totalSize = items.reduce(0) { $0 + $1.size }
         return CategoryResult(category: .aiApps, items: items.sorted { $0.size > $1.size }, totalSize: totalSize)
+    }
+
+    /// Review-only. Every row is an exact allowlisted path (see
+    /// AIAgentDataSupport.rules), unselected, and removed by Move to Trash
+    /// while the owning app is not running. Sizes under 1 MB are skipped.
+    private func scanAIAgentData() -> CategoryResult {
+        let homeURL = URL(fileURLWithPath: home, isDirectory: true)
+        let items: [CleanableItem] = AIAgentDataSupport.discover(
+            homeDirectory: homeURL,
+            fileManager: fileManager
+        ).compactMap { candidate in
+            let path = candidate.url.path
+            report(path)
+            let size: Int64
+            if candidate.rule.isDirectory {
+                size = directorySize(path: path)
+            } else {
+                // Allocated size: a large single file can be sparse.
+                let values = try? candidate.url.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
+                size = Int64(values?.totalFileAllocatedSize ?? values?.fileSize ?? 0)
+            }
+            guard size > 1024 * 1024 else { return nil }
+            return CleanableItem(
+                name: candidate.name,
+                path: path,
+                size: size,
+                category: .aiAgentData,
+                isSelected: false,
+                lastModified: candidate.lastModified,
+                detail: candidate.rule.detail()
+            )
+        }
+        let totalSize = items.reduce(0) { $0 + $1.size }
+        return CategoryResult(category: .aiAgentData, items: items.sorted { $0.size > $1.size }, totalSize: totalSize)
     }
 
     private func scanMailAttachments() -> CategoryResult {

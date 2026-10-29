@@ -1068,3 +1068,19 @@
 "Linked from %@ · cannot be removed" = "Є посилання з %@ · видалити не можна";
 "%lld item(s) in Application Support/huggingface were not listed because they do not look like model data." = "Елементів у Application Support/huggingface: %lld. Їх не показано, бо вони не схожі на дані моделей.";
 "Files linked from outside the cache are not detected." = "Файли, на які посилаються з-поза кешу, не виявляються.";
+/* AI Agent Data */
+"AI Agent Data" = "Дані ШІ-агентів";
+"Large, regenerable data of AI agent apps. Review each item before removal." = "Великі дані програм ШІ-агентів, які можна відтворити. Перегляньте кожен елемент перед видаленням.";
+"Claude iOS Simulator build output" = "Результат збірки iOS Simulator від Claude";
+"Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build." = "Результат збірки Xcode для інструмента iOS Simulator від Claude. Створюється знову під час наступної збірки.";
+"Claude Desktop web cache" = "Веб-кеш Claude Desktop";
+"Chromium HTTP cache of Claude Desktop. Rebuilt automatically." = "HTTP-кеш Chromium у Claude Desktop. Відновлюється автоматично.";
+"Claude Desktop code cache" = "Кеш коду Claude Desktop";
+"Chromium compiled-script cache of Claude Desktop. Rebuilt automatically." = "Кеш скомпільованих скриптів Chromium у Claude Desktop. Відновлюється автоматично.";
+"Codex plugin backup %@" = "Резервна копія плагінів Codex %@";
+"Old copy of Codex's plugin folder left by a plugin sync. The current plugins are kept elsewhere." = "Стара копія теки плагінів Codex, залишена синхронізацією плагінів. Поточні плагіни зберігаються в іншому місці.";
+"Antigravity backup: browser recordings" = "Резервна копія Antigravity: записи браузера";
+"Frames of agent browser sessions inside the one-time backup. The live recordings stay in ~/.gemini/antigravity. Backup settings are not touched." = "Кадри сеансів браузера агента в одноразовій резервній копії. Актуальні записи лишаються в ~/.gemini/antigravity. Налаштування в копії не зачіпаються.";
+"Cursor extension download cache" = "Кеш завантажених розширень Cursor";
+"Downloaded extension packages (.vsix). Downloaded again when needed." = "Завантажені пакети розширень (.vsix). Завантажуються знову за потреби.";
+"%@ is running. Quit it to remove this." = "%@ запущено. Закрийте програму, щоб видалити це.";

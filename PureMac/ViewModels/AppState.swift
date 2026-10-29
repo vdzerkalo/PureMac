@@ -74,6 +74,9 @@ final class AppState: ObservableObject {
     @Published var categoryResults: [CleaningCategory: CategoryResult] = [:]
     @Published var diskInfo = DiskInfo()
     @Published var totalJunkSize: Int64 = 0
+    /// AI agent apps that were running at the last check. Their review-only
+    /// rows cannot be selected.
+    @Published private(set) var runningAIAgentOwners: Set<AIAgentDataSupport.Owner> = []
     @Published var totalFreedSpace: Int64 = 0
     @Published var scanProgress: Double = 0
     @Published var scanWasCancelled = false
@@ -147,8 +150,11 @@ final class AppState: ObservableObject {
 
     // MARK: - Computed
 
+    /// Items found by the categories Smart Scan covers (set (a)); worktrees,
+    /// models and AI agent data are listed on their own screens.
     var totalItemCount: Int {
-        categoryResults.values.reduce(0) { $0 + $1.itemCount }
+        categoryResults.filter { CleaningCategory.smartScannable.contains($0.key) }
+            .values.reduce(0) { $0 + $1.itemCount }
     }
 
     var currentCategoryResult: CategoryResult? {
@@ -700,15 +706,42 @@ final class AppState: ObservableObject {
 
     // MARK: - Selection
 
-    /// The bulk-selection rule for one row (see
-    /// `CleanableItem.isExcludedFromBulkSelection`). Every bulk path calls it:
-    /// `selectAllInCategory`, `categoryBinding`, `setSelection(true, …)` and
-    /// "Select visible".
+    /// The bulk-selection rule for one row: `CleanableItem.isExcludedFromBulkSelection`
+    /// (hand-select-only, explicit-selection, blocked rows) plus the live
+    /// condition only AppState knows, an AI agent row whose owning app is
+    /// running. Every bulk path calls it: `selectAllInCategory`,
+    /// `categoryBinding`, `setSelection(true, …)` and "Select visible".
     func isExcludedFromBulkSelection(_ item: CleanableItem) -> Bool {
-        item.isExcludedFromBulkSelection
+        item.isExcludedFromBulkSelection || isBlockedByRunningApp(item)
+    }
+
+    /// True for a review-only AI agent row whose owning app is running.
+    func isBlockedByRunningApp(_ item: CleanableItem) -> Bool {
+        guard item.category == .aiAgentData,
+              let owner = AIAgentDataSupport.rule(forPath: item.path)?.owner else { return false }
+        return runningAIAgentOwners.contains(owner)
+    }
+
+    /// Replaces the running set and drops selections that it now blocks, so a
+    /// row selected before its app started is not selected again after it quits.
+    func setRunningAIAgentOwners(_ owners: Set<AIAgentDataSupport.Owner>) {
+        runningAIAgentOwners = owners
+        guard let result = categoryResults[.aiAgentData] else { return }
+        for item in result.items where isBlockedByRunningApp(item) {
+            selectedCleanupItems.remove(item.id)
+        }
+    }
+
+    func refreshRunningAIAgentOwners() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        Task.detached(priority: .utility) {
+            let running = AIAgentDataSupport.liveRunningOwners(homeDirectory: home)
+            await MainActor.run { [weak self] in self?.setRunningAIAgentOwners(running) }
+        }
     }
 
     func isItemSelected(_ item: CleanableItem) -> Bool {
+        if isBlockedByRunningApp(item) { return false }
         if item.isSelected {
             return !deselectedItems.contains(item.id)
         }
@@ -716,6 +749,9 @@ final class AppState: ObservableObject {
     }
 
     func toggleItem(_ item: CleanableItem) {
+        // Per-row rules: a blocked row (protected worktree, running app) is
+        // never newly selected; clicking a hand-select-only row is allowed.
+        if isBlockedByRunningApp(item) { return }
         if item.isSelectionBlocked, !isItemSelected(item) { return }
         if isItemSelected(item) {
             if item.isSelected {
@@ -1141,7 +1177,11 @@ final class AppState: ObservableObject {
         // root-owned bundles that Full Disk Access cannot make writable, so
         // they must not steer the user into a Grant Access loop that can
         // never succeed. Only junk-file survivors count toward that hint.
-        let fdaFixableSurvivors = survivors.filter { !CleaningCategory.appModifying.contains($0.category) }
+        // AI agent data is moved to the Trash from the user's own folders; it
+        // fails because the owning app runs or the path changed, not for FDA.
+        let fdaFixableSurvivors = survivors.filter {
+            !CleaningCategory.appModifying.contains($0.category) && $0.category != .aiAgentData
+        }
         let likelyFDA = !fdaGranted && !fdaFixableSurvivors.isEmpty
         cleanErrorIsFDAFixable = likelyFDA
         pendingPermissionRetryItems = survivors
@@ -1151,6 +1191,9 @@ final class AppState: ObservableObject {
                 format: String(localized: "%lld item(s) need Full Disk Access to remove. Tap Grant Access to fix in one step."),
                 Int64(fdaFixableSurvivors.count)
             )
+        } else if !survivors.isEmpty, survivors.allSatisfy({ $0.category == .aiAgentData }),
+                  let first = errors.first {
+            cleanError = first
         } else if !survivors.isEmpty {
             let preview = survivors.prefix(2).map { ($0.path as NSString).lastPathComponent }.joined(separator: ", ")
             let extra = survivors.count > 2 ? String(format: String(localized: " and %lld more"), Int64(survivors.count - 2)) : ""

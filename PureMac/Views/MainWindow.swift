@@ -21,6 +21,7 @@ struct MainWindow: View {
 
     private static let advancedCategories: [CleaningCategory] = [
         .aiApps,
+        .aiAgentData,
         .xcodeJunk,
         .brewCache,
         .nodeCache,

@@ -7,6 +7,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case systemJunk = "System Junk"
     case userCache = "User Cache"
     case aiApps = "AI Apps"
+    case aiAgentData = "AI Agent Data"
     case mailAttachments = "Mail Files"
     case trashBins = "Trash Bins"
     case largeFiles = "Large & Old Files"
@@ -29,6 +30,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .systemJunk: return "gearshape.fill"
         case .userCache: return "internaldrive.fill"
         case .aiApps: return "cpu.fill"
+        case .aiAgentData: return "brain.head.profile"
         case .mailAttachments: return "envelope.fill"
         case .trashBins: return "trash.fill"
         case .largeFiles: return "doc.fill"
@@ -51,6 +53,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .systemJunk: return "System caches, logs, and temporary files"
         case .userCache: return "Application caches and browser data"
         case .aiApps: return "Local AI app logs, caches, and optional history"
+        case .aiAgentData: return "Large, regenerable data of AI agent apps. Review each item before removal."
         case .mailAttachments: return "Downloaded mail attachments"
         case .trashBins: return "Files in your Trash"
         case .largeFiles: return "Files over 100 MB or older than 1 year"
@@ -73,6 +76,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .systemJunk: return .purple
         case .userCache: return .blue
         case .aiApps: return .teal
+        case .aiAgentData: return .purple
         case .mailAttachments: return .orange
         case .trashBins: return .red
         case .largeFiles: return .yellow
@@ -114,11 +118,12 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
 
     // (a) Smart Scan, scheduled scans, scheduled cleaning and the headline
     // "junk found" total cover every `scannable` category except these. They
-    // act on the user's own work (`git worktree remove`) or are user data
-    // (model downloads), so they are scanned and cleaned only from their own
-    // category screen.
+    // act on the user's own work (`git worktree remove`), are user data (model
+    // downloads) or are review-only (AI agent app data: every row starts
+    // unselected and is removed per category), so they are scanned and
+    // cleaned only from their own category screen.
     static var smartScanExcluded: Set<CleaningCategory> {
-        [.gitWorktrees, .localAIModels]
+        [.gitWorktrees, .localAIModels, .aiAgentData]
     }
 
     static var smartScannable: [CleaningCategory] {
@@ -132,7 +137,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     // of `smartScanExcluded`. Docker is scanned by Smart Scan (a) but its
     // prune and volume rows run only from its own screen.
     static var overviewExcluded: Set<CleaningCategory> {
-        [.dockerCache, .gitWorktrees, .localAIModels]
+        [.dockerCache, .gitWorktrees, .localAIModels, .aiAgentData]
     }
 
     // (c) Categories whose removal needs the per-risk acknowledgement sheet:

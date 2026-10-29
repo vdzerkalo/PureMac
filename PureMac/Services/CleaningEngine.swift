@@ -6,6 +6,21 @@ actor CleaningEngine {
     /// XcodeBuildMCPDerivedDataSupport path checks on symlinked homes.
     private let homeDirectory: URL
     private let binaryThinner = BinaryThinner()
+    /// Reports whether an AI agent app is running. Injected by tests; the
+    /// default inspects the real process list.
+    private let isAIAgentOwnerRunning: AIAgentDataSupport.OwnerRunningCheck
+    /// Moves a URL to the Trash and returns where it went. Used by every Move
+    /// to Trash route (XcodeBuildMCP DerivedData, AI agent data). Injected by
+    /// tests so they never touch the real Trash.
+    typealias TrashOperation = (URL) throws -> URL?
+    private let trashOperation: TrashOperation
+
+    static let systemTrash: TrashOperation = { url in
+        var resulting: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
+        return resulting as URL?
+    }
+
     /// Read at clean time so the re-check before a worktree removal uses the
     /// settings in force now, not those of the scan.
     private let worktreeSettings: @Sendable () -> GitWorktreeSettings
@@ -23,7 +38,9 @@ actor CleaningEngine {
         dockerBinaryPath: String? = nil,
         worktreeSettings: @escaping @Sendable () -> GitWorktreeSettings = { GitWorktreeSettings.current() },
         devToolEnvironment: DevToolCacheEnvironment = .live,
-        localAIModels: LocalAIModels? = nil
+        localAIModels: LocalAIModels? = nil,
+        isAIAgentOwnerRunning: AIAgentDataSupport.OwnerRunningCheck? = nil,
+        trashOperation: @escaping TrashOperation = CleaningEngine.systemTrash
     ) {
         let canonicalHome = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
         self.homeDirectory = canonicalHome
@@ -31,6 +48,9 @@ actor CleaningEngine {
         self.worktreeSettings = worktreeSettings
         self.devTools = devToolEnvironment
         self.localAIModels = localAIModels ?? LocalAIModels(context: .live(homeDirectory: canonicalHome))
+        self.isAIAgentOwnerRunning = isAIAgentOwnerRunning
+            ?? AIAgentDataSupport.liveOwnerRunningCheck(homeDirectory: homeDirectory)
+        self.trashOperation = trashOperation
     }
 
     struct CleaningResult {
@@ -99,6 +119,22 @@ actor CleaningEngine {
                 if let error = outcome.error {
                     result.errors.append(error)
                 }
+                continue
+            }
+
+            if item.category == .aiAgentData {
+                // Dedicated route: exact allowlisted paths only, Move to Trash
+                // only, never while the owning app runs. The generic allowlist
+                // (which contains all of Application Support) is not consulted.
+                let outcome = trashAIAgentDataItem(item)
+                if outcome.alreadyGone { result.cleanedPaths.insert(item.path) }
+                if outcome.cleaned {
+                    result.freedSpace += item.size
+                    result.itemsCleaned += 1
+                    result.cleanedPaths.insert(item.path)
+                    if let trashed = outcome.trashedPath { result.trashedPaths.insert(trashed) }
+                }
+                if let error = outcome.error { result.errors.append(error) }
                 continue
             }
 
@@ -300,9 +336,7 @@ actor CleaningEngine {
                     }
                     // PureMac's safety contract is Trash-only for recoverable
                     // cleanup. XcodeBuildMCP DerivedData must not be unlinked.
-                    var resulting: NSURL?
-                    try fileManager.trashItem(at: resolvedURL, resultingItemURL: &resulting)
-                    if let trashedPath = resulting?.path {
+                    if let trashedPath = try trashOperation(resolvedURL)?.path {
                         result.trashedPaths.insert(trashedPath)
                     }
                 } else {
@@ -384,7 +418,7 @@ actor CleaningEngine {
                 result.errors.append("Administrator cleanup is unavailable for local AI models: \(item.name)")
                 return nil
             }
-            guard item.category != .aiApps else {
+            guard item.category != .aiApps, item.category != .aiAgentData else {
                 result.errors.append("Administrator cleanup is unavailable for AI app data: \(item.name)")
                 return nil
             }
@@ -514,6 +548,53 @@ actor CleaningEngine {
         }
         Logger.shared.log("Admin pass complete: \(result.itemsCleaned) deleted, \(result.errors.count) survived, \(result.skippedProtected) protected", level: .info)
         return result
+    }
+
+    // MARK: - AI agent data
+
+    /// Moves one review-only AI agent data item to the Trash. Validates right
+    /// before the move (shape, symlinks, real path, rule requirements, owning
+    /// app not running), using the process list as it is now, not as it was at
+    /// scan time. The remaining window between that check and the move is a
+    /// same-user race; see docs/AI-AGENT-DATA.md.
+    private func trashAIAgentDataItem(
+        _ item: CleanableItem
+    ) -> (cleaned: Bool, alreadyGone: Bool, trashedPath: String?, error: String?) {
+        func refuse(
+            _ refusal: AIAgentDataSupport.Refusal
+        ) -> (cleaned: Bool, alreadyGone: Bool, trashedPath: String?, error: String?) {
+            // Gone since the scan: nothing to remove, nothing to report.
+            if refusal == .missing { return (false, true, nil, nil) }
+            let msg: String
+            if case .ownerRunning(let owner) = refusal {
+                msg = "Skipped AI agent data: \(owner.displayName) is running: \(item.path)"
+            } else {
+                msg = "Skipped AI agent data: \(refusal): \(item.path)"
+            }
+            Logger.shared.log(msg, level: .warning)
+            return (false, false, nil, msg)
+        }
+
+        let validation = AIAgentDataSupport.validateForRemoval(
+            path: item.path,
+            homeDirectory: homeDirectory,
+            isOwnerRunning: isAIAgentOwnerRunning,
+            fileManager: fileManager
+        )
+        let validated: AIAgentDataSupport.Validated
+        switch validation {
+        case .failure(let refusal): return refuse(refusal)
+        case .success(let value): validated = value
+        }
+
+        do {
+            let resulting = try trashOperation(validated.url)
+            return (true, false, resulting?.path, nil)
+        } catch {
+            let detail = "\(item.name) at \(item.path): \(error.localizedDescription)"
+            Logger.shared.log("Clean failed: \(detail)", level: .error)
+            return (false, false, nil, detail)
+        }
     }
 
     // MARK: - Docker

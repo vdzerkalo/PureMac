@@ -15,10 +15,24 @@ struct CategoryDetailView: View {
     @State private var acknowledgedRisks: Set<Int> = []
     @State private var confirmingRemoval = false
     @State private var copiedPrompt = false
+    private let ownerRefresh = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     private var result: CategoryResult? { appState.categoryResults[category] }
     private var visibleItems: [CleanableItem] { filter.apply(to: result?.items ?? []) }
-    private var selectedItems: [CleanableItem] { (result?.items ?? []).filter(appState.isItemSelected) }
+    private var selectedItems: [CleanableItem] {
+        (result?.items ?? []).filter(appState.isItemSelected)
+    }
+
+    /// The running app that blocks this item, for review-only AI agent rows.
+    private func blockedOwner(for item: CleanableItem) -> AIAgentDataSupport.Owner? {
+        guard appState.isBlockedByRunningApp(item) else { return nil }
+        return AIAgentDataSupport.rule(forPath: item.path)?.owner
+    }
+
+    private func refreshRunningOwners() {
+        guard category == .aiAgentData else { return }
+        appState.refreshRunningAIAgentOwners()
+    }
     private var selectedSize: Int64 { selectedItems.reduce(0) { $0 + $1.size } }
     /// Protected and orphan worktrees and explicit-only rows (Docker volumes)
     /// stay visible but never take part in "Select visible".
@@ -51,7 +65,7 @@ struct CategoryDetailView: View {
                     EmptyStateView("No matching files", systemImage: "line.3.horizontal.decrease.circle", description: "Try another name, size, or date range.", action: { filter = CleanupReviewFilter() }, actionLabel: "Clear filters", tint: Tint.teal)
                 } else {
                     List(visibleItems) { item in
-                        CleanupFileRow(item: item)
+                        CleanupFileRow(item: item, blockedBy: blockedOwner(for: item))
                             .listRowSeparator(.visible)
                     }
                     .listStyle(.inset)
@@ -73,7 +87,10 @@ struct CategoryDetailView: View {
         .onChange(of: category) { _ in
             filter = CleanupReviewFilter()
             pendingReview = nil
+            refreshRunningOwners()
         }
+        .onAppear { refreshRunningOwners() }
+        .onReceive(ownerRefresh) { _ in refreshRunningOwners() }
     }
 
     private func notesBanner(_ notes: [String]) -> some View {
@@ -411,6 +428,9 @@ struct CategoryDetailView: View {
     }
 
     private func removalMethod(_ item: CleanableItem) -> String {
+        if item.category == .aiAgentData {
+            return String(localized: "Move to Trash")
+        }
         if item.worktreeArtifacts != nil {
             return String(localized: "Permanent · delete only the git-ignored build folders; the worktree and its tracked files stay")
         }
@@ -445,6 +465,8 @@ struct CategoryDetailView: View {
 private struct CleanupFileRow: View {
     @EnvironmentObject var appState: AppState
     let item: CleanableItem
+    /// Set for a review-only AI agent row whose owning app is running.
+    var blockedBy: AIAgentDataSupport.Owner?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -452,7 +474,7 @@ private struct CleanupFileRow: View {
                 .labelsHidden()
                 .toggleStyle(.checkbox)
                 .tint(Tint.teal)
-                .disabled(item.isSelectionBlocked)
+                .disabled(item.isSelectionBlocked || blockedBy != nil)
                 .accessibilityLabel("Select \(item.name)")
             Image(systemName: item.worktreeArtifacts != nil ? "shippingbox" : item.gitWorktree != nil ? "arrow.triangle.branch" : item.isActionItem ? "gearshape.2" : "doc")
                 .font(.system(size: 18))
@@ -497,6 +519,14 @@ private struct CleanupFileRow: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .lineLimit(1)
+                }
+                if let blockedBy {
+                    Label(
+                        String(format: String(localized: "%@ is running. Quit it to remove this."), blockedBy.displayName),
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.orange)
                 }
             }
             Spacer(minLength: 12)
