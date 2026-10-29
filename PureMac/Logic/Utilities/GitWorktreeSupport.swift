@@ -91,6 +91,10 @@ enum GitWorktreeSupport {
         var trackedChanges = 0
         var untracked: [String] = []
         var ignored: [String] = []
+        /// Ignored entries the scanner looked at and found harmless: symlinks
+        /// (removing the worktree removes the link, never its target) and
+        /// folders that hold nothing but harmless entries.
+        var harmlessIgnored: Set<String> = []
 
         /// Ignored files git would delete along with the worktree that look
         /// like secrets or local config nobody can regenerate.
@@ -105,10 +109,27 @@ enum GitWorktreeSupport {
         /// Ignored entries that are not inside a build-artifact folder
         /// (`artifactDirectoryNames`). `git worktree remove` deletes them
         /// without asking, and nothing says they can be regenerated: a
-        /// config/master.key, a secrets/ folder, a vendored clone.
+        /// config/master.key, a secrets/ folder, a vendored clone. macOS
+        /// litter (`isHarmlessIgnoredName`) and harmless entries do not count.
         var ignoredOutsideBuildFolders: [String] {
-            ignored.filter { !GitWorktreeSupport.isInsideArtifactFolder($0) }
+            ignored.filter { entry in
+                !GitWorktreeSupport.isInsideArtifactFolder(entry)
+                    && !harmlessIgnored.contains(entry)
+                    && !(entry.hasSuffix("/") ? false : GitWorktreeSupport.isHarmlessIgnoredName(GitWorktreeSupport.lastComponent(of: entry)))
+            }
         }
+    }
+
+    /// File names macOS creates everywhere and global gitignores hide:
+    /// `.DS_Store`, AppleDouble `._*` files, `Icon\r` and `.localized`.
+    /// Nothing in them is work; they never make a worktree need review.
+    static func isHarmlessIgnoredName(_ name: String) -> Bool {
+        name == ".DS_Store" || name == "Icon\r" || name == ".localized" || (name.hasPrefix("._") && name.count > 2)
+    }
+
+    static func lastComponent(of entry: String) -> String {
+        let trimmed = entry.hasSuffix("/") ? String(entry.dropLast()) : entry
+        return trimmed.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? trimmed
     }
 
     /// True when a `git status --ignored=matching` entry is a build-artifact
