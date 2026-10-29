@@ -309,7 +309,11 @@
 "pnpm content-addressable store" = "pnpm Content-Addressable Store";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Docker prune (gestoppte Container, verwaiste Images, Build-Cache)";
+"Docker build cache" = "Docker-Build-Cache";
+"Stopped Docker containers" = "Gestoppte Docker-Container";
+"Unused Docker images (downloaded again when needed)" = "Ungenutzte Docker-Images (werden bei Bedarf erneut geladen)";
+"Unused Docker volumes (may contain data such as databases)" = "Ungenutzte Docker-Volumes (können Daten wie Datenbanken enthalten)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "Das Festplatten-Image von Docker Desktop (Docker.raw) belegt %@ auf dem Datenträger. Durch diese Aktionen freigegebener Speicher steht macOS einige Minuten nach der Bereinigung wieder zur Verfügung.";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "Stündlich";
@@ -960,6 +964,7 @@
 "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash." = "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash.";
 "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing.";
 "Close any agent, editor or terminal still using these folders: they lose their working directory." = "Close any agent, editor or terminal still using these folders: they lose their working directory.";
+"Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back.";
 "Confirm each risk before removing" = "Confirm each risk before removing";
 "Remove %lld items permanently?" = "Remove %lld items permanently?";
 "Remove permanently" = "Remove permanently";

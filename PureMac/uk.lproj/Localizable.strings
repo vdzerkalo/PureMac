@@ -311,7 +311,11 @@
 "pnpm content-addressable store" = "Сховище pnpm з адресацією за вмістом";
 
 /* Docker Cache helper */
-"Docker prune (stopped containers, dangling images, build cache)" = "Очищення Docker (зупинені контейнери, неприв’язані образи та кеш збірок)";
+"Docker build cache" = "Кеш збірок Docker";
+"Stopped Docker containers" = "Зупинені контейнери Docker";
+"Unused Docker images (downloaded again when needed)" = "Невикористані образи Docker (завантажуються знову за потреби)";
+"Unused Docker volumes (may contain data such as databases)" = "Невикористані томи Docker (можуть містити дані, наприклад бази даних)";
+"Docker Desktop's disk image (Docker.raw) uses %@ on disk. Space freed by these actions returns to macOS a few minutes after cleaning." = "Образ диска Docker Desktop (Docker.raw) займає на диску %@. Місце, звільнене цими діями, повертається macOS за кілька хвилин після очищення.";
 
 /* Schedule intervals (ScheduleInterval.rawValue) */
 "Every Hour" = "Щогодини";
@@ -957,6 +961,7 @@
 "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash." = "Кожну папку видаляє git worktree remove: усе всередині, зокрема ігноровані node_modules і .env, видаляється, а не йде в Кошик.";
 "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Гілки лишаються. Коміти в безпеці, лише якщо вони злиті, запушені або є в іншій гілці; PureMac перевіряє це ще раз перед видаленням.";
 "Close any agent, editor or terminal still using these folders: they lose their working directory." = "Закрийте агентів, редактори й термінали, що ще працюють у цих папках: вони втратять робочу теку.";
+"Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Невикористані volumes стираються разом з даними (бази, завантаження); жоден pull чи build їх не поверне.";
 "Confirm each risk before removing" = "Підтвердьте кожен ризик перед видаленням";
 "Remove %lld items permanently?" = "Видалити назавжди елементів: %lld?";
 "Remove permanently" = "Видалити назавжди";

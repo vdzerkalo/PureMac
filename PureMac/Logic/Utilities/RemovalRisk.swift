@@ -10,15 +10,19 @@ enum RemovalRisk {
         category == .dockerCache || category == .gitWorktrees
     }
 
-    /// The three risks the user confirms one by one.
-    static func risks(for category: CleaningCategory) -> [String] {
+    /// The risks the user confirms one by one for the items under review.
+    static func risks(for category: CleaningCategory, items: [CleanableItem]) -> [String] {
         switch category {
         case .dockerCache:
-            return [
+            var risks = [
                 String(localized: "Nothing goes to the Trash: Docker deletes these objects permanently."),
                 String(localized: "Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower."),
                 String(localized: "Stopped containers and the files inside them are deleted; running containers are kept."),
             ]
+            if items.contains(where: { $0.dockerPruneAction == .unusedVolumes }) {
+                risks.append(String(localized: "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back."))
+            }
+            return risks
         case .gitWorktrees:
             return [
                 String(localized: "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash."),
@@ -42,9 +46,7 @@ enum RemovalRisk {
                 : abbreviate(item.path)
             return "worktree remove \(name):\(relative)"
         }
-        if item.category == .dockerCache && item.path.isEmpty {
-            return "docker system prune -f"
-        }
+        if let prune = item.dockerPruneAction { return prune.commandLine }
         if item.isActionItem { return item.name }
         return "delete \(abbreviate(item.path))"
     }
@@ -94,7 +96,7 @@ enum RemovalRisk {
         ]
         for (index, item) in found.enumerated() {
             let mark = proposed.contains(item.id) ? "✔" : "·"
-            let verdict = item.gitWorktree?.verdict.englishSummary ?? (item.isSelected ? "selected by default" : "opt-in")
+            let verdict = item.gitWorktree?.verdict.englishSummary ?? note(for: item)
             let cells = [
                 "\(index + 1)", mark, item.gitWorktree?.branch ?? item.name,
                 ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file),
@@ -106,11 +108,24 @@ enum RemovalRisk {
             "",
             "Proposed: \(proposedItems.count) of \(found.count) items, \(ByteCountFormatter.string(fromByteCount: proposedBytes, countStyle: .file)).",
             "Do:",
-            "1. Check each ✔ row read-only (git status/log/stash, docker ps/inspect). Note real risks only.",
+            "1. Check each ✔ row read-only (\(readOnlyChecks(for: category))). Note real risks only.",
             "2. Reply with one table: # | keep/remove | risk (≤6 words). No other text.",
             "3. Then ask the owner at most 3 yes/no questions, only where unsure.",
         ]
         return lines.joined(separator: "\n")
+    }
+
+    private static func note(for item: CleanableItem) -> String {
+        if item.requiresExplicitSelection { return "opt-in only; erases data" }
+        return item.isSelected ? "selected by default" : "opt-in"
+    }
+
+    private static func readOnlyChecks(for category: CleaningCategory) -> String {
+        switch category {
+        case .dockerCache: return "docker ps -a, docker volume ls, docker system df -v"
+        case .gitWorktrees: return "git status, git log, git stash list"
+        default: return "list and inspect only"
+        }
     }
 }
 

@@ -170,7 +170,9 @@ struct CleanableItem: Identifiable, Hashable {
     /// True for action-only items (Docker prune, simctl runtimes) that have
     /// no real filesystem path to reveal in Finder.
     var isActionItem: Bool {
-        path.isEmpty || path.hasPrefix(Self.simctlRuntimePathPrefix)
+        path.isEmpty
+            || path.hasPrefix(Self.simctlRuntimePathPrefix)
+            || path.hasPrefix(DockerSupport.actionPathPrefix)
     }
 
     /// Set on Git Worktrees rows: what git reported at scan time, including
@@ -189,6 +191,18 @@ struct CleanableItem: Identifiable, Hashable {
         return id.isEmpty ? nil : id
     }
 
+    /// The docker prune behind a virtual Docker Cache row, if this is one.
+    var dockerPruneAction: DockerSupport.PruneAction? {
+        category == .dockerCache ? DockerSupport.action(forPath: path) : nil
+    }
+
+    /// Rows whose removal cannot be undone by any download or rebuild.
+    /// Bulk selection (Select visible, the category checkbox) skips them;
+    /// only a click on the row itself selects one.
+    var requiresExplicitSelection: Bool {
+        dockerPruneAction?.requiresExplicitSelection ?? false
+    }
+
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
@@ -205,12 +219,28 @@ struct CategoryResult: Identifiable {
     let category: CleaningCategory
     var items: [CleanableItem]
     var totalSize: Int64
+    /// Context shown under the category header, e.g. how much Docker
+    /// Desktop's disk image really occupies. Not a cleanable item.
+    var note: String? = nil
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
     }
 
     var itemCount: Int { items.count }
+
+    /// The result left after a clean removed `cleanedPaths`, keeping the
+    /// note; nil when nothing remains.
+    func removingItems(at cleanedPaths: Set<String>) -> CategoryResult? {
+        let remaining = items.filter { !cleanedPaths.contains($0.path) }
+        guard !remaining.isEmpty else { return nil }
+        return CategoryResult(
+            category: category,
+            items: remaining,
+            totalSize: remaining.reduce(0) { $0 + $1.size },
+            note: note
+        )
+    }
 }
 
 // MARK: - Schedule Settings

@@ -452,12 +452,10 @@ final class GitWorktreeScannerTests: XCTestCase {
     }
 }
 
-final class RemovalRiskTests: XCTestCase {
-    func testOnlyDockerAndWorktreesNeedThreeAcknowledgements() {
-        XCTAssertEqual(RemovalRisk.risks(for: .gitWorktrees).count, 3)
-        XCTAssertEqual(RemovalRisk.risks(for: .dockerCache).count, 3)
-        XCTAssertTrue(RemovalRisk.risks(for: .userCache).isEmpty)
-        XCTAssertFalse(RemovalRisk.requiresAcknowledgement(.userCache))
+final class WorktreeRemovalRiskTests: XCTestCase {
+    func testWorktreesNeedThreeAcknowledgements() {
+        XCTAssertTrue(RemovalRisk.requiresAcknowledgement(.gitWorktrees))
+        XCTAssertEqual(RemovalRisk.risks(for: .gitWorktrees, items: []).count, 3)
     }
 
     func testAgentPromptListsEveryFoundItemAndMarksProposedOnes() {

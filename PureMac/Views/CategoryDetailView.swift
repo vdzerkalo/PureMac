@@ -20,10 +20,11 @@ struct CategoryDetailView: View {
     private var visibleItems: [CleanableItem] { filter.apply(to: result?.items ?? []) }
     private var selectedItems: [CleanableItem] { (result?.items ?? []).filter(appState.isItemSelected) }
     private var selectedSize: Int64 { selectedItems.reduce(0) { $0 + $1.size } }
-    /// Protected and orphan worktrees stay visible but never take part in
-    /// "Select visible".
-    private var selectableVisibleItems: [CleanableItem] { visibleItems.filter { !$0.isSelectionBlocked } }
-    private var risks: [String] { RemovalRisk.risks(for: category) }
+    /// Protected and orphan worktrees and explicit-only rows (Docker volumes)
+    /// stay visible but never take part in "Select visible".
+    private var selectableVisibleItems: [CleanableItem] {
+        visibleItems.filter { !$0.isSelectionBlocked && !$0.requiresExplicitSelection }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -87,6 +88,11 @@ struct CategoryDetailView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
+                if let note = result?.note {
+                    Text(note)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 16)
             Button {
@@ -139,10 +145,15 @@ struct CategoryDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(selectableVisibleItems.allSatisfy(appState.isItemSelected) ? "Deselect visible" : "Select visible") {
-                    appState.setSelection(!selectableVisibleItems.allSatisfy(appState.isItemSelected), for: selectableVisibleItems)
+                // Rows that need an explicit click (Docker volumes) or can't be
+                // removed at all (protected worktrees) are left out of the bulk
+                // selection, but "Deselect visible" clears everything visible.
+                let bulkItems = selectableVisibleItems
+                let allBulkSelected = bulkItems.allSatisfy(appState.isItemSelected)
+                Button(allBulkSelected ? "Deselect visible" : "Select visible") {
+                    appState.setSelection(!allBulkSelected, for: allBulkSelected ? visibleItems : bulkItems)
                 }
-                .disabled(selectableVisibleItems.isEmpty || appState.scanState.isActive)
+                .disabled(bulkItems.isEmpty || appState.scanState.isActive)
                 .buttonStyle(.borderless)
             }
         }
@@ -195,7 +206,8 @@ struct CategoryDetailView: View {
     }
 
     private func removalReview(items: [CleanableItem]) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let risks = RemovalRisk.risks(for: category, items: items)
+        return VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Review removal")
                     .font(.title2.weight(.semibold))
@@ -221,7 +233,12 @@ struct CategoryDetailView: View {
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             }
-                            if !item.path.isEmpty {
+                            if let action = item.dockerPruneAction {
+                                Text(action.commandLine)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            } else if !item.path.isEmpty {
                                 Text(item.path)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
@@ -246,7 +263,7 @@ struct CategoryDetailView: View {
             }
             .frame(minHeight: 160, maxHeight: risks.isEmpty ? 300 : 220)
             if !risks.isEmpty {
-                riskAcknowledgements
+                riskAcknowledgements(risks)
             }
             HStack {
                 if !risks.isEmpty {
@@ -283,7 +300,7 @@ struct CategoryDetailView: View {
     /// Docker and worktree removals delete the user's own work, not caches
     /// an app rebuilds silently: every risk is ticked off before the Remove
     /// button unlocks, and a final alert follows it.
-    private var riskAcknowledgements: some View {
+    private func riskAcknowledgements(_ risks: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Confirm each risk before removing", systemImage: "exclamationmark.triangle.fill")
                 .font(.callout.weight(.semibold))
@@ -369,7 +386,8 @@ private struct CleanupFileRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath)
+                Text(item.dockerPruneAction?.commandLine
+                    ?? (item.isActionItem ? String(localized: "Managed cleanup action") : (item.path as NSString).abbreviatingWithTildeInPath))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
