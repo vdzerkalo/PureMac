@@ -927,8 +927,6 @@
 /* AI Agent Data */
 "AI Agent Data" = "AI Agent Data";
 "Large, regenerable data of AI agent apps. Review each item before removal." = "Large, regenerable data of AI agent apps. Review each item before removal.";
-"Claude Desktop VM disk image" = "Claude Desktop VM disk image";
-"Root disk of the Claude Desktop VM. The compressed copy rootfs.img.zst stays next to it. Session data is a separate file and is not touched." = "Root disk of the Claude Desktop VM. The compressed copy rootfs.img.zst stays next to it. Session data is a separate file and is not touched.";
 "Claude iOS Simulator build output" = "Claude iOS Simulator build output";
 "Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build." = "Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build.";
 "Claude Desktop web cache" = "Claude Desktop web cache";

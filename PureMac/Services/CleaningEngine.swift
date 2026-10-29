@@ -9,14 +9,26 @@ actor CleaningEngine {
     /// Reports whether an AI agent app is running. Injected by tests; the
     /// default inspects the real process list.
     private let isAIAgentOwnerRunning: AIAgentDataSupport.OwnerRunningCheck
+    /// Moves a validated URL to the Trash and returns where it went. Injected
+    /// by tests so they never touch the real Trash.
+    typealias TrashOperation = (URL) throws -> URL?
+    private let trashOperation: TrashOperation
+
+    static let systemTrash: TrashOperation = { url in
+        var resulting: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
+        return resulting as URL?
+    }
 
     init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-        isAIAgentOwnerRunning: AIAgentDataSupport.OwnerRunningCheck? = nil
+        isAIAgentOwnerRunning: AIAgentDataSupport.OwnerRunningCheck? = nil,
+        trashOperation: @escaping TrashOperation = CleaningEngine.systemTrash
     ) {
         self.homeDirectory = XcodeBuildMCPDerivedDataSupport.canonicalHomeDirectory(homeDirectory)
         self.isAIAgentOwnerRunning = isAIAgentOwnerRunning
             ?? AIAgentDataSupport.liveOwnerRunningCheck(homeDirectory: homeDirectory)
+        self.trashOperation = trashOperation
     }
 
     struct CleaningResult {
@@ -439,10 +451,11 @@ actor CleaningEngine {
 
     // MARK: - AI agent data
 
-    /// Moves one review-only AI agent data item to the Trash. Validates twice
-    /// (shape, symlinks, real path, regeneration source, owning app not
-    /// running) and requires both results to name the same path, so a swap
-    /// between the checks aborts the removal.
+    /// Moves one review-only AI agent data item to the Trash. Validates right
+    /// before the move (shape, symlinks, real path, rule requirements, owning
+    /// app not running), using the process list as it is now, not as it was at
+    /// scan time. The remaining window between that check and the move is a
+    /// same-user race; see docs/AI-AGENT-DATA.md.
     private func trashAIAgentDataItem(
         _ item: CleanableItem
     ) -> (cleaned: Bool, alreadyGone: Bool, trashedPath: String?, error: String?) {
@@ -461,34 +474,20 @@ actor CleaningEngine {
             return (false, false, nil, msg)
         }
 
-        let first = AIAgentDataSupport.validateForRemoval(
+        let validation = AIAgentDataSupport.validateForRemoval(
             path: item.path,
             homeDirectory: homeDirectory,
             isOwnerRunning: isAIAgentOwnerRunning,
             fileManager: fileManager
         )
-        guard case .success(let firstValidated) = first else {
-            if case .failure(let refusal) = first { return refuse(refusal) }
-            return (false, false, nil, nil)
-        }
-
-        // Re-validate right before acting (TOCTOU).
-        let second = AIAgentDataSupport.validateForRemoval(
-            path: item.path,
-            homeDirectory: homeDirectory,
-            isOwnerRunning: isAIAgentOwnerRunning,
-            fileManager: fileManager
-        )
-        guard case .success(let secondValidated) = second, secondValidated.url == firstValidated.url else {
-            if case .failure(let refusal) = second { return refuse(refusal) }
-            let msg = "Aborting AI agent data removal: path changed between checks: \(item.path)"
-            Logger.shared.log(msg, level: .warning)
-            return (false, false, nil, msg)
+        let validated: AIAgentDataSupport.Validated
+        switch validation {
+        case .failure(let refusal): return refuse(refusal)
+        case .success(let value): validated = value
         }
 
         do {
-            var resulting: NSURL?
-            try fileManager.trashItem(at: secondValidated.url, resultingItemURL: &resulting)
+            let resulting = try trashOperation(validated.url)
             return (true, false, resulting?.path, nil)
         } catch {
             let detail = "\(item.name) at \(item.path): \(error.localizedDescription)"

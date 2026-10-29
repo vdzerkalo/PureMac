@@ -74,6 +74,9 @@ final class AppState: ObservableObject {
     @Published var categoryResults: [CleaningCategory: CategoryResult] = [:]
     @Published var diskInfo = DiskInfo()
     @Published var totalJunkSize: Int64 = 0
+    /// AI agent apps that were running at the last check. Their review-only
+    /// rows cannot be selected.
+    @Published private(set) var runningAIAgentOwners: Set<AIAgentDataSupport.Owner> = []
     @Published var totalFreedSpace: Int64 = 0
     @Published var scanProgress: Double = 0
     @Published var scanWasCancelled = false
@@ -669,7 +672,33 @@ final class AppState: ObservableObject {
 
     // MARK: - Selection
 
+    /// True for a review-only AI agent row whose owning app is running.
+    func isBlockedByRunningApp(_ item: CleanableItem) -> Bool {
+        guard item.category == .aiAgentData,
+              let owner = AIAgentDataSupport.rule(forPath: item.path)?.owner else { return false }
+        return runningAIAgentOwners.contains(owner)
+    }
+
+    /// Replaces the running set and drops selections that it now blocks, so a
+    /// row selected before its app started is not selected again after it quits.
+    func setRunningAIAgentOwners(_ owners: Set<AIAgentDataSupport.Owner>) {
+        runningAIAgentOwners = owners
+        guard let result = categoryResults[.aiAgentData] else { return }
+        for item in result.items where isBlockedByRunningApp(item) {
+            selectedCleanupItems.remove(item.id)
+        }
+    }
+
+    func refreshRunningAIAgentOwners() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        Task.detached(priority: .utility) {
+            let running = AIAgentDataSupport.liveRunningOwners(homeDirectory: home)
+            await MainActor.run { [weak self] in self?.setRunningAIAgentOwners(running) }
+        }
+    }
+
     func isItemSelected(_ item: CleanableItem) -> Bool {
+        if isBlockedByRunningApp(item) { return false }
         if item.isSelected {
             return !deselectedItems.contains(item.id)
         }
@@ -677,6 +706,8 @@ final class AppState: ObservableObject {
     }
 
     func toggleItem(_ item: CleanableItem) {
+        // Blocked rows can be neither selected nor toggled by bulk actions.
+        if isBlockedByRunningApp(item) { return }
         if isItemSelected(item) {
             if item.isSelected {
                 deselectedItems.insert(item.id)
@@ -694,7 +725,7 @@ final class AppState: ObservableObject {
 
     func selectAllInCategory(_ category: CleaningCategory) {
         guard let result = categoryResults[category] else { return }
-        for item in result.items {
+        for item in result.items where !isBlockedByRunningApp(item) {
             if item.isSelected {
                 deselectedItems.remove(item.id)
             } else {

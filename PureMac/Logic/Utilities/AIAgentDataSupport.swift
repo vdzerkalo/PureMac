@@ -41,8 +41,9 @@ enum AIAgentDataSupport {
         }
 
         /// A process whose executable lives under one of these prefixes counts
-        /// as the owner running. Matching by path (not by name) keeps a
-        /// terminal `claude` CLI session from blocking Claude Desktop rows.
+        /// as the owner running. The `claude` CLI that Claude Desktop manages
+        /// under `~/Library/Application Support/Claude/` therefore blocks
+        /// Claude Desktop rows; a Claude Code CLI installed elsewhere does not.
         func executablePathPrefixes(home: String) -> [String] {
             switch self {
             case .claudeDesktop:
@@ -55,6 +56,53 @@ enum AIAgentDataSupport {
                 return ["/Applications/Cursor.app/", "\(home)/.cursor/"]
             }
         }
+
+        /// Substrings of an executable path that identify the owner wherever it
+        /// is installed. Codex also runs as a CLI from Homebrew, npm or nvm
+        /// trees (`.../node_modules/@openai/codex/...`) under a `node` parent.
+        var executablePathFragments: [String] {
+            switch self {
+            case .codex: return ["/@openai/codex"]
+            default: return []
+            }
+        }
+
+        /// Executable file names (last path component) that identify the owner.
+        var executableNames: [String] {
+            switch self {
+            case .codex: return ["codex"]
+            default: return []
+            }
+        }
+
+        /// Process names used when a process's executable path cannot be read:
+        /// a name starting with one of these (case-insensitive) counts as running.
+        var processNamePrefixes: [String] {
+            switch self {
+            case .claudeDesktop: return ["Claude"]
+            case .codex: return ["Codex"]
+            case .antigravity: return ["Antigravity"]
+            case .cursor: return ["Cursor"]
+            }
+        }
+
+        func matches(_ process: ProcessEntry, home: String) -> Bool {
+            if let path = process.path {
+                if executablePathPrefixes(home: home).contains(where: { path.hasPrefix($0) }) { return true }
+                if executablePathFragments.contains(where: { path.contains($0) }) { return true }
+                return executableNames.contains((path as NSString).lastPathComponent)
+            }
+            // Path unreadable: fall back to the process name and fail closed
+            // when it looks like the owner.
+            guard let name = process.name?.lowercased() else { return false }
+            return processNamePrefixes.contains { name.hasPrefix($0.lowercased()) }
+        }
+    }
+
+    /// One running process as seen by the probe.
+    struct ProcessEntry: Equatable {
+        let path: String?
+        let name: String?
     }
 
     /// Returns true when the owner is running. Injected by tests.
@@ -89,10 +137,15 @@ enum AIAgentDataSupport {
 
     /// A condition that must hold for the item to count as regenerable.
     enum Requirement {
-        /// A non-empty regular file with this name in the same directory.
-        case siblingFile(String)
         /// A real directory at this path relative to home.
         case directory([String])
+        /// Every top-level entry name of the item exists, as a non-symlink, in
+        /// the real directory at this path relative to home (names only).
+        case entriesExist(in: [String])
+        /// Nothing (not even a symlink) exists at this path relative to home.
+        case noFile([String])
+        /// The item's own modification date is at least this old.
+        case olderThan(TimeInterval)
     }
 
     struct Rule {
@@ -107,22 +160,12 @@ enum AIAgentDataSupport {
     }
 
     private static let appSupport = ["Library", "Application Support"]
+    /// A Codex plugin backup younger than this may belong to a sync in progress.
+    static let pluginBackupMinimumAge: TimeInterval = 60 * 60
 
     /// The complete allowlist. Adding an entry here is the only way to make a
     /// path removable by this category.
     static let rules: [Rule] = [
-        Rule(
-            id: "claude.vm.rootfs",
-            owner: .claudeDesktop,
-            components: appSupport.map(Component.literal)
-                + [.literal("Claude"), .literal("vm_bundles"), .literal("claudevm.bundle"), .literal("rootfs.img")],
-            isDirectory: false,
-            requirements: [.siblingFile("rootfs.img.zst")],
-            title: { _ in String(localized: "Claude Desktop VM disk image") },
-            detail: {
-                String(localized: "Root disk of the Claude Desktop VM. The compressed copy rootfs.img.zst stays next to it. Session data is a separate file and is not touched.")
-            }
-        ),
         Rule(
             id: "claude.simulator.deriveddata",
             owner: .claudeDesktop,
@@ -158,7 +201,7 @@ enum AIAgentDataSupport {
             owner: .codex,
             components: [.literal(".codex"), .literal(".tmp"), .randomSuffix(prefix: "plugins-backup-", length: 6)],
             isDirectory: true,
-            requirements: [],
+            requirements: [.noFile([".codex", ".tmp", "plugins.sync.lock"]), .olderThan(pluginBackupMinimumAge)],
             title: { name in String(format: String(localized: "Codex plugin backup %@"), name) },
             detail: {
                 String(localized: "Old copy of Codex's plugin folder left by a plugin sync. The current plugins are kept elsewhere.")
@@ -169,7 +212,10 @@ enum AIAgentDataSupport {
             owner: .antigravity,
             components: [.literal(".gemini"), .literal("antigravity-backup"), .literal("browser_recordings")],
             isDirectory: true,
-            requirements: [.directory([".gemini", "antigravity", "browser_recordings"])],
+            requirements: [
+                .directory([".gemini", "antigravity", "browser_recordings"]),
+                .entriesExist(in: [".gemini", "antigravity", "browser_recordings"]),
+            ],
             title: { _ in String(localized: "Antigravity backup: browser recordings") },
             detail: {
                 String(localized: "Frames of agent browser sessions inside the one-time backup. The live recordings stay in ~/.gemini/antigravity. Backup settings are not touched.")
@@ -195,6 +241,9 @@ enum AIAgentDataSupport {
         case symlink
         case unexpectedType
         case missingRequirement
+        case syncInProgress
+        case tooRecent
+        case notDuplicate
         case ownerRunning(Owner)
 
         var description: String {
@@ -204,7 +253,10 @@ enum AIAgentDataSupport {
             case .missing: return "path no longer exists"
             case .symlink: return "path or a parent is a symbolic link"
             case .unexpectedType: return "path is not the expected file type"
-            case .missingRequirement: return "the regeneration source is missing"
+            case .missingRequirement: return "the live copy it duplicates is missing"
+            case .syncInProgress: return "a sync lock file exists"
+            case .tooRecent: return "it was modified less than an hour ago"
+            case .notDuplicate: return "it holds entries that the live copy does not"
             case .ownerRunning(let owner): return "\(owner.displayName) is running"
             }
         }
@@ -295,12 +347,13 @@ enum AIAgentDataSupport {
     }
 
     /// Structural validation: allowlisted shape, no symlink anywhere below
-    /// home, the expected file type, and the regeneration requirements. Does
+    /// home, the expected file type, and the rule requirements. Does
     /// not look at running processes; use `validateForRemoval`.
     static func validate(
         path: String,
         homeDirectory: URL,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        now: Date = Date()
     ) -> Result<Validated, Refusal> {
         let home = canonicalHomeDirectory(homeDirectory).path
         guard !path.utf8.contains(0), path == (path as NSString).standardizingPath else {
@@ -338,13 +391,6 @@ enum AIAgentDataSupport {
 
         for requirement in rule.requirements {
             switch requirement {
-            case .siblingFile(let name):
-                let sibling = ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(name)
-                guard let attributes = try? fileManager.attributesOfItem(atPath: sibling),
-                      attributes[.type] as? FileAttributeType == .typeRegular,
-                      ((attributes[.size] as? NSNumber)?.int64Value ?? 0) > 0 else {
-                    return .failure(.missingRequirement)
-                }
             case .directory(let relative):
                 // Every component must be a real directory, like the item itself.
                 var target = home
@@ -354,20 +400,43 @@ enum AIAgentDataSupport {
                         return .failure(.missingRequirement)
                     }
                 }
+            case .entriesExist(let relative):
+                let live = relative.reduce(home) { ($0 as NSString).appendingPathComponent($1) }
+                guard let names = try? fileManager.contentsOfDirectory(atPath: path) else {
+                    return .failure(.missing)
+                }
+                for name in names {
+                    let counterpart = (live as NSString).appendingPathComponent(name)
+                    guard let type = (try? fileManager.attributesOfItem(atPath: counterpart))?[.type] as? FileAttributeType,
+                          type != .typeSymbolicLink else {
+                        return .failure(.notDuplicate)
+                    }
+                }
+            case .noFile(let relative):
+                let target = relative.reduce(home) { ($0 as NSString).appendingPathComponent($1) }
+                if (try? fileManager.attributesOfItem(atPath: target)) != nil {
+                    return .failure(.syncInProgress)
+                }
+            case .olderThan(let age):
+                guard let modified = (try? fileManager.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+                      now.timeIntervalSince(modified) >= age else {
+                    return .failure(.tooRecent)
+                }
             }
         }
         return .success(Validated(rule: rule, url: URL(fileURLWithPath: path)))
     }
 
-    /// Validation plus the running-app check. Call it again immediately before
-    /// the Trash move: both results must agree.
+    /// Validation plus the running-app check. Call it immediately before the
+    /// Trash move; the scan-time validation is not enough.
     static func validateForRemoval(
         path: String,
         homeDirectory: URL,
         isOwnerRunning: OwnerRunningCheck,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        now: Date = Date()
     ) -> Result<Validated, Refusal> {
-        switch validate(path: path, homeDirectory: homeDirectory, fileManager: fileManager) {
+        switch validate(path: path, homeDirectory: homeDirectory, fileManager: fileManager, now: now) {
         case .failure(let refusal):
             return .failure(refusal)
         case .success(let validated):
@@ -378,9 +447,10 @@ enum AIAgentDataSupport {
 
     // MARK: - Running apps
 
-    /// Live check: bundle identifier of a running app, or any process whose
-    /// executable is under one of the owner's path prefixes. Fails closed when
-    /// the process list cannot be read.
+    /// Live check: bundle identifier of a running app, or any process that
+    /// `Owner.matches` accepts. Fails closed when the process list cannot be
+    /// read. A process whose path cannot be read is matched by name; a process
+    /// of another user whose path and name are both unreadable is ignored.
     static func liveOwnerRunningCheck(homeDirectory: URL) -> OwnerRunningCheck {
         let home = canonicalHomeDirectory(homeDirectory).path
         return { owner in
@@ -388,24 +458,43 @@ enum AIAgentDataSupport {
             where !NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty {
                 return true
             }
-            return anyProcess(withExecutablePrefixes: owner.executablePathPrefixes(home: home))
+            guard let processes = liveProcesses() else { return true }
+            return processes.contains { owner.matches($0, home: home) }
         }
     }
 
-    static func anyProcess(withExecutablePrefixes prefixes: [String]) -> Bool {
+    /// Owners that are running right now, from one process listing.
+    static func liveRunningOwners(homeDirectory: URL) -> Set<Owner> {
+        let home = canonicalHomeDirectory(homeDirectory).path
+        let processes = liveProcesses()
+        return Set(Owner.allCases.filter { owner in
+            owner.bundleIdentifiers.contains {
+                !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty
+            } || (processes.map { list in list.contains { owner.matches($0, home: home) } } ?? true)
+        })
+    }
+
+    /// Nil when the process list itself cannot be read.
+    static func liveProcesses() -> [ProcessEntry]? {
         let needed = proc_listallpids(nil, 0)
-        guard needed > 0 else { return true }
+        guard needed > 0 else { return nil }
         var pids = [pid_t](repeating: 0, count: Int(needed) + 64)
         let filled = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        guard filled > 0 else { return true }
-        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard filled > 0 else { return nil }
+        var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        var nameBuffer = [CChar](repeating: 0, count: 256)
+        var entries: [ProcessEntry] = []
         for pid in pids.prefix(min(Int(filled), pids.count)) where pid > 0 {
-            let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
-            guard length > 0 else { continue }
-            let executable = String(cString: buffer)
-            if prefixes.contains(where: { executable.hasPrefix($0) }) { return true }
+            let pathLength = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
+            let path = pathLength > 0 ? String(cString: pathBuffer) : nil
+            var name: String?
+            if path == nil {
+                let nameLength = proc_name(pid, &nameBuffer, UInt32(nameBuffer.count))
+                if nameLength > 0 { name = String(cString: nameBuffer) }
+            }
+            if path != nil || name != nil { entries.append(ProcessEntry(path: path, name: name)) }
         }
-        return false
+        return entries
     }
 
     // MARK: - Helpers

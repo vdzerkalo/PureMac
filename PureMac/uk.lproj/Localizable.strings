@@ -931,8 +931,6 @@
 /* AI Agent Data */
 "AI Agent Data" = "Дані ШІ-агентів";
 "Large, regenerable data of AI agent apps. Review each item before removal." = "Великі дані програм ШІ-агентів, які можна відтворити. Перегляньте кожен елемент перед видаленням.";
-"Claude Desktop VM disk image" = "Образ диска ВМ Claude Desktop";
-"Root disk of the Claude Desktop VM. The compressed copy rootfs.img.zst stays next to it. Session data is a separate file and is not touched." = "Кореневий диск ВМ Claude Desktop. Стиснена копія rootfs.img.zst лишається поруч. Дані сесій зберігаються в окремому файлі й не зачіпаються.";
 "Claude iOS Simulator build output" = "Результат збірки iOS Simulator від Claude";
 "Xcode build output of Claude's iOS Simulator tool. Rebuilt on the next simulator build." = "Результат збірки Xcode для інструмента iOS Simulator від Claude. Створюється знову під час наступної збірки.";
 "Claude Desktop web cache" = "Веб-кеш Claude Desktop";

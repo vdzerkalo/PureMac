@@ -12,33 +12,23 @@ struct CategoryDetailView: View {
 
     @State private var filter = CleanupReviewFilter()
     @State private var pendingReview: CleanupSelection?
-    /// AI agent apps that are running right now. Their rows cannot be selected.
-    @State private var runningOwners: Set<AIAgentDataSupport.Owner> = []
     private let ownerRefresh = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     private var result: CategoryResult? { appState.categoryResults[category] }
     private var visibleItems: [CleanableItem] { filter.apply(to: result?.items ?? []) }
     private var selectedItems: [CleanableItem] {
-        (result?.items ?? []).filter { appState.isItemSelected($0) && blockedOwner(for: $0) == nil }
+        (result?.items ?? []).filter(appState.isItemSelected)
     }
 
     /// The running app that blocks this item, for review-only AI agent rows.
     private func blockedOwner(for item: CleanableItem) -> AIAgentDataSupport.Owner? {
-        guard category == .aiAgentData,
-              let owner = AIAgentDataSupport.rule(forPath: item.path)?.owner,
-              runningOwners.contains(owner) else { return nil }
-        return owner
+        guard appState.isBlockedByRunningApp(item) else { return nil }
+        return AIAgentDataSupport.rule(forPath: item.path)?.owner
     }
 
     private func refreshRunningOwners() {
         guard category == .aiAgentData else { return }
-        let check = AIAgentDataSupport.liveOwnerRunningCheck(
-            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
-        )
-        DispatchQueue.global(qos: .utility).async {
-            let running = Set(AIAgentDataSupport.Owner.allCases.filter(check))
-            DispatchQueue.main.async { runningOwners = running }
-        }
+        appState.refreshRunningAIAgentOwners()
     }
     private var selectedSize: Int64 { selectedItems.reduce(0) { $0 + $1.size } }
 
@@ -86,7 +76,6 @@ struct CategoryDetailView: View {
         .onChange(of: category) { _ in
             filter = CleanupReviewFilter()
             pendingReview = nil
-            runningOwners = []
             refreshRunningOwners()
         }
         .onAppear { refreshRunningOwners() }
@@ -160,10 +149,12 @@ struct CategoryDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(visibleItems.allSatisfy(appState.isItemSelected) ? "Deselect visible" : "Select visible") {
-                    appState.setSelection(!visibleItems.allSatisfy(appState.isItemSelected), for: visibleItems)
+                // Rows blocked by a running app are skipped by bulk selection.
+                let selectable = visibleItems.filter { !appState.isBlockedByRunningApp($0) }
+                Button(selectable.allSatisfy(appState.isItemSelected) ? "Deselect visible" : "Select visible") {
+                    appState.setSelection(!selectable.allSatisfy(appState.isItemSelected), for: selectable)
                 }
-                .disabled(visibleItems.isEmpty || appState.scanState.isActive)
+                .disabled(selectable.isEmpty || appState.scanState.isActive)
                 .buttonStyle(.borderless)
             }
         }
