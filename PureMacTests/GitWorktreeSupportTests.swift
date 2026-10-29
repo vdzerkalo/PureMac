@@ -759,6 +759,9 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertTrue(text.contains(ByteCountFormatter.string(fromByteCount: sizes.artifacts, countStyle: .file)), text)
         XCTAssertTrue(text.contains(ByteCountFormatter.string(fromByteCount: sizes.code, countStyle: .file)), text)
         XCTAssertNil(report.sizeBreakdownText, "no breakdown before the scan measured it")
+        measured.artifactBytes = 0
+        XCTAssertEqual(measured.sizeBreakdownText, String(localized: "no build folders · code \(ByteCountFormatter.string(fromByteCount: sizes.code, countStyle: .file))"))
+        XCTAssertFalse(measured.sizeBreakdownText?.contains("Zero") ?? true)
     }
 
     func testInactiveDaysSettingIsHonoured() async throws {

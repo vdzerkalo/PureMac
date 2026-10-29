@@ -507,11 +507,13 @@ extension GitWorktreeSupport.Reason {
 }
 
 extension GitWorktreeReport {
-    /// "artifacts 1.2 GB · code 40 MB"; nil for a worktree with no size.
+    /// "artifacts 1.2 GB · code 40 MB", or "no build folders · code 40 MB"
+    /// instead of "artifacts Zero KB"; nil for a worktree with no size.
     var sizeBreakdownText: String? {
         guard totalBytes > 0 else { return nil }
-        let artifacts = ByteCountFormatter.string(fromByteCount: artifactBytes, countStyle: .file)
         let code = ByteCountFormatter.string(fromByteCount: codeBytes, countStyle: .file)
+        guard artifactBytes > 0 else { return String(localized: "no build folders · code \(code)") }
+        let artifacts = ByteCountFormatter.string(fromByteCount: artifactBytes, countStyle: .file)
         return String(localized: "artifacts \(artifacts) · code \(code)")
     }
 }

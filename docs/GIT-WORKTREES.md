@@ -71,7 +71,7 @@ Signals and the command that produces each (all read-only; run as `git -c core.f
 
 A fresh worktree whose HEAD equals the base looks merged; it is Needs review ("no commits of its own"), not Safe.
 
-Size is shown as `artifacts X · code Y` in the row and the review sheet. Artifacts are the ignored folders from the table above (`node_modules`, `.next`, `build`, `dist`, `DerivedData`, `.build`, `target`, `.venv`, `venv`, `__pycache__`); code is everything else, hidden files included. Symlinks are neither followed nor counted (`GitWorktreeScanner.measure`).
+Size is shown as `artifacts X · code Y` in the row and the review sheet (`no build folders · code Y` when there are none; `GitWorktreeReport.sizeBreakdownText`). Artifacts are the ignored folders from the table above (`node_modules`, `.next`, `build`, `dist`, `DerivedData`, `.build`, `target`, `.venv`, `venv`, `__pycache__`); code is everything else, hidden files included. Symlinks are neither followed nor counted (`GitWorktreeScanner.measure`).
 
 ## How it removes
 
