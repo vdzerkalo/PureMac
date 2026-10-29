@@ -77,6 +77,12 @@ final class AppState: ObservableObject {
     @Published var totalFreedSpace: Int64 = 0
     @Published var scanProgress: Double = 0
     @Published var scanWasCancelled = false
+    /// Optional category added from the Overview and scanning right now.
+    @Published private(set) var categoryBeingAdded: CleaningCategory?
+    /// Categories the running scan has not started yet; `addToSmartScan`
+    /// appends to it while `scanAcceptsAdditions`.
+    @Published private(set) var queuedScanCategories: [CleaningCategory] = []
+    private var scanAcceptsAdditions = false
     @Published var lastScanDate: Date?
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = UUID()
@@ -96,6 +102,9 @@ final class AppState: ObservableObject {
     @Published var fdaBannerDismissed: Bool = false
     @Published var cleanError: String?
     @Published private(set) var lastCleanupHadFailures = false
+    /// Remarks about a clean that otherwise succeeded, e.g. a merged branch
+    /// git refused to delete. Replaced by every clean, shown in the category.
+    @Published private(set) var lastCleanupNotes: [String] = []
     /// True when the most recent clean error is rooted in a TCC/FDA refusal
     /// (i.e. items survived even the admin pass). MainWindow uses this to
     /// route the user into the PermissionSheet instead of the generic alert.
@@ -137,6 +146,8 @@ final class AppState: ObservableObject {
 
     var scheduler = SchedulerService()
     private let scanEngine = ScanEngine()
+    /// Where the Smart Scan opt-ins live (`CleaningCategory.smartScanOptInKey`).
+    private let settingsDefaults: UserDefaults
     private let cleaningEngine: CleaningEngine
     private let locationsProvider: () -> Locations
     private let appFileScanner: AppFileScanner
@@ -189,9 +200,11 @@ final class AppState: ObservableObject {
         locationsProvider: @escaping () -> Locations = Locations.init,
         appFileScanner: @escaping AppFileScanner = AppState.defaultAppFileScanner,
         appFileTrasher: @escaping AppFileTrasher = AppState.defaultAppFileTrasher,
-        cleaningEngine: CleaningEngine = CleaningEngine()
+        cleaningEngine: CleaningEngine = CleaningEngine(),
+        settingsDefaults: UserDefaults = .standard
     ) {
         self.cleaningEngine = cleaningEngine
+        self.settingsDefaults = settingsDefaults
         self.locationsProvider = locationsProvider
         self.appFileScanner = appFileScanner
         self.appFileTrasher = appFileTrasher
@@ -691,6 +704,7 @@ final class AppState: ObservableObject {
     }
 
     func toggleItem(_ item: CleanableItem) {
+        if item.isSelectionBlocked, !isItemSelected(item) { return }
         if isItemSelected(item) {
             if item.isSelected {
                 deselectedItems.insert(item.id)
@@ -708,7 +722,7 @@ final class AppState: ObservableObject {
 
     func selectAllInCategory(_ category: CleaningCategory) {
         guard let result = categoryResults[category] else { return }
-        for item in result.items where !item.requiresExplicitSelection {
+        for item in result.items where !item.isSelectionBlocked && !item.requiresExplicitSelection {
             if item.isSelected {
                 deselectedItems.remove(item.id)
             } else {
@@ -896,7 +910,51 @@ final class AppState: ObservableObject {
 
     func startSmartScan() {
         guard !scanState.isActive, !deviceBackupRemovalInProgress else { return }
-        beginScan(categories: CleaningCategory.scannable, replacingResults: true)
+        beginScan(categories: smartScanCategories, replacingResults: true)
+    }
+
+    // MARK: - Smart Scan opt-in
+
+    var smartScanCategories: [CleaningCategory] {
+        CleaningCategory.smartScanCategories(defaults: settingsDefaults)
+    }
+
+    func isAddedToSmartScan(_ category: CleaningCategory) -> Bool {
+        category.smartScanOptInKey.map(settingsDefaults.bool(forKey:)) ?? false
+    }
+
+    func setAddedToSmartScan(_ category: CleaningCategory, _ added: Bool) {
+        guard let key = category.smartScanOptInKey else { return }
+        objectWillChange.send()
+        settingsDefaults.set(added, forKey: key)
+    }
+
+    /// "Add to Smart Scan": every later Smart Scan includes the category.
+    /// Before any scan it is only saved. During a Smart Scan it joins the
+    /// end of that scan (`queuedScanCategories`). After one, it is scanned
+    /// now so its row joins the results without a rescan; the Overview keeps
+    /// the plan on screen and shows that scan in the category's own row
+    /// (`categoryBeingAdded`).
+    func addToSmartScan(_ category: CleaningCategory) {
+        guard canAddToSmartScan, CleaningCategory.smartScanOptional.contains(category) else { return }
+        setAddedToSmartScan(category, true)
+        switch scanState {
+        case .scanning:
+            guard currentScanCategory != category.rawValue, !queuedScanCategories.contains(category) else { return }
+            queuedScanCategories.append(category)
+        case .completed:
+            beginScan(categories: [category], replacingResults: false, addingToResults: true)
+        default:
+            break
+        }
+    }
+
+    /// False while cleaning, removing device backups, or scanning anything
+    /// but a Smart Scan (a category's own screen, a scheduled scan).
+    var canAddToSmartScan: Bool {
+        guard !deviceBackupRemovalInProgress else { return false }
+        if case .scanning = scanState { return scanAcceptsAdditions }
+        return !scanState.isActive
     }
 
     func scanSingleCategory(_ category: CleaningCategory) {
@@ -912,15 +970,23 @@ final class AppState: ObservableObject {
         scanGeneration = UUID()
         scanWasCancelled = true
         scanTicker.path = ""
+        categoryBeingAdded = nil
+        queuedScanCategories = []
+        scanAcceptsAdditions = false
         scanState = categoryResults.isEmpty ? .idle : .completed
     }
 
-    private func beginScan(categories: [CleaningCategory], replacingResults: Bool) {
+    /// `replacingResults` is a Smart Scan, `addingToResults` a category
+    /// added from the Overview; both accept `addToSmartScan` while running.
+    private func beginScan(categories: [CleaningCategory], replacingResults: Bool, addingToResults: Bool = false) {
         let generation = UUID()
         scanGeneration = generation
         scanWasCancelled = false
         totalFreedSpace = 0
+        lastCleanupNotes = []
         scanProgress = 0
+        queuedScanCategories = categories
+        scanAcceptsAdditions = replacingResults || addingToResults
         scanState = .scanning(progress: 0, currentCategory: "Preparing...")
         if replacingResults {
             categoryResults = [:]
@@ -928,30 +994,49 @@ final class AppState: ObservableObject {
             clearSelectionState()
         }
         scanTask = Task {
-            for (index, category) in categories.enumerated() {
+            var done = 0
+            while !queuedScanCategories.isEmpty {
                 guard !Task.isCancelled, scanGeneration == generation else { return }
-                let progress = Double(index) / Double(categories.count)
-                scanProgress = progress
+                let category = queuedScanCategories.removeFirst()
+                // Recounted per category: added categories join the total.
+                let total = Double(done + 1 + queuedScanCategories.count)
+                advanceScanProgress(to: Double(done) / total)
                 currentScanCategory = category.rawValue
-                scanState = .scanning(progress: progress, currentCategory: category.rawValue)
+                if addingToResults { categoryBeingAdded = category }
+                scanState = .scanning(progress: scanProgress, currentCategory: category.rawValue)
                 clearSelectionState(for: category)
-                let result = await scanEngine.scanCategory(category) { [weak self] path in
+                let result = await scanEngine.scanCategory(category, onPath: { [weak self] path in
                     Task { @MainActor [weak self] in
                         guard let self, self.scanGeneration == generation else { return }
                         self.scanTicker.path = path
                     }
-                }
+                }, onFraction: { [weak self, done] fraction in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.scanGeneration == generation else { return }
+                        self.advanceScanProgress(to: (Double(done) + fraction) / total)
+                    }
+                })
                 guard !Task.isCancelled, scanGeneration == generation else { return }
                 categoryResults[category] = applyingCleanupExclusions(to: result)
                 totalJunkSize = categoryResults.values.reduce(0) { $0 + $1.totalSize }
+                done += 1
             }
             scanProgress = 1
             scanTicker.path = ""
+            categoryBeingAdded = nil
+            scanAcceptsAdditions = false
             lastScanDate = Date()
             scanState = .completed
             scanTask = nil
             loadDiskInfo()
         }
+    }
+
+    /// Moves the bar forward only, and only by whole percents: parallel
+    /// checks report out of order, and `scanProgress` redraws the Overview.
+    func advanceScanProgress(to value: Double) {
+        guard Int(value * 100) > Int(scanProgress * 100) else { return }
+        scanProgress = min(value, 1)
     }
 
     // MARK: - Cleaning
@@ -964,7 +1049,8 @@ final class AppState: ObservableObject {
         // after the review sheet.
         let itemsToClean = allResults.filter { !isReviewedInCategoryOnly($0.category) }.flatMap { $0.items }.filter { item in
             guard itemIDs?.contains(item.id) ?? true else { return false }
-            guard isItemSelected(item) else { return false }
+            guard isItemSelected(item), !item.isSelectionBlocked else { return false }
+            if scheduled && item.category == .gitWorktrees { return false }
             if scheduled && XcodeBuildMCPDerivedDataSupport.isManagedDerivedDataPath(item.path) {
                 // Scheduled XcodeBuildMCP cleanup is intentionally stricter
                 // than ordinary Xcode Junk: only old, unlocked rows qualify.
@@ -1002,6 +1088,7 @@ final class AppState: ObservableObject {
             totalFreedSpace = result.freedSpace
             if result.itemsCleaned > 0 { lastCleanedDate = Date() }
             if result.itemsCleaned > 0 { Haptics.successWithSound() }
+            lastCleanupNotes = result.notes
 
             let survivors = survivingItems(from: itemsToClean, result: result)
 
@@ -1054,6 +1141,7 @@ final class AppState: ObservableObject {
 
             totalFreedSpace = cleanResult.freedSpace
             if cleanResult.itemsCleaned > 0 { lastCleanedDate = Date() }
+            lastCleanupNotes = cleanResult.notes
 
             if let existing = categoryResults[category] {
                 let cleared = existing.items.filter { cleanResult.cleanedPaths.contains($0.path) }
@@ -1145,7 +1233,7 @@ final class AppState: ObservableObject {
 
     func runScheduledScan() async {
         guard canRunScheduledScan(isAppActive: NSApp.isActive) else { return }
-        let categories = scheduler.config.categoriesToScan.filter { CleaningCategory.scannable.contains($0) }
+        let categories = scheduler.config.categoriesToScan.filter { CleaningCategory.smartScannable.contains($0) }
         guard !categories.isEmpty else { return }
         let generation = UUID()
         scanGeneration = generation

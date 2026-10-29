@@ -930,9 +930,35 @@
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
 
-/* Risky removals */
+/* Git Worktrees and risky removals */
+"Git Worktrees" = "Git-worktree";
+"Leftover git worktrees from AI agents and old branches" = "Оставшиеся git-worktree от AI-агентов и старых веток";
+"Safe to delete" = "Можно удалить";
+"Needs review" = "Требует проверки";
+"Protected" = "Защищено";
+"Orphan" = "Сирота";
+"uncommitted changes (%lld)" = "незакоммиченные изменения (%lld)";
+"commits not on any remote or other branch (%lld)" = "коммиты, которых нет на remote или в другой ветке (%lld)";
+"stashed changes" = "есть stash";
+"locked by git" = "заблокировано git";
+"open in a running process" = "открыто в запущенном процессе";
+"agent worktree active in the last 24 hours" = "агент работал здесь за последние 24 часа";
+"folder is gone; git still lists it" = "папки нет, но git её ещё помнит";
+"not a worktree its repository knows about" = "репозиторий не знает такого worktree";
+"untracked files (%lld)" = "неотслеживаемые файлы (%lld)";
+"ignored .env files would be deleted" = "будут удалены игнорируемые файлы .env";
+"no main branch to compare with" = "нет основной ветки для сравнения";
+"not merged into the main branch" = "не слито в основную ветку";
+"no commits of its own" = "нет собственных коммитов";
+"active %lld days ago" = "активность %lld дн. назад";
+"merged, no recent activity" = "слито, без недавней активности";
+"merged, idle for %lld days" = "слито, без изменений %lld дн.";
 "Nothing goes to the Trash: Docker deletes these objects permanently." = "Ничего не попадает в Корзину: Docker удаляет эти объекты навсегда.";
 "Stopped containers and the files inside them are deleted; running containers are kept." = "Остановленные контейнеры и файлы в них удаляются; запущенные остаются.";
+"Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash." = "Каждую папку удаляет git worktree remove: всё внутри, включая игнорируемые node_modules и .env, удаляется, а не идёт в Корзину.";
+"Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Ветки остаются. Коммиты в безопасности, только если они слиты, запушены или есть в другой ветке; PureMac перепроверяет это перед удалением.";
+"Close any agent, editor or terminal still using these folders: they lose their working directory." = "Закройте агентов, редакторы и терминалы, которые ещё работают в этих папках: они потеряют рабочую папку.";
+"Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Неиспользуемые volumes стираются вместе с данными (базы, загрузки); никакой pull или build их не вернёт.";
 "Confirm each risk before removing" = "Подтвердите каждый риск перед удалением";
 "Remove %lld items permanently?" = "Удалить навсегда элементов: %lld?";
 "Remove permanently" = "Удалить навсегда";
@@ -940,6 +966,37 @@
 "Copy agent prompt" = "Скопировать промпт для агента";
 "Copied" = "Скопировано";
 "Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Скопировать короткий бриф со всеми найденными элементами, чтобы AI-агент проверил риски вместе с вами до удаления.";
+"Permanent · git worktree remove (branch is kept)" = "Навсегда · git worktree remove (ветка остаётся)";
+"PureMac will not remove this worktree." = "PureMac не будет удалять этот worktree.";
+
+/* Git Worktrees settings, prune and size breakdown */
+"Idle after: %lld days" = "Неактивен более: %lld дн.";
+"A merged worktree without activity for this long is Safe to delete; a more recent one needs review." = "Влитый worktree без активности так долго можно удалить; более свежий требует проверки.";
+"Base branch" = "Основная ветка";
+"origin/HEAD, origin/main, origin/master, main, master" = "origin/HEAD, origin/main, origin/master, main, master";
+"Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged." = "Оставьте пустым, чтобы перебрать их по очереди. Если такой ветки в репозитории нет, там ничего не считается слитым.";
+"Optional in Smart Scan" = "Необязательные в умном сканировании";
+"Off until you add them" = "Выключены, пока вы их не добавите";
+"Scanning only reads. Removal stays on the category screen." = "Сканирование только читает. Удаление остаётся на экране категории.";
+"Add to Smart Scan" = "Добавить в умное сканирование";
+"In Smart Scan from the next scan" = "В умном сканировании со следующего запуска";
+"In Smart Scan · scanned after the current category" = "В умном сканировании · после текущей категории";
+"In Smart Scan · nothing found" = "В умном сканировании · ничего не найдено";
+"In Smart Scan · %@ found, listed in the plan" = "В умном сканировании · найдено %@, есть в плане";
+"Remove from Smart Scan" = "Убрать из умного сканирования";
+"Include in Smart Scan" = "Включать в умное сканирование";
+"Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen." = "Тогда умное сканирование также показывает worktree. Оно только читает ваши репозитории и при большом количестве worktree может занять несколько минут; сканирование по расписанию их пропускает, а удаляются worktree только с их экрана.";
+"Delete the merged branch after removing a worktree" = "Удалять слитую ветку после удаления worktree";
+"Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged." = "Выполняет git branch -d, никогда -D, только для worktree, которые можно удалить, и только если git согласен, что ветка слита.";
+"Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep." = "Помимо списка проектов Claude Code и папок worktree Cursor и Codex, в этих папках ищут репозитории на три уровня вглубь.";
+"Remove folder" = "Убрать папку";
+"Add Search Folder…" = "Добавить папку поиска…";
+"Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Ветки worktree, которые можно удалить, удаляет git branch -d, только если git согласен, что они слиты. Коммиты в безопасности, только если они слиты, запушены или есть в другой ветке; PureMac проверяет это ещё раз непосредственно перед удалением.";
+"git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not." = "git worktree prune удаляет только записи git о worktree, чьей папки уже нет; файлы не трогает. Действует на все отсутствующие worktree этого репозитория, выбранные или нет.";
+"artifacts %@ · code %@" = "артефакты %@ · код %@";
+"no build folders · code %@" = "папок сборки нет · код %@";
+"Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Навсегда · git worktree prune (забывает отсутствующую папку, файлы не удаляет)";
+"Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Навсегда · git worktree remove (слитую ветку удаляет git branch -d)";
 
 /* Docker polish */
 "Dangling Docker images (untagged leftovers)" = "Dangling-образы Docker (остатки без тегов)";
@@ -954,3 +1011,9 @@
 "Unused Docker volumes (may contain data such as databases, size not estimated)" = "Неиспользуемые тома Docker (могут содержать данные, например базы данных, размер не оценён)";
 "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "Тома, названные в команде, будут стёрты вместе с данными (базы данных, загрузки); ни pull, ни сборка их не вернут.";
 "Reviewed inside the category before removal" = "Удаляется в самой категории после просмотра";
+
+/* Git Worktrees safety review */
+"ignored files outside build folders (%lld)" = "игнорируемые файлы вне папок сборки (%lld)";
+"nested repository in ignored folder" = "вложенный репозиторий в игнорируемой папке";
+"ignored folders too large to check completely" = "игнорируемые папки слишком велики для полной проверки";
+"Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted." = "Укажите имя ветки, например main или origin/main. HEAD, теги и хеши коммитов не принимаются.";

@@ -20,18 +20,26 @@ struct CategoryDetailView: View {
     private var visibleItems: [CleanableItem] { filter.apply(to: result?.items ?? []) }
     private var selectedItems: [CleanableItem] { (result?.items ?? []).filter(appState.isItemSelected) }
     private var selectedSize: Int64 { selectedItems.reduce(0) { $0 + $1.size } }
+    /// Protected and orphan worktrees and explicit-only rows (Docker volumes)
+    /// stay visible but never take part in "Select visible".
+    private var selectableVisibleItems: [CleanableItem] {
+        visibleItems.filter { !$0.isSelectionBlocked && !$0.requiresExplicitSelection }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             if case .scanning = appState.scanState {
-                HStack(spacing: 12) {
-                    ProgressView().controlSize(.small)
-                    Text("Scanning \(Text(LocalizedStringKey(appState.currentScanCategory)))…")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Stop scan") { appState.cancelScan() }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 12) {
+                        ProgressView().controlSize(.small)
+                        Text("Scanning \(Text(LocalizedStringKey(appState.currentScanCategory)))…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Stop scan") { appState.cancelScan() }
+                    }
+                    ScanPathTicker(ticker: appState.scanTicker)
                 }
                 .padding(.horizontal, 28)
                 .padding(.bottom, 16)
@@ -88,6 +96,13 @@ struct CategoryDetailView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
+                if category == .gitWorktrees {
+                    ForEach(appState.lastCleanupNotes, id: \.self) { note in
+                        Label(note, systemImage: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             Spacer(minLength: 16)
             Button {
@@ -140,9 +155,10 @@ struct CategoryDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                // Rows that need an explicit click (Docker volumes) are left
-                // out of the bulk selection, but "Deselect visible" clears them.
-                let bulkItems = visibleItems.filter { !$0.requiresExplicitSelection }
+                // Rows that need an explicit click (Docker volumes) or can't be
+                // removed at all (protected worktrees) are left out of the bulk
+                // selection, but "Deselect visible" clears everything visible.
+                let bulkItems = selectableVisibleItems
                 let allBulkSelected = bulkItems.allSatisfy(appState.isItemSelected)
                 Button(allBulkSelected ? "Deselect visible" : "Select visible") {
                     appState.setSelection(!allBulkSelected, for: allBulkSelected ? visibleItems : bulkItems)
@@ -242,6 +258,18 @@ struct CategoryDetailView: View {
                             Text(removalMethod(item))
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
+                            if let worktree = item.gitWorktree {
+                                Text(worktree.verdict.summary)
+                                    .font(.caption)
+                                    .foregroundStyle(worktree.verdict.status.tint)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let breakdown = worktree.sizeBreakdownText {
+                                    Text(breakdown)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                }
+                            }
                         }
                         .padding(.vertical, 12)
                         Divider()
@@ -285,9 +313,9 @@ struct CategoryDetailView: View {
         }
     }
 
-    /// Docker removals delete the user's own work, not caches an app
-    /// rebuilds silently: every risk is ticked off before the Remove button
-    /// unlocks, and a final alert follows it.
+    /// Docker and worktree removals delete the user's own work, not caches
+    /// an app rebuilds silently: every risk is ticked off before the Remove
+    /// button unlocks, and a final alert follows it.
     private func riskAcknowledgements(_ risks: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Confirm each risk before removing", systemImage: "exclamationmark.triangle.fill")
@@ -337,6 +365,15 @@ struct CategoryDetailView: View {
     }
 
     private func removalMethod(_ item: CleanableItem) -> String {
+        if let worktree = item.gitWorktree {
+            if worktree.verdict.isPrunableOrphan {
+                return String(localized: "Permanent · git worktree prune (forgets the missing folder, deletes no files)")
+            }
+            if GitWorktreeSettings.current().deleteMergedBranch {
+                return String(localized: "Permanent · git worktree remove (merged branch is deleted with git branch -d)")
+            }
+            return String(localized: "Permanent · git worktree remove (branch is kept)")
+        }
         if item.simctlRuntimeIdentifier != nil {
             return String(localized: "Permanent · Remove simulator runtime")
         }
@@ -360,8 +397,9 @@ private struct CleanupFileRow: View {
                 .labelsHidden()
                 .toggleStyle(.checkbox)
                 .tint(Tint.teal)
+                .disabled(item.isSelectionBlocked)
                 .accessibilityLabel("Select \(item.name)")
-            Image(systemName: item.isActionItem ? "gearshape.2" : "doc")
+            Image(systemName: item.gitWorktree != nil ? "arrow.triangle.branch" : item.isActionItem ? "gearshape.2" : "doc")
                 .font(.system(size: 18))
                 .foregroundStyle(.secondary)
                 .frame(width: 25)
@@ -377,9 +415,30 @@ private struct CleanupFileRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(item.path)
+                if let worktree = item.gitWorktree, !worktree.verdict.reasons.isEmpty {
+                    Text(worktree.verdict.reasons.map(\.localizedDescription).joined(separator: ", "))
+                        .font(.system(size: 11))
+                        .foregroundStyle(worktree.verdict.status.tint)
+                        .lineLimit(2)
+                }
+                if let breakdown = item.gitWorktree?.sizeBreakdownText {
+                    Text(breakdown)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 12)
-            if !item.isSelected {
+            if let worktree = item.gitWorktree {
+                Text(worktree.verdict.status.label)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(worktree.verdict.status.tint)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(worktree.verdict.status.tint.opacity(0.12), in: Capsule())
+                    .help(item.isSelectionBlocked ? String(localized: "PureMac will not remove this worktree.") : worktree.verdict.summary)
+            } else if !item.isSelected {
                 Text("Review")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -388,22 +447,28 @@ private struct CleanupFileRow: View {
                     .background(Color.primary.opacity(0.05), in: Capsule())
                     .help("Personal data or an optional cleanup action. Left unselected by default.")
             }
+            // Rows without a date or without a file to reveal (cleanup
+            // actions) keep both slots empty, so the date and size columns
+            // line up across every row.
             if let date = item.lastModified {
                 Text(date, style: .date)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(width: 78, alignment: .trailing)
+            } else {
+                Color.clear.frame(width: 78, height: 1)
             }
             Text(item.formattedSize)
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .frame(width: 85, alignment: .trailing)
-            if !item.isActionItem {
-                Button { reveal() } label: { Image(systemName: "arrow.up.forward.square") }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-                    .help("Reveal in Finder")
-                    .accessibilityLabel("Reveal \(item.name) in Finder")
-            }
+            Button { reveal() } label: { Image(systemName: "arrow.up.forward.square") }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Reveal in Finder")
+                .accessibilityLabel("Reveal \(item.name) in Finder")
+                .opacity(item.isActionItem ? 0 : 1)
+                .disabled(item.isActionItem)
+                .accessibilityHidden(item.isActionItem)
         }
         .padding(.vertical, 9)
         .contextMenu {
@@ -422,5 +487,16 @@ private struct CleanupFileRow: View {
 
     private func reveal() {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
+    }
+}
+
+private extension GitWorktreeSupport.Status {
+    var tint: Color {
+        switch self {
+        case .safeToDelete: return .green
+        case .needsReview: return .orange
+        case .protected: return Tint.red
+        case .orphan: return .secondary
+        }
     }
 }

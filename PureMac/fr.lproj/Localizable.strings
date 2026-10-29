@@ -926,9 +926,35 @@
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
 
-/* Risky removals */
+/* Git Worktrees and risky removals */
+"Git Worktrees" = "Git Worktrees";
+"Leftover git worktrees from AI agents and old branches" = "Leftover git worktrees from AI agents and old branches";
+"Safe to delete" = "Safe to delete";
+"Needs review" = "Needs review";
+"Protected" = "Protected";
+"Orphan" = "Orphan";
+"uncommitted changes (%lld)" = "uncommitted changes (%lld)";
+"commits not on any remote or other branch (%lld)" = "commits not on any remote or other branch (%lld)";
+"stashed changes" = "stashed changes";
+"locked by git" = "locked by git";
+"open in a running process" = "open in a running process";
+"agent worktree active in the last 24 hours" = "agent worktree active in the last 24 hours";
+"folder is gone; git still lists it" = "folder is gone; git still lists it";
+"not a worktree its repository knows about" = "not a worktree its repository knows about";
+"untracked files (%lld)" = "untracked files (%lld)";
+"ignored .env files would be deleted" = "ignored .env files would be deleted";
+"no main branch to compare with" = "no main branch to compare with";
+"not merged into the main branch" = "not merged into the main branch";
+"no commits of its own" = "no commits of its own";
+"active %lld days ago" = "active %lld days ago";
+"merged, no recent activity" = "merged, no recent activity";
+"merged, idle for %lld days" = "merged, idle for %lld days";
 "Nothing goes to the Trash: Docker deletes these objects permanently." = "Nothing goes to the Trash: Docker deletes these objects permanently.";
 "Stopped containers and the files inside them are deleted; running containers are kept." = "Stopped containers and the files inside them are deleted; running containers are kept.";
+"Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash." = "Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash.";
+"Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing.";
+"Close any agent, editor or terminal still using these folders: they lose their working directory." = "Close any agent, editor or terminal still using these folders: they lose their working directory.";
+"Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back.";
 "Confirm each risk before removing" = "Confirm each risk before removing";
 "Remove %lld items permanently?" = "Remove %lld items permanently?";
 "Remove permanently" = "Remove permanently";
@@ -936,6 +962,37 @@
 "Copy agent prompt" = "Copy agent prompt";
 "Copied" = "Copied";
 "Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Copy a short brief with every found item so an AI agent can check the risks with you before removal.";
+"Permanent · git worktree remove (branch is kept)" = "Permanent · git worktree remove (branch is kept)";
+"PureMac will not remove this worktree." = "PureMac will not remove this worktree.";
+
+/* Git Worktrees settings, prune and size breakdown */
+"Idle after: %lld days" = "Idle after: %lld days";
+"A merged worktree without activity for this long is Safe to delete; a more recent one needs review." = "A merged worktree without activity for this long is Safe to delete; a more recent one needs review.";
+"Base branch" = "Base branch";
+"origin/HEAD, origin/main, origin/master, main, master" = "origin/HEAD, origin/main, origin/master, main, master";
+"Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged." = "Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged.";
+"Optional in Smart Scan" = "Optional in Smart Scan";
+"Off until you add them" = "Off until you add them";
+"Scanning only reads. Removal stays on the category screen." = "Scanning only reads. Removal stays on the category screen.";
+"Add to Smart Scan" = "Add to Smart Scan";
+"In Smart Scan from the next scan" = "In Smart Scan from the next scan";
+"In Smart Scan · scanned after the current category" = "In Smart Scan · scanned after the current category";
+"In Smart Scan · nothing found" = "In Smart Scan · nothing found";
+"In Smart Scan · %@ found, listed in the plan" = "In Smart Scan · %@ found, listed in the plan";
+"Remove from Smart Scan" = "Remove from Smart Scan";
+"Include in Smart Scan" = "Include in Smart Scan";
+"Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen." = "Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen.";
+"Delete the merged branch after removing a worktree" = "Delete the merged branch after removing a worktree";
+"Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged." = "Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged.";
+"Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep." = "Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep.";
+"Remove folder" = "Remove folder";
+"Add Search Folder…" = "Add Search Folder…";
+"Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Branches of Safe to delete worktrees are deleted with git branch -d, only if git agrees they are merged. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing.";
+"git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not." = "git worktree prune deletes only git's records of worktrees whose folder is already gone; no files are touched. It applies to every missing worktree of that repository, selected or not.";
+"artifacts %@ · code %@" = "artifacts %@ · code %@";
+"no build folders · code %@" = "no build folders · code %@";
+"Permanent · git worktree prune (forgets the missing folder, deletes no files)" = "Permanent · git worktree prune (forgets the missing folder, deletes no files)";
+"Permanent · git worktree remove (merged branch is deleted with git branch -d)" = "Permanent · git worktree remove (merged branch is deleted with git branch -d)";
 
 /* Docker polish */
 "Dangling Docker images (untagged leftovers)" = "Dangling Docker images (untagged leftovers)";
@@ -950,3 +1007,9 @@
 "Unused Docker volumes (may contain data such as databases, size not estimated)" = "Unused Docker volumes (may contain data such as databases, size not estimated)";
 "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back.";
 "Reviewed inside the category before removal" = "Reviewed inside the category before removal";
+
+/* Git Worktrees safety review */
+"ignored files outside build folders (%lld)" = "ignored files outside build folders (%lld)";
+"nested repository in ignored folder" = "nested repository in ignored folder";
+"ignored folders too large to check completely" = "ignored folders too large to check completely";
+"Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted." = "Use a branch name such as main or origin/main. HEAD, tags and commit hashes are not accepted.";

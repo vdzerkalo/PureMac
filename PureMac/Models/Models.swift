@@ -15,6 +15,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case brewCache = "Brew Cache"
     case nodeCache = "Node Cache"
     case dockerCache = "Docker Cache"
+    case gitWorktrees = "Git Worktrees"
     case universalBinaries = "Universal Binaries"
     case languageFiles = "Language Files"
 
@@ -34,6 +35,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .brewCache: return "mug.fill"
         case .nodeCache: return "leaf.fill"
         case .dockerCache: return "shippingbox.fill"
+        case .gitWorktrees: return "arrow.triangle.branch"
         case .universalBinaries: return "cpu"
         case .languageFiles: return "globe"
         }
@@ -53,6 +55,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .brewCache: return "Homebrew download cache"
         case .nodeCache: return "npm, yarn, and pnpm download caches"
         case .dockerCache: return "Docker images, containers, and build cache"
+        case .gitWorktrees: return "Leftover git worktrees from AI agents and old branches"
         case .universalBinaries: return "Unused CPU architecture slices in app binaries"
         case .languageFiles: return "Unused app localizations"
         }
@@ -72,6 +75,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .brewCache: return .mint
         case .nodeCache: return .pink
         case .dockerCache: return .indigo
+        case .gitWorktrees: return .orange
         case .universalBinaries: return .brown
         case .languageFiles: return .gray
         }
@@ -91,6 +95,43 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     static var scannable: [CleaningCategory] {
         allCases.filter {
             $0 != .smartScan && $0 != .purgeableSpace && !appModifying.contains($0)
+        }
+    }
+
+    // Categories a Smart Scan or a scheduled scan covers by default. Git
+    // worktrees are left out of both: removing one runs `git worktree
+    // remove` on the user's own repositories, so it is cleaned only from its
+    // own category screen, and its scan can take minutes. Rows scanned there
+    // do stay in `categoryResults`, so the Overview also refuses them:
+    // `RemovalRisk.requiresAcknowledgement` keeps them out of its totals,
+    // its Clean button, its category checkbox and `cleanAll` (manual and
+    // scheduled alike).
+    static var smartScannable: [CleaningCategory] {
+        scannable.filter { $0 != .gitWorktrees }
+    }
+
+    // Categories outside `smartScannable` that the user can add to a manual
+    // Smart Scan: "Add to Smart Scan" on the Overview or a toggle in
+    // Settings, stored under this key. Adding one adds only its scan; the
+    // Overview still never counts, selects or cleans it, and scheduled scans
+    // keep `smartScannable`.
+    var smartScanOptInKey: String? {
+        switch self {
+        case .gitWorktrees: return GitWorktreeSettings.includeInSmartScanKey
+        default: return nil
+        }
+    }
+
+    static var smartScanOptional: [CleaningCategory] {
+        scannable.filter { $0.smartScanOptInKey != nil && !smartScannable.contains($0) }
+    }
+
+    /// What a manual Smart Scan covers: `smartScannable` plus the optional
+    /// categories added in `defaults`, in `scannable` order.
+    static func smartScanCategories(defaults: UserDefaults = .standard) -> [CleaningCategory] {
+        scannable.filter { category in
+            smartScannable.contains(category)
+                || (smartScanOptional.contains(category) && category.smartScanOptInKey.map(defaults.bool(forKey:)) == true)
         }
     }
 
@@ -161,6 +202,17 @@ struct CleanableItem: Identifiable, Hashable {
         path.isEmpty
             || path.hasPrefix(Self.simctlRuntimePathPrefix)
             || path.hasPrefix(DockerSupport.actionPathPrefix)
+    }
+
+    /// Set on Git Worktrees rows: what git reported at scan time, including
+    /// the repository the clean step runs `git worktree remove` in.
+    var gitWorktree: GitWorktreeReport?
+
+    /// Protected worktrees and orphans git does not know about are listed so
+    /// the user sees why they stay, but they can never be selected. Prunable
+    /// orphans can: their action is `git worktree prune`.
+    var isSelectionBlocked: Bool {
+        gitWorktree?.verdict.blocksSelection ?? false
     }
 
     var simctlRuntimeIdentifier: String? {
@@ -260,7 +312,7 @@ struct ScheduleConfig: Codable {
     var interval: ScheduleInterval = .daily
     var autoClean: Bool = false
     var autoPurge: Bool = false
-    var categoriesToScan: [CleaningCategory] = CleaningCategory.scannable
+    var categoriesToScan: [CleaningCategory] = CleaningCategory.smartScannable
     var lastRunDate: Date?
     var nextRunDate: Date?
     var notifyOnCompletion: Bool = true

@@ -12,6 +12,10 @@ actor ScanEngine {
     /// a directory with thousands of entries doesn't flood the main actor.
     private var onPath: (@Sendable (String) -> Void)?
     private var lastReport = Date.distantPast
+    /// Share of the current category done (0...1), for categories that can
+    /// tell (Git Worktrees). Others report nothing and the bar moves per
+    /// category.
+    private var onFraction: (@Sendable (Double) -> Void)?
 
     /// `path` is an autoclosure so the String is only materialized after the
     /// throttle gate passes — a deep home-directory walk enumerates hundreds
@@ -48,10 +52,15 @@ actor ScanEngine {
 
     func scanCategory(
         _ category: CleaningCategory,
-        onPath: (@Sendable (String) -> Void)? = nil
+        onPath: (@Sendable (String) -> Void)? = nil,
+        onFraction: (@Sendable (Double) -> Void)? = nil
     ) async -> CategoryResult {
         self.onPath = onPath
-        defer { self.onPath = nil }
+        self.onFraction = onFraction
+        defer {
+            self.onPath = nil
+            self.onFraction = nil
+        }
         switch category {
         case .smartScan:
             return CategoryResult(category: category, items: [], totalSize: 0)
@@ -77,6 +86,8 @@ actor ScanEngine {
             return await scanNodeCache()
         case .dockerCache:
             return await scanDockerCache()
+        case .gitWorktrees:
+            return await scanGitWorktrees()
         case .universalBinaries:
             return scanUniversalBinaries()
         case .languageFiles:
@@ -903,6 +914,56 @@ actor ScanEngine {
             note = String(localized: "Docker Desktop's disk image (Docker.raw) uses \(size) on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself.")
         }
         return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize, note: note)
+    }
+
+    /// One row per linked git worktree found in agent folders and Claude
+    /// Code's project list (see GitWorktreeScanner). Only Safe to delete
+    /// rows start selected; Protected and orphan rows are listed with their
+    /// reasons but cannot be selected (prunable orphans can, for
+    /// `git worktree prune`, never preselected). Inactive days, extra
+    /// search folders and the base branch come from Settings
+    /// (GitWorktreeSettings). Without git (no Homebrew git and no
+    /// developer tools) the category is simply empty.
+    private func scanGitWorktrees() async -> CategoryResult {
+        guard let gitPath = GitWorktreeScanner.locateGit() else {
+            Logger.shared.log("Git Worktrees: git not found", level: .info)
+            return CategoryResult(category: .gitWorktrees, items: [], totalSize: 0)
+        }
+        let settings = GitWorktreeSettings.current()
+        var scanner = GitWorktreeScanner(homeDirectory: home, gitPath: gitPath)
+        scanner.inactiveDays = settings.inactiveDays
+        scanner.extraRoots = settings.extraRoots
+        scanner.baseBranchOverride = settings.baseBranch
+        scanner.measuresSizes = true
+        // Every step goes to the ticker: a check takes seconds, so these are
+        // few, and "12/48" tells a long scan from a stuck one.
+        let onPath = self.onPath
+        let onFraction = self.onFraction
+        let reports = await scanner.scan { step in
+            switch step {
+            case .discovering(let path):
+                onPath?(path)
+            case .inspecting(let path, let position, let total):
+                onPath?("\(position)/\(total) · \(path)")
+                onFraction?(Double(position - 1) / Double(max(total, 1)))
+            }
+        }
+        var items: [CleanableItem] = []
+        for worktree in reports {
+            if Task.isCancelled { break }
+            var item = CleanableItem(
+                name: worktree.displayName,
+                path: worktree.path,
+                size: worktree.totalBytes,
+                category: .gitWorktrees,
+                isSelected: worktree.verdict.status == .safeToDelete,
+                lastModified: worktree.lastActivity
+            )
+            item.gitWorktree = worktree
+            items.append(item)
+        }
+        let totalSize = items.reduce(0) { $0 + $1.size }
+        return CategoryResult(category: .gitWorktrees, items: items, totalSize: totalSize)
     }
 
     private func scanUniversalBinaries() -> CategoryResult {
