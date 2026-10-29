@@ -572,6 +572,7 @@ actor CleaningEngine {
         // Narrow the TOCTOU window: the root must still be a real directory
         // right before the unlink. A same-user process can still swap a link
         // in between this check and removeItem (see docs/DEV-TOOL-CACHES.md).
+        devTools.beforeUnlinkRecheck(item.path)
         guard isUnchangedDevToolRoot(item.path) else {
             let msg = "Aborting delete: path resolution changed between check and unlink for \(item.path)"
             Logger.shared.log(msg, level: .warning)

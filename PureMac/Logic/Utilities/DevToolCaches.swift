@@ -151,6 +151,10 @@ struct DevToolCacheEnvironment: Sendable {
     var processCommandLines: @Sendable () -> [String]?
     /// Upper bound for a single `uv` or `go` invocation.
     var commandTimeout: TimeInterval
+    /// Test seam: runs with the root path after the clean's first checks and
+    /// before the final symlink re-check that precedes a plain unlink. Lets a
+    /// test swap the root for a symlink inside the race window.
+    var beforeUnlinkRecheck: @Sendable (String) -> Void = { _ in }
 
     static let live = DevToolCacheEnvironment(
         searchDirectories: nil,

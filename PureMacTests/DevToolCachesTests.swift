@@ -678,6 +678,32 @@ final class DevToolCachesTests: XCTestCase {
         XCTAssertTrue(exists("Library/Caches/go-build/payload.bin"))
     }
 
+    func testPlainUnlinkIsRefusedWhenTheRootBecomesASymlinkAfterTheFirstChecks() async throws {
+        let root = try makeCache(".bun/install/cache")
+        let outside = base.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 8192).write(to: outside.appendingPathComponent("keep.bin"))
+        // The swap happens after the engine's first checks, right before the unlink.
+        var env = environment()
+        env.beforeUnlinkRecheck = { path in
+            try? FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.createSymbolicLink(atPath: path, withDestinationPath: outside.path)
+        }
+
+        let result = await clean([item(".bun/install/cache")], environment: env)
+
+        XCTAssertEqual(result.itemsCleaned, 0)
+        XCTAssertTrue(result.cleanedPaths.isEmpty)
+        XCTAssertEqual(result.errors.count, 1)
+        XCTAssertTrue(result.errors[0].contains("path resolution changed"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.appendingPathComponent("keep.bin").path))
+        // The link itself is left in place; nothing was unlinked.
+        XCTAssertEqual(
+            try FileManager.default.destinationOfSymbolicLink(atPath: root),
+            outside.path
+        )
+    }
+
     func testUVCleanIsNotStartedOnASymlinkedRoot() async throws {
         let outside = base.appendingPathComponent("outside", isDirectory: true)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
