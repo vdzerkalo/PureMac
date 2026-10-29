@@ -33,7 +33,7 @@ enum RemovalRisk {
                 risks.append(String(localized: "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source."))
             }
             if actions.contains(.unusedVolumes) {
-                risks.append(String(localized: "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back."))
+                risks.append(String(localized: "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back."))
             }
             return risks
         default:
@@ -43,7 +43,7 @@ enum RemovalRisk {
 
     /// How an item is removed, as a command an agent can reason about.
     static func action(for item: CleanableItem) -> String {
-        if let prune = item.dockerPruneAction { return prune.commandLine }
+        if let command = item.dockerCommandLine { return command }
         if item.isActionItem { return item.name }
         return "delete \((item.path as NSString).abbreviatingWithTildeInPath)"
     }

@@ -929,7 +929,6 @@
 /* Risky removals */
 "Nothing goes to the Trash: Docker deletes these objects permanently." = "Nothing goes to the Trash: Docker deletes these objects permanently.";
 "Stopped containers and the files inside them are deleted; running containers are kept." = "Stopped containers and the files inside them are deleted; running containers are kept.";
-"Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Unused volumes are erased with their data (databases, uploads); no pull or build brings it back.";
 "Confirm each risk before removing" = "Confirm each risk before removing";
 "Remove %lld items permanently?" = "Remove %lld items permanently?";
 "Remove permanently" = "Remove permanently";
@@ -946,3 +945,8 @@
 "Build cache is deleted; the next build recreates it and is slower." = "Build cache is deleted; the next build recreates it and is slower.";
 "All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded." = "All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded.";
 "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source." = "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source.";
+
+/* Docker review fixes */
+"Unused Docker volumes (may contain data such as databases, size not estimated)" = "Unused Docker volumes (may contain data such as databases, size not estimated)";
+"The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back.";
+"Reviewed inside the category before removal" = "Reviewed inside the category before removal";

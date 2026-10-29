@@ -80,29 +80,37 @@ enum DockerSupport {
             }
         }
 
+        /// Fixed arguments. Volumes are different: there is no prune, only
+        /// `docker volume rm` on the exact names recorded at scan time, which
+        /// live in the row's path. This base is never run without names; use
+        /// `DockerSupport.arguments(forPath:)`.
         var arguments: [String] {
             switch self {
             case .buildCache: return ["builder", "prune", "-a", "-f"]
             case .stoppedContainers: return ["container", "prune", "-f"]
             case .danglingImages: return ["image", "prune", "-f"]
             case .unusedImages: return ["image", "prune", "-a", "-f"]
-            case .unusedVolumes: return ["volume", "prune", "-a", "-f"]
+            case .unusedVolumes: return ["volume", "rm"]
             }
         }
 
-        /// Run order when several rows are selected. Containers go first:
-        /// removing a stopped container releases the images and volumes it
-        /// held, so the later prunes find more (the estimates only ever
-        /// under-promise). Dangling images go before `image prune -a`, so the
-        /// second command reports only what is left and the two "Total
-        /// reclaimed space" lines add up without overlap. Build cache is
-        /// independent of the others and can run for minutes, so it is last.
+        /// Run order when several rows are selected. Volumes go FIRST, before
+        /// the container prune: a stopped container holds its volumes, and
+        /// removing the container would make them "unused" after the user
+        /// reviewed a list that did not include them. Run first, the volume
+        /// removal only ever sees the volumes that were unused at scan time.
+        /// Containers then release the images they used, so the image prunes
+        /// find more (estimates only under-promise). Dangling images go
+        /// before `image prune -a`, so the second command reports only what
+        /// is left and the two "Total reclaimed space" lines add up without
+        /// overlap. Build cache is independent and can run for minutes, so
+        /// it is last.
         var cleanOrder: Int {
             switch self {
-            case .stoppedContainers: return 0
-            case .danglingImages: return 1
-            case .unusedImages: return 2
-            case .unusedVolumes: return 3
+            case .unusedVolumes: return 0
+            case .stoppedContainers: return 1
+            case .danglingImages: return 2
+            case .unusedImages: return 3
             case .buildCache: return 4
             }
         }
@@ -126,13 +134,64 @@ enum DockerSupport {
     /// survive path-based dedupe and cleanedPaths bookkeeping.
     static let actionPathPrefix = "docker-prune:"
 
-    static func actionPath(for action: PruneAction) -> String {
-        actionPathPrefix + action.rawValue
+    /// `docker-prune:<action>`. The volumes row also carries the volumes
+    /// recorded at scan time: `docker-prune:volumes:<name>=<bytes>,…`. Volume
+    /// names only contain `[A-Za-z0-9_.-]`, so `:`, `,` and `=` are safe
+    /// separators; names that do not match are never encoded.
+    static func actionPath(for action: PruneAction, volumes: [VolumeEntry] = []) -> String {
+        var path = actionPathPrefix + action.rawValue
+        let valid = volumes.filter { isValidVolumeName($0.name) }
+        if action == .unusedVolumes, !valid.isEmpty {
+            path += ":" + valid.map { "\($0.name)=\($0.bytes)" }.joined(separator: ",")
+        }
+        return path
     }
 
     static func action(forPath path: String) -> PruneAction? {
         guard path.hasPrefix(actionPathPrefix) else { return nil }
-        return PruneAction(rawValue: String(path.dropFirst(actionPathPrefix.count)))
+        let rest = path.dropFirst(actionPathPrefix.count)
+        let raw = rest.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+        return PruneAction(rawValue: String(raw))
+    }
+
+    /// The volumes recorded in a volumes row's path; empty for any other
+    /// path and for entries whose name is not a valid volume name.
+    static func volumeEntries(forPath path: String) -> [VolumeEntry] {
+        guard action(forPath: path) == .unusedVolumes else { return [] }
+        let rest = path.dropFirst(actionPathPrefix.count)
+        let parts = rest.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return [] }
+        return parts[1].split(separator: ",").compactMap { token in
+            let pair = token.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard pair.count == 2, isValidVolumeName(String(pair[0])), let bytes = Int64(pair[1]), bytes >= 0
+            else { return nil }
+            return VolumeEntry(name: String(pair[0]), bytes: bytes)
+        }
+    }
+
+    /// The command a Docker row runs. Fixed for every row except volumes,
+    /// which is `volume rm` + the recorded names (nil when the row records
+    /// none: it must never run as a bare `volume rm`).
+    static func arguments(forPath path: String) -> [String]? {
+        guard let action = action(forPath: path) else { return nil }
+        guard action == .unusedVolumes else { return action.arguments }
+        let names = volumeEntries(forPath: path).map(\.name)
+        return names.isEmpty ? nil : action.arguments + names
+    }
+
+    static func commandLine(forPath path: String) -> String? {
+        guard let action = action(forPath: path) else { return nil }
+        guard let arguments = arguments(forPath: path) else { return action.commandLine }
+        return (["docker"] + arguments).joined(separator: " ")
+    }
+
+    /// One row of the scan: what a Docker action will free.
+    struct PruneEstimate {
+        let action: PruneAction
+        let bytes: Int64
+        let sizeKnown: Bool
+        /// Volumes the row will remove (volumes row only).
+        let volumes: [VolumeEntry]
     }
 
     /// Reclaimable bytes per action, in display order, skipping empty rows.
@@ -147,22 +206,131 @@ enum DockerSupport {
     /// has `bytes == 0` and `sizeKnown == false` (a computed 0 counts as no
     /// figure: all its layers are shared). Zero there means "not
     /// estimated", never "frees nothing", and the UI labels it as such.
+    ///
+    /// The volumes row never comes from df's "Local Volumes" figure: it lists
+    /// exactly the volumes recorded by `volumeEstimate`, and its size is the
+    /// sum of those volumes, so the number shown and the volumes removed are
+    /// the same set.
     static func pruneEstimates(
         _ rows: [DiskUsageRow],
-        dangling: DanglingEstimate? = nil
-    ) -> [(action: PruneAction, bytes: Int64, sizeKnown: Bool)] {
+        dangling: DanglingEstimate? = nil,
+        volumes: VolumeEstimate? = nil
+    ) -> [PruneEstimate] {
         let danglingBytes = dangling?.bytes ?? 0
         return PruneAction.allCases.compactMap { action in
-            if action == .danglingImages {
-                guard let dangling else { return nil }
-                return (action, danglingBytes, danglingBytes > 0)
+            switch action {
+            case .danglingImages:
+                guard dangling != nil else { return nil }
+                return PruneEstimate(action: action, bytes: danglingBytes, sizeKnown: danglingBytes > 0, volumes: [])
+            case .unusedVolumes:
+                guard let volumes else { return nil }
+                return PruneEstimate(action: action, bytes: volumes.bytes, sizeKnown: volumes.bytes > 0, volumes: volumes.entries)
+            default:
+                var bytes = rows
+                    .filter { $0.type == action.diskUsageType }
+                    .reduce(0) { $0 + $1.reclaimable }
+                if action == .unusedImages { bytes = max(bytes - danglingBytes, 0) }
+                return bytes > 0 ? PruneEstimate(action: action, bytes: bytes, sizeKnown: true, volumes: []) : nil
             }
-            var bytes = rows
-                .filter { $0.type == action.diskUsageType }
-                .reduce(0) { $0 + $1.reclaimable }
-            if action == .unusedImages { bytes = max(bytes - danglingBytes, 0) }
-            return bytes > 0 ? (action, bytes, true) : nil
         }
+    }
+
+    // MARK: - Unused volumes
+
+    /// Volume names are `[A-Za-z0-9][A-Za-z0-9_.-]*`. Anything else is never
+    /// passed to docker, so a name cannot become an option or a path.
+    static func isValidVolumeName(_ name: String) -> Bool {
+        guard let first = name.unicodeScalars.first, first.isASCII, CharacterSet.alphanumerics.contains(first)
+        else { return false }
+        return name.unicodeScalars.allSatisfy {
+            $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "_" || $0 == "." || $0 == "-")
+        }
+    }
+
+    /// Volumes no container references, running or stopped: the set
+    /// `docker volume prune -a` would remove, and the only ones a volumes
+    /// row may remove. Recorded at scan time, re-checked right before removal.
+    static let unusedVolumeNamesArguments = ["volume", "ls", "-q", "--filter", "dangling=true"]
+
+    struct VolumeEntry: Equatable {
+        let name: String
+        /// Bytes at scan time (0 when docker reported none).
+        let bytes: Int64
+    }
+
+    struct VolumeUsage: Equatable {
+        let name: String
+        /// Containers, running or stopped, that reference the volume.
+        let links: Int
+        /// nil when docker printed no size ("N/A").
+        let size: Int64?
+    }
+
+    struct VolumeEstimate: Equatable {
+        let entries: [VolumeEntry]
+        var bytes: Int64 { entries.reduce(0) { $0 + $1.bytes } }
+    }
+
+    /// Volume names from `unusedVolumeNamesArguments` output; invalid names
+    /// are dropped.
+    static func parseVolumeNames(_ output: String) -> [String] {
+        parseImageIDs(output).filter(isValidVolumeName)
+    }
+
+    /// The Volumes array of `docker system df -v --format '{{json .}}'`; nil
+    /// when the output is not that JSON object.
+    static func parseVolumeUsage(_ output: String) -> [VolumeUsage]? {
+        guard let data = output.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let volumes = object["Volumes"] as? [[String: Any]]
+        else { return nil }
+        return volumes.compactMap { volume in
+            guard let name = volume["Name"] as? String,
+                  let linksText = volume["Links"] as? String,
+                  let links = Int(linksText)
+            else { return nil }
+            return VolumeUsage(name: name, links: links, size: (volume["Size"] as? String).flatMap(parseHumanBytes))
+        }
+    }
+
+    /// The volumes a row may remove, with their sizes. Names come from the
+    /// dangling filter; df -v only supplies sizes (a volume's size is its own
+    /// data, nothing is shared, so the sum is exact apart from Docker's
+    /// rounding). A volume df says is referenced by a container is dropped; a
+    /// volume without a size counts 0 bytes.
+    /// - Returns: nil when there is nothing to remove or the names are unknown.
+    static func volumeEstimate(names: [String]?, usage: [VolumeUsage]?) -> VolumeEstimate? {
+        guard let names, !names.isEmpty else { return nil }
+        let byName = Dictionary((usage ?? []).map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen = Set<String>()
+        let entries: [VolumeEntry] = names.compactMap { name in
+            guard isValidVolumeName(name), seen.insert(name).inserted else { return nil }
+            guard let known = byName[name] else { return VolumeEntry(name: name, bytes: 0) }
+            guard known.links == 0 else { return nil }
+            return VolumeEntry(name: name, bytes: known.size ?? 0)
+        }
+        return entries.isEmpty ? nil : VolumeEstimate(entries: entries)
+    }
+
+    /// Splits the result of `docker volume rm <names>`. Docker prints each
+    /// removed name on stdout and one error line per failure on stderr. A
+    /// volume that no longer exists ("no such volume") is skipped silently;
+    /// every other failure (typically "volume is in use") is reported.
+    static func parseVolumeRemoval(
+        stdout: String,
+        stderr: String,
+        requested: [VolumeEntry]
+    ) -> (removed: [VolumeEntry], problems: [String]) {
+        let printed = Set(parseImageIDs(stdout))
+        let removed = requested.filter { printed.contains($0.name) }
+        let problems: [String] = stderr.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.lowercased().contains("no such volume") }
+            .map { line in
+                let prefix = "Error response from daemon: "
+                return "docker volume rm: " + (line.hasPrefix(prefix) ? String(line.dropFirst(prefix.count)) : line)
+            }
+        return (removed, problems)
     }
 
     // MARK: - Dangling images
@@ -339,8 +507,77 @@ enum DockerSupport {
     /// Classify a failed docker invocation's stderr. Docker Desktop and
     /// OrbStack both stop their daemon on demand, so "not running" is the
     /// common case and deserves a friendly message rather than an exit code.
+    ///
+    /// Only the CLI's own connection errors count. Any text containing
+    /// "daemon" does not: "Error response from daemon: a prune operation is
+    /// already running" comes from a running daemon and must not read as
+    /// "Docker isn't running".
     static func isDaemonUnavailable(stderr: String) -> Bool {
-        stderr.contains("Cannot connect") || stderr.contains("dial unix") || stderr.contains("daemon")
+        ["Cannot connect to the Docker daemon", "Is the docker daemon running", "dial unix"]
+            .contains { stderr.contains($0) }
+    }
+
+    /// Docker wording for a failed run, instead of the Homebrew text
+    /// `ApplicationUpdaterError` carries (the runner is shared with brew).
+    static func describe(_ error: Error, timeout: TimeInterval) -> String {
+        switch error as? ApplicationUpdaterError {
+        case .timedOut:
+            return "timed out after \(Int(timeout))s"
+        case .outputLimitExceeded:
+            return "printed more output than PureMac can read"
+        default:
+            return error.localizedDescription
+        }
+    }
+
+    // MARK: - Files PureMac must never unlink
+
+    /// True for Docker Desktop and OrbStack VM disks, their state, and the
+    /// folders that contain them. They sit under allow-listed roots
+    /// (`~/Library/Containers`, `~/Library/Group Containers`), so this is
+    /// checked BEFORE the allow-list, for the literal and the symlink-resolved
+    /// path, on a case-insensitive basis (default APFS volumes are
+    /// case-insensitive). Images, containers and volumes live inside these
+    /// disks; only the docker CLI may remove them.
+    ///
+    /// Denied: `Library/Containers/com.docker.docker/Data/vms` and the
+    /// container itself and its `Data` folder (their removal takes `vms` with
+    /// it); `Library/Group Containers/group.com.docker` except its `Caches`
+    /// subtree; `Library/Group Containers/<team>.dev.orbstack` and its `data`;
+    /// `.orbstack` and `.orbstack/data`; `.docker/desktop`.
+    static func isProtectedDiskPath(_ path: String, homeDirectory: URL) -> Bool {
+        let resolvedHome = homeDirectory.resolvingSymlinksInPath()
+        var homes: [String] = []
+        for home in [homeDirectory.standardizedFileURL.path, resolvedHome.path, resolvedHome.standardizedFileURL.path]
+        where !homes.contains(home) {
+            homes.append(home)
+        }
+        let candidates = [
+            (path as NSString).standardizingPath,
+            URL(fileURLWithPath: path).resolvingSymlinksInPath().path,
+        ].map { $0.lowercased() }
+
+        func within(_ candidate: String, _ root: String) -> Bool {
+            candidate == root || candidate.hasPrefix(root + "/")
+        }
+
+        for home in homes.map({ $0.lowercased() }) {
+            let docker = home + "/library/containers/com.docker.docker"
+            let group = home + "/library/group containers/group.com.docker"
+            let groupContainers = home + "/library/group containers/"
+            for candidate in candidates {
+                if candidate == docker || candidate == docker + "/data" || within(candidate, docker + "/data/vms") { return true }
+                if candidate == group || (candidate.hasPrefix(group + "/") && !within(candidate, group + "/caches")) { return true }
+                if candidate == home + "/.orbstack" || within(candidate, home + "/.orbstack/data") { return true }
+                if within(candidate, home + "/.docker/desktop") { return true }
+                if candidate.hasPrefix(groupContainers) {
+                    let parts = candidate.dropFirst(groupContainers.count).split(separator: "/", omittingEmptySubsequences: false)
+                    if let first = parts.first, first.hasSuffix(".dev.orbstack"),
+                       parts.count == 1 || parts[1] == "data" { return true }
+                }
+            }
+        }
+        return false
     }
 
     /// A prune of a large build cache can run for minutes; the limit only

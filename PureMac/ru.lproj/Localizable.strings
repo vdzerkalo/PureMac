@@ -933,7 +933,6 @@
 /* Risky removals */
 "Nothing goes to the Trash: Docker deletes these objects permanently." = "Ничего не попадает в Корзину: Docker удаляет эти объекты навсегда.";
 "Stopped containers and the files inside them are deleted; running containers are kept." = "Остановленные контейнеры и файлы в них удаляются; запущенные остаются.";
-"Unused volumes are erased with their data (databases, uploads); no pull or build brings it back." = "Неиспользуемые volumes стираются вместе с данными (базы, загрузки); никакой pull или build их не вернёт.";
 "Confirm each risk before removing" = "Подтвердите каждый риск перед удалением";
 "Remove %lld items permanently?" = "Удалить навсегда элементов: %lld?";
 "Remove permanently" = "Удалить навсегда";
@@ -950,3 +949,8 @@
 "Build cache is deleted; the next build recreates it and is slower." = "Кэш сборки будет удалён; следующая сборка создаст его заново и будет медленнее.";
 "All images no container uses are deleted, tagged or not; ones you built locally and never pushed can only be rebuilt, not downloaded." = "Все образы, которые не использует ни один контейнер, будут удалены, с тегами или без; образы, собранные локально и никогда не отправленные в registry, можно только собрать заново, а не скачать.";
 "Dangling images (no tag) are deleted; if you still need one, you have to rebuild it from its source." = "Dangling-образы (без тега) будут удалены; если такой образ ещё нужен, его придётся собрать заново из исходников.";
+
+/* Docker review fixes */
+"Unused Docker volumes (may contain data such as databases, size not estimated)" = "Неиспользуемые тома Docker (могут содержать данные, например базы данных, размер не оценён)";
+"The volumes named in the command are erased with their data (databases, uploads); no pull or build brings it back." = "Тома, названные в команде, будут стёрты вместе с данными (базы данных, загрузки); ни pull, ни сборка их не вернут.";
+"Reviewed inside the category before removal" = "Удаляется в самой категории после просмотра";
