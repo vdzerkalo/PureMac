@@ -98,6 +98,22 @@ actor CleaningEngine {
                 continue
             }
 
+            if item.category == .gitWorktrees {
+                // Worktrees are removed through git, never unlinked or moved
+                // to the Trash: that would leave git's metadata pointing at a
+                // missing folder and keep the bytes on the same volume.
+                let outcome = await removeGitWorktree(item)
+                result.freedSpace += outcome.freed
+                if outcome.cleaned {
+                    result.itemsCleaned += 1
+                    result.cleanedPaths.insert(item.path)
+                }
+                if let error = outcome.error {
+                    result.errors.append(error)
+                }
+                continue
+            }
+
             if item.category == .dockerCache && item.path.isEmpty {
                 // The virtual "Docker prune" entry (empty path, like
                 // purgeableSpace) reclaims space inside the Docker/OrbStack VM
@@ -466,6 +482,39 @@ actor CleaningEngine {
             return (bytes, nil)
         }
         return (0, nil)
+    }
+
+    // MARK: - Git Worktrees
+
+    /// Re-checks a worktree right before removing it (status, lock, in-use
+    /// and unpushed work can all change after the scan), then runs
+    /// `git worktree remove` without --force. Protected or orphan verdicts,
+    /// and anything git itself refuses, leave the worktree untouched.
+    func removeGitWorktree(_ item: CleanableItem) async -> (freed: Int64, cleaned: Bool, error: String?) {
+        guard let report = item.gitWorktree, let repository = report.repositoryPath else {
+            return (0, false, "Not a git worktree PureMac can remove: \(item.name)")
+        }
+        guard let gitPath = GitWorktreeScanner.locateGit() else {
+            return (0, false, "git not found — install Homebrew git or the Xcode command-line tools")
+        }
+        let scanner = GitWorktreeScanner(homeDirectory: homeDirectory.path, gitPath: gitPath)
+        guard let fresh = await scanner.reinspect(path: item.path, repository: repository) else {
+            return (0, false, "\(item.name) is no longer a worktree of \(repository)")
+        }
+        guard !fresh.verdict.status.blocksSelection else {
+            let why = fresh.verdict.reasons.map(\.localizedDescription).joined(separator: ", ")
+            Logger.shared.log("Skipped worktree \(item.path): \(fresh.verdict.status.rawValue) (\(why))", level: .warning)
+            return (0, false, "\(fresh.verdict.status.label): \(why) — \(item.name)")
+        }
+        if let error = await scanner.remove(path: item.path, repository: repository) {
+            Logger.shared.log("git worktree remove \(item.path) refused: \(error)", level: .warning)
+            return (0, false, "\(item.name): \(error)")
+        }
+        guard !fileManager.fileExists(atPath: item.path) else {
+            return (0, false, "\(item.name): git reported success but the folder is still there")
+        }
+        Logger.shared.log("Removed worktree \(item.path) (~\(item.size) bytes)", level: .info)
+        return (item.size, true, nil)
     }
 
     // MARK: - Simulator Runtimes

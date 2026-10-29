@@ -669,6 +669,7 @@ final class AppState: ObservableObject {
     }
 
     func toggleItem(_ item: CleanableItem) {
+        if item.isSelectionBlocked, !isItemSelected(item) { return }
         if isItemSelected(item) {
             if item.isSelected {
                 deselectedItems.insert(item.id)
@@ -686,7 +687,7 @@ final class AppState: ObservableObject {
 
     func selectAllInCategory(_ category: CleaningCategory) {
         guard let result = categoryResults[category] else { return }
-        for item in result.items {
+        for item in result.items where !item.isSelectionBlocked {
             if item.isSelected {
                 deselectedItems.remove(item.id)
             } else {
@@ -881,7 +882,7 @@ final class AppState: ObservableObject {
 
     func startSmartScan() {
         guard !scanState.isActive, !deviceBackupRemovalInProgress else { return }
-        beginScan(categories: CleaningCategory.scannable, replacingResults: true)
+        beginScan(categories: CleaningCategory.smartScannable, replacingResults: true)
     }
 
     func scanSingleCategory(_ category: CleaningCategory) {
@@ -946,7 +947,8 @@ final class AppState: ObservableObject {
 
         let itemsToClean = allResults.flatMap { $0.items }.filter { item in
             guard itemIDs?.contains(item.id) ?? true else { return false }
-            guard isItemSelected(item) else { return false }
+            guard isItemSelected(item), !item.isSelectionBlocked else { return false }
+            if scheduled && item.category == .gitWorktrees { return false }
             if scheduled && XcodeBuildMCPDerivedDataSupport.isManagedDerivedDataPath(item.path) {
                 // Scheduled XcodeBuildMCP cleanup is intentionally stricter
                 // than ordinary Xcode Junk: only old, unlocked rows qualify.
@@ -1145,7 +1147,7 @@ final class AppState: ObservableObject {
 
     func runScheduledScan() async {
         guard canRunScheduledScan(isAppActive: NSApp.isActive) else { return }
-        let categories = scheduler.config.categoriesToScan.filter { CleaningCategory.scannable.contains($0) }
+        let categories = scheduler.config.categoriesToScan.filter { CleaningCategory.smartScannable.contains($0) }
         guard !categories.isEmpty else { return }
         let generation = UUID()
         scanGeneration = generation

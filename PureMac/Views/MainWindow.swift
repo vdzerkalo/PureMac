@@ -24,7 +24,8 @@ struct MainWindow: View {
         .xcodeJunk,
         .brewCache,
         .nodeCache,
-        .dockerCache
+        .dockerCache,
+        .gitWorktrees
     ].filter(CleaningCategory.scannable.contains)
 
     var body: some View {

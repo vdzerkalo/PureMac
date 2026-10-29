@@ -15,6 +15,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     case brewCache = "Brew Cache"
     case nodeCache = "Node Cache"
     case dockerCache = "Docker Cache"
+    case gitWorktrees = "Git Worktrees"
     case universalBinaries = "Universal Binaries"
     case languageFiles = "Language Files"
 
@@ -34,6 +35,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .brewCache: return "mug.fill"
         case .nodeCache: return "leaf.fill"
         case .dockerCache: return "shippingbox.fill"
+        case .gitWorktrees: return "arrow.triangle.branch"
         case .universalBinaries: return "cpu"
         case .languageFiles: return "globe"
         }
@@ -53,6 +55,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .brewCache: return "Homebrew download cache"
         case .nodeCache: return "npm, yarn, and pnpm download caches"
         case .dockerCache: return "Docker images, containers, and build cache"
+        case .gitWorktrees: return "Leftover git worktrees from AI agents and old branches"
         case .universalBinaries: return "Unused CPU architecture slices in app binaries"
         case .languageFiles: return "Unused app localizations"
         }
@@ -72,6 +75,7 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         case .brewCache: return .mint
         case .nodeCache: return .pink
         case .dockerCache: return .indigo
+        case .gitWorktrees: return .orange
         case .universalBinaries: return .brown
         case .languageFiles: return .gray
         }
@@ -92,6 +96,14 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
         allCases.filter {
             $0 != .smartScan && $0 != .purgeableSpace && !appModifying.contains($0)
         }
+    }
+
+    // Categories a Smart Scan or a scheduled scan covers. Git worktrees are
+    // left out: removing one runs `git worktree remove` on the user's own
+    // repositories, so it is only ever scanned and cleaned from its own
+    // category screen, never as part of "Clean All" or an unattended run.
+    static var smartScannable: [CleaningCategory] {
+        scannable.filter { $0 != .gitWorktrees }
     }
 
     // Categories that rewrite app bundles in place (binary thinning,
@@ -161,6 +173,16 @@ struct CleanableItem: Identifiable, Hashable {
         path.isEmpty || path.hasPrefix(Self.simctlRuntimePathPrefix)
     }
 
+    /// Set on Git Worktrees rows: what git reported at scan time, including
+    /// the repository the clean step runs `git worktree remove` in.
+    var gitWorktree: GitWorktreeReport?
+
+    /// Protected and orphan worktrees are listed so the user sees why they
+    /// stay, but they can never be selected for removal.
+    var isSelectionBlocked: Bool {
+        gitWorktree?.verdict.status.blocksSelection ?? false
+    }
+
     var simctlRuntimeIdentifier: String? {
         guard path.hasPrefix(Self.simctlRuntimePathPrefix) else { return nil }
         let id = String(path.dropFirst(Self.simctlRuntimePathPrefix.count))
@@ -224,7 +246,7 @@ struct ScheduleConfig: Codable {
     var interval: ScheduleInterval = .daily
     var autoClean: Bool = false
     var autoPurge: Bool = false
-    var categoriesToScan: [CleaningCategory] = CleaningCategory.scannable
+    var categoriesToScan: [CleaningCategory] = CleaningCategory.smartScannable
     var lastRunDate: Date?
     var nextRunDate: Date?
     var notifyOnCompletion: Bool = true

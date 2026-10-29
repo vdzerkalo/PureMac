@@ -927,3 +927,42 @@
 
 "View releases" = "View releases";
 "You're using the latest available version of PureMac." = "You're using the latest available version of PureMac.";
+
+/* Git Worktrees and risky removals */
+"Git Worktrees" = "Git-worktree";
+"Leftover git worktrees from AI agents and old branches" = "Залишені git-worktree від AI-агентів і старих гілок";
+"Safe to delete" = "Можна видалити";
+"Needs review" = "Потребує перевірки";
+"Protected" = "Захищено";
+"Orphan" = "Сирота";
+"uncommitted changes (%lld)" = "незакомічені зміни (%lld)";
+"commits not on any remote or other branch (%lld)" = "коміти, яких немає на remote чи в іншій гілці (%lld)";
+"stashed changes" = "є stash";
+"locked by git" = "заблоковано git";
+"open in a running process" = "відкрито в запущеному процесі";
+"agent worktree active in the last 24 hours" = "агент працював тут за останні 24 години";
+"folder is gone; git still lists it" = "папки немає, але git її ще пам’ятає";
+"not a worktree its repository knows about" = "репозиторій не знає такого worktree";
+"untracked files (%lld)" = "невідстежувані файли (%lld)";
+"ignored .env files would be deleted" = "буде видалено ігноровані файли .env";
+"no main branch to compare with" = "немає основної гілки для порівняння";
+"not merged into the main branch" = "не злито в основну гілку";
+"no commits of its own" = "немає власних комітів";
+"active %lld days ago" = "активність %lld дн. тому";
+"merged, no recent activity" = "злито, без недавньої активності";
+"merged, idle for %lld days" = "злито, без змін %lld дн.";
+"Nothing goes to the Trash: Docker deletes these objects permanently." = "Нічого не потрапляє в Кошик: Docker видаляє ці об’єкти назавжди.";
+"Removed images and build cache are downloaded or rebuilt on next use, so the next pull or build is slower." = "Видалені образи й кеш збірок завантажуються або збираються знову, тож наступний pull чи build буде повільнішим.";
+"Stopped containers and the files inside them are deleted; running containers are kept." = "Зупинені контейнери та файли в них видаляються; запущені лишаються.";
+"Each folder is removed with git worktree remove: everything inside it, including ignored files such as node_modules and .env, is deleted, not moved to the Trash." = "Кожну папку видаляє git worktree remove: усе всередині, зокрема ігноровані node_modules і .env, видаляється, а не йде в Кошик.";
+"Branches are kept. Commits are safe only if they are merged, pushed or on another branch; PureMac re-checks this right before removing." = "Гілки лишаються. Коміти в безпеці, лише якщо вони злиті, запушені або є в іншій гілці; PureMac перевіряє це ще раз перед видаленням.";
+"Close any agent, editor or terminal still using these folders: they lose their working directory." = "Закрийте агентів, редактори й термінали, що ще працюють у цих папках: вони втратять робочу теку.";
+"Confirm each risk before removing" = "Підтвердьте кожен ризик перед видаленням";
+"Remove %lld items permanently?" = "Видалити назавжди елементів: %lld?";
+"Remove permanently" = "Видалити назавжди";
+"This cannot be undone. Nothing is moved to the Trash." = "Це не можна скасувати. Нічого не потрапить у Кошик.";
+"Copy agent prompt" = "Скопіювати промпт для агента";
+"Copied" = "Скопійовано";
+"Copy a short brief with every found item so an AI agent can check the risks with you before removal." = "Скопіювати короткий бриф з усіма знайденими елементами, щоб AI-агент перевірив ризики разом з вами до видалення.";
+"Permanent · git worktree remove (branch is kept)" = "Назавжди · git worktree remove (гілка лишається)";
+"PureMac will not remove this worktree." = "PureMac не видалятиме цей worktree.";

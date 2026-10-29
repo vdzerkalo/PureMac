@@ -77,6 +77,8 @@ actor ScanEngine {
             return await scanNodeCache()
         case .dockerCache:
             return await scanDockerCache()
+        case .gitWorktrees:
+            return await scanGitWorktrees()
         case .universalBinaries:
             return scanUniversalBinaries()
         case .languageFiles:
@@ -893,6 +895,36 @@ actor ScanEngine {
 
         let totalSize = items.reduce(0) { $0 + $1.size }
         return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize)
+    }
+
+    /// One row per linked git worktree found in agent folders and Claude
+    /// Code's project list (see GitWorktreeScanner). Only Safe to delete
+    /// rows start selected; Protected and orphan rows are listed with their
+    /// reasons but cannot be selected. Without git (no Homebrew git and no
+    /// developer tools) the category is simply empty.
+    private func scanGitWorktrees() async -> CategoryResult {
+        guard let gitPath = GitWorktreeScanner.locateGit() else {
+            Logger.shared.log("Git Worktrees: git not found", level: .info)
+            return CategoryResult(category: .gitWorktrees, items: [], totalSize: 0)
+        }
+        let reports = await GitWorktreeScanner(homeDirectory: home, gitPath: gitPath).scan()
+        var items: [CleanableItem] = []
+        for worktree in reports {
+            if Task.isCancelled { break }
+            report(worktree.path)
+            var item = CleanableItem(
+                name: worktree.displayName,
+                path: worktree.path,
+                size: fileManager.fileExists(atPath: worktree.path) ? directorySize(path: worktree.path) : 0,
+                category: .gitWorktrees,
+                isSelected: worktree.verdict.status == .safeToDelete,
+                lastModified: worktree.lastActivity
+            )
+            item.gitWorktree = worktree
+            items.append(item)
+        }
+        let totalSize = items.reduce(0) { $0 + $1.size }
+        return CategoryResult(category: .gitWorktrees, items: items, totalSize: totalSize)
     }
 
     private func scanUniversalBinaries() -> CategoryResult {

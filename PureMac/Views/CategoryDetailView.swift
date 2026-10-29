@@ -12,11 +12,18 @@ struct CategoryDetailView: View {
 
     @State private var filter = CleanupReviewFilter()
     @State private var pendingReview: CleanupSelection?
+    @State private var acknowledgedRisks: Set<Int> = []
+    @State private var confirmingRemoval = false
+    @State private var copiedPrompt = false
 
     private var result: CategoryResult? { appState.categoryResults[category] }
     private var visibleItems: [CleanableItem] { filter.apply(to: result?.items ?? []) }
     private var selectedItems: [CleanableItem] { (result?.items ?? []).filter(appState.isItemSelected) }
     private var selectedSize: Int64 { selectedItems.reduce(0) { $0 + $1.size } }
+    /// Protected and orphan worktrees stay visible but never take part in
+    /// "Select visible".
+    private var selectableVisibleItems: [CleanableItem] { visibleItems.filter { !$0.isSelectionBlocked } }
+    private var risks: [String] { RemovalRisk.risks(for: category) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -132,10 +139,10 @@ struct CategoryDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(visibleItems.allSatisfy(appState.isItemSelected) ? "Deselect visible" : "Select visible") {
-                    appState.setSelection(!visibleItems.allSatisfy(appState.isItemSelected), for: visibleItems)
+                Button(selectableVisibleItems.allSatisfy(appState.isItemSelected) ? "Deselect visible" : "Select visible") {
+                    appState.setSelection(!selectableVisibleItems.allSatisfy(appState.isItemSelected), for: selectableVisibleItems)
                 }
-                .disabled(visibleItems.isEmpty || appState.scanState.isActive)
+                .disabled(selectableVisibleItems.isEmpty || appState.scanState.isActive)
                 .buttonStyle(.borderless)
             }
         }
@@ -166,7 +173,11 @@ struct CategoryDetailView: View {
                     .buttonStyle(.borderless)
                     .disabled(appState.scanState.isActive)
             }
+            if RemovalRisk.requiresAcknowledgement(category) {
+                copyPromptButton(proposed: selectedItems)
+            }
             Button {
+                acknowledgedRisks = []
                 pendingReview = CleanupSelection(items: selectedItems)
             } label: {
                 Label("Review removal", systemImage: "trash")
@@ -220,6 +231,12 @@ struct CategoryDetailView: View {
                             Text(removalMethod(item))
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
+                            if let worktree = item.gitWorktree {
+                                Text(worktree.verdict.summary)
+                                    .font(.caption)
+                                    .foregroundStyle(worktree.verdict.status.tint)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         .padding(.vertical, 12)
                         Divider()
@@ -227,26 +244,97 @@ struct CategoryDetailView: View {
                 }
                 .padding(.trailing, 8)
             }
-            .frame(minHeight: 160, maxHeight: 300)
+            .frame(minHeight: 160, maxHeight: risks.isEmpty ? 300 : 220)
+            if !risks.isEmpty {
+                riskAcknowledgements
+            }
             HStack {
+                if !risks.isEmpty {
+                    copyPromptButton(proposed: items)
+                }
                 Spacer()
                 Button("Cancel", role: .cancel) { pendingReview = nil }
                     .keyboardShortcut(.cancelAction)
                 Button("Remove \(items.count) items", role: .destructive) {
-                    let itemIDs = Set(items.map(\.id))
-                    pendingReview = nil
-                    appState.cleanCategory(category, itemIDs: itemIDs)
+                    if risks.isEmpty {
+                        remove(items)
+                    } else {
+                        confirmingRemoval = true
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Tint.red)
-                .disabled(items.isEmpty || appState.scanState.isActive)
+                .disabled(items.isEmpty || appState.scanState.isActive || acknowledgedRisks.count < risks.count)
+                // A tinted prominent button keeps its colour when disabled;
+                // dim it so the locked state is visible until every risk is ticked.
+                .opacity(acknowledgedRisks.count < risks.count ? 0.45 : 1)
             }
         }
         .padding(24)
         .frame(width: 580)
+        .alert(Text("Remove \(items.count) items permanently?"), isPresented: $confirmingRemoval) {
+            Button("Cancel", role: .cancel) {}
+            Button("Remove permanently", role: .destructive) { remove(items) }
+        } message: {
+            Text("This cannot be undone. Nothing is moved to the Trash.")
+        }
+    }
+
+    /// Docker and worktree removals delete the user's own work, not caches
+    /// an app rebuilds silently: every risk is ticked off before the Remove
+    /// button unlocks, and a final alert follows it.
+    private var riskAcknowledgements: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Confirm each risk before removing", systemImage: "exclamationmark.triangle.fill")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(Tint.red)
+            ForEach(Array(risks.enumerated()), id: \.offset) { index, risk in
+                Toggle(isOn: Binding(
+                    get: { acknowledgedRisks.contains(index) },
+                    set: { if $0 { acknowledgedRisks.insert(index) } else { acknowledgedRisks.remove(index) } }
+                )) {
+                    Text(risk)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .toggleStyle(.checkbox)
+            }
+        }
+        .padding(12)
+        .background(Tint.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Copies a compact review brief for an AI agent: every found item, the
+    /// proposed ones marked, and instructions to check read-only and ask the
+    /// owner before anything is removed.
+    private func copyPromptButton(proposed: [CleanableItem]) -> some View {
+        Button {
+            let prompt = RemovalRisk.agentPrompt(
+                category: category,
+                found: result?.items ?? proposed,
+                proposed: Set(proposed.map(\.id))
+            )
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(prompt, forType: .string)
+            copiedPrompt = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedPrompt = false }
+        } label: {
+            Label(copiedPrompt ? "Copied" : "Copy agent prompt", systemImage: copiedPrompt ? "checkmark" : "doc.on.clipboard")
+        }
+        .buttonStyle(.bordered)
+        .help("Copy a short brief with every found item so an AI agent can check the risks with you before removal.")
+    }
+
+    private func remove(_ items: [CleanableItem]) {
+        let itemIDs = Set(items.map(\.id))
+        pendingReview = nil
+        appState.cleanCategory(category, itemIDs: itemIDs)
     }
 
     private func removalMethod(_ item: CleanableItem) -> String {
+        if item.gitWorktree != nil {
+            return String(localized: "Permanent · git worktree remove (branch is kept)")
+        }
         if item.simctlRuntimeIdentifier != nil {
             return String(localized: "Permanent · Remove simulator runtime")
         }
@@ -270,8 +358,9 @@ private struct CleanupFileRow: View {
                 .labelsHidden()
                 .toggleStyle(.checkbox)
                 .tint(Tint.teal)
+                .disabled(item.isSelectionBlocked)
                 .accessibilityLabel("Select \(item.name)")
-            Image(systemName: item.isActionItem ? "gearshape.2" : "doc")
+            Image(systemName: item.gitWorktree != nil ? "arrow.triangle.branch" : item.isActionItem ? "gearshape.2" : "doc")
                 .font(.system(size: 18))
                 .foregroundStyle(.secondary)
                 .frame(width: 25)
@@ -286,9 +375,23 @@ private struct CleanupFileRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(item.path)
+                if let worktree = item.gitWorktree, !worktree.verdict.reasons.isEmpty {
+                    Text(worktree.verdict.reasons.map(\.localizedDescription).joined(separator: ", "))
+                        .font(.system(size: 11))
+                        .foregroundStyle(worktree.verdict.status.tint)
+                        .lineLimit(2)
+                }
             }
             Spacer(minLength: 12)
-            if !item.isSelected {
+            if let worktree = item.gitWorktree {
+                Text(worktree.verdict.status.label)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(worktree.verdict.status.tint)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(worktree.verdict.status.tint.opacity(0.12), in: Capsule())
+                    .help(item.isSelectionBlocked ? String(localized: "PureMac will not remove this worktree.") : worktree.verdict.summary)
+            } else if !item.isSelected {
                 Text("Review")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -331,5 +434,16 @@ private struct CleanupFileRow: View {
 
     private func reveal() {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
+    }
+}
+
+private extension GitWorktreeSupport.Status {
+    var tint: Color {
+        switch self {
+        case .safeToDelete: return .green
+        case .needsReview: return .orange
+        case .protected: return Tint.red
+        case .orphan: return .secondary
+        }
     }
 }
