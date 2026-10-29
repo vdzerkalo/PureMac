@@ -50,7 +50,7 @@ final class LocalAIModelsTests: XCTestCase {
 
     @MainActor
     func testBulkCleaningResultsExcludeLocalAIModelsEvenWhenSelected() {
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         let item = CleanableItem(
             name: "qwen3.5:9b",
             path: CleanableItem.ollamaModelPathPrefix + "qwen3.5:9b",
@@ -516,7 +516,7 @@ final class LocalAIModelsTests: XCTestCase {
 
     @MainActor
     func testBulkSelectionPathsNeverSelectLocalAIModelRowsButDeselectAndClickStillWork() throws {
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         let rows = ["a", "b", "c"].map { name in
             CleanableItem(
                 name: name, path: "/tmp/\(name)", size: 10, category: .localAIModels,

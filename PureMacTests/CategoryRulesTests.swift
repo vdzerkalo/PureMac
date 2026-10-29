@@ -4,6 +4,15 @@ import XCTest
 /// Pins the rules that span several developer-cleanup categories: the three
 /// category sets, the single bulk-selection rule and the Docker deny list
 /// that every deletion route consults. See docs/DEVELOPER-CLEANUP.md.
+extension UserDefaults {
+    /// Empty defaults for an AppState under test, so the Smart Scan opt-ins
+    /// (`CleaningCategory.smartScanOptInKey`) the user set in the real app
+    /// never change what a test sees. Nothing is written unless a test does.
+    static var isolatedForTests: UserDefaults {
+        UserDefaults(suiteName: "PureMac.Tests.\(UUID().uuidString)")!
+    }
+}
+
 final class CategoryRulesTests: XCTestCase {
     /// Expected membership of every category. A new `CleaningCategory` case
     /// without a row here fails `testEveryCategoryHasAnExpectedMembership`.
@@ -95,7 +104,7 @@ final class CategoryRulesTests: XCTestCase {
 
     @MainActor
     func testAppStateAgreesWithSetB() {
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         for category in CleaningCategory.allCases {
             XCTAssertEqual(
                 state.isReviewedInCategoryOnly(category), Self.expected[category]!.overviewExcluded, category.rawValue
@@ -172,7 +181,7 @@ final class CategoryRulesTests: XCTestCase {
             "agent row of an idle app": agent("Library/Application Support/Cursor/CachedExtensionVSIXs"),
         ]
 
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         state.scanState = .completed
         for item in Array(skipped.values) + Array(controls.values) {
             var result = state.categoryResults[item.category]

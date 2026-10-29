@@ -92,6 +92,9 @@ final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendab
 /// delete. This is the only code path that removes Local AI Models rows; the
 /// generic `CleaningEngine` allow-list is deliberately not involved.
 struct LocalAIModels: Sendable {
+    /// Manual Smart Scan also scans models (`CleaningCategory.smartScanOptInKey`).
+    static let includeInSmartScanKey = "settings.cleaning.localAIModels.includeInSmartScan"
+
     let context: LocalAIModelsContext
 
     typealias Support = LocalAIModelsSupport

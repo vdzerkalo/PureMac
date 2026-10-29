@@ -120,14 +120,41 @@ enum CleaningCategory: String, CaseIterable, Identifiable, Codable {
     // "junk found" total cover every `scannable` category except these. They
     // act on the user's own work (`git worktree remove`), are user data (model
     // downloads) or are review-only (AI agent app data: every row starts
-    // unselected and is removed per category), so they are scanned and
-    // cleaned only from their own category screen.
+    // unselected and is removed per category), so they are cleaned only from
+    // their own category screen. Worktrees and models can be added back to a
+    // manual Smart Scan (a2); scheduled scans never include them.
     static var smartScanExcluded: Set<CleaningCategory> {
         [.gitWorktrees, .localAIModels, .aiAgentData]
     }
 
     static var smartScannable: [CleaningCategory] {
         scannable.filter { !smartScanExcluded.contains($0) }
+    }
+
+    // (a2) Categories of (a) that the user can add to a manual Smart Scan:
+    // "Add to Smart Scan" on the Overview or a toggle in Settings, stored
+    // under this key. Adding one adds only its scan; the Overview still never
+    // counts, selects or cleans it (b), and scheduled scans keep
+    // `smartScannable`. AI agent data stays review-only.
+    var smartScanOptInKey: String? {
+        switch self {
+        case .gitWorktrees: return GitWorktreeSettings.includeInSmartScanKey
+        case .localAIModels: return LocalAIModels.includeInSmartScanKey
+        default: return nil
+        }
+    }
+
+    static var smartScanOptional: [CleaningCategory] {
+        scannable.filter { $0.smartScanOptInKey != nil && !smartScannable.contains($0) }
+    }
+
+    /// What a manual Smart Scan covers: `smartScannable` plus the optional
+    /// categories added in `defaults`, in `scannable` order.
+    static func smartScanCategories(defaults: UserDefaults = .standard) -> [CleaningCategory] {
+        scannable.filter { category in
+            smartScannable.contains(category)
+                || (smartScanOptional.contains(category) && category.smartScanOptInKey.map(defaults.bool(forKey:)) == true)
+        }
     }
 
     // (b) Categories the Overview never counts, selects or cleans. They stay

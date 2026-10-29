@@ -976,6 +976,14 @@
 "Base branch" = "Base branch";
 "origin/HEAD, origin/main, origin/master, main, master" = "origin/HEAD, origin/main, origin/master, main, master";
 "Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged." = "Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged.";
+"Not in Smart Scan" = "Not in Smart Scan";
+"Scanned only after you add them" = "Scanned only after you add them";
+"Scanning only reads. Removal stays on the category screen." = "Scanning only reads. Removal stays on the category screen.";
+"Add to Smart Scan" = "Add to Smart Scan";
+"Include in Smart Scan" = "Include in Smart Scan";
+"Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen." = "Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen.";
+"Build folders %lld/%lld · %@" = "Build folders %lld/%lld · %@";
+"Smart Scan then also lists Ollama models and Hugging Face downloads. It only reads; scheduled scans skip them, and models are removed only from their own screen." = "Smart Scan then also lists Ollama models and Hugging Face downloads. It only reads; scheduled scans skip them, and models are removed only from their own screen.";
 "Delete the merged branch after removing a worktree" = "Delete the merged branch after removing a worktree";
 "Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged." = "Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged.";
 "Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep." = "Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep.";

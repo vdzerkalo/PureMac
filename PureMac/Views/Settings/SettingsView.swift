@@ -312,6 +312,8 @@ struct CleaningSettingsView: View {
     @AppStorage(GitWorktreeSettings.inactiveDaysKey) private var worktreeInactiveDays: Int = GitWorktreeSupport.defaultInactiveDays
     @AppStorage(GitWorktreeSettings.baseBranchKey) private var worktreeBaseBranch = ""
     @AppStorage(GitWorktreeSettings.deleteMergedBranchKey) private var worktreeDeleteMergedBranch = false
+    @AppStorage(GitWorktreeSettings.includeInSmartScanKey) private var worktreeIncludeInSmartScan = false
+    @AppStorage(LocalAIModels.includeInSmartScanKey) private var modelsIncludeInSmartScan = false
     @State private var worktreeRoots: [String] = []
 
     var body: some View {
@@ -384,6 +386,11 @@ struct CleaningSettingsView: View {
             }
 
             Section("Git Worktrees") {
+                Toggle("Include in Smart Scan", isOn: $worktreeIncludeInSmartScan)
+                Text("Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Stepper(
                     String(format: String(localized: "Idle after: %lld days"), Int64(worktreeInactiveDays)),
                     value: $worktreeInactiveDays,
@@ -435,6 +442,13 @@ struct CleaningSettingsView: View {
                     }
                 }
                 Button("Add Search Folder…") { addWorktreeRoots() }
+            }
+
+            Section("Local AI Models") {
+                Toggle("Include in Smart Scan", isOn: $modelsIncludeInSmartScan)
+                Text("Smart Scan then also lists Ollama models and Hugging Face downloads. It only reads; scheduled scans skip them, and models are removed only from their own screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Orphan Finder") {

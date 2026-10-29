@@ -1012,18 +1012,28 @@ actor ScanEngine {
         scanner.inactiveDays = settings.inactiveDays
         scanner.extraRoots = settings.extraRoots
         scanner.baseBranchOverride = settings.baseBranch
-        var items: [CleanableItem] = []
-        for scanned in await scanner.scan() {
-            if Task.isCancelled { break }
-            report(scanned.path)
-            // Sizes never follow symlinks and are split into ignored build
-            // artifacts and everything else.
-            var worktree = scanned
-            if GitWorktreeScanner.pathExists(worktree.path) {
-                let sizes = GitWorktreeScanner.measure(path: worktree.path, artifactDirectories: worktree.artifactDirectories)
-                worktree.artifactBytes = sizes.artifacts
-                worktree.codeBytes = sizes.code
+        scanner.measuresSizes = true
+        // Every step goes to the ticker: a check takes seconds, so these are
+        // few, and "12/48" tells a long scan from a stuck one.
+        let onPath = self.onPath
+        let reports = await scanner.scan { step in
+            switch step {
+            case .discovering(let path):
+                onPath?(path)
+            case .inspecting(let path, let position, let total):
+                onPath?("\(position)/\(total) · \(path)")
             }
+        }
+        // Build folders of the worktrees that cannot be removed whole: one
+        // more bounded walk each, also four at a time.
+        let total = reports.count
+        let artifactReports = await GitWorktreeScanner.concurrentMap(reports, limit: GitWorktreeScanner.concurrentInspections) { [scanner] index, worktree in
+            onPath?(String(localized: "Build folders \(index + 1)/\(total) · \(worktree.path)"))
+            return await scanner.artifactReport(for: worktree)
+        }
+        var items: [CleanableItem] = []
+        for (index, worktree) in reports.enumerated() {
+            if Task.isCancelled { break }
             var item = CleanableItem(
                 name: worktree.displayName,
                 path: worktree.path,
@@ -1038,7 +1048,7 @@ actor ScanEngine {
             // A worktree that cannot be removed whole still has build
             // folders git ignores: offer them as their own row, never
             // preselected, blocked while the worktree is in use.
-            if let artifacts = await scanner.artifactReport(for: worktree) {
+            if let artifacts = artifactReports[index] ?? nil {
                 var artifactItem = CleanableItem(
                     name: String(localized: "Artifacts in \(artifacts.displayName)"),
                     path: WorktreeArtifactSupport.rowPath(forWorktree: artifacts.worktreePath),

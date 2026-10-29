@@ -4,7 +4,7 @@ import XCTest
 @MainActor
 final class DeviceBackupCoordinationTests: XCTestCase {
     func testScheduledScanWaitsUntilBackupRemovalFinishes() {
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         XCTAssertTrue(state.canRunScheduledScan(isAppActive: false))
 
         state.deviceBackupRemovalInProgress = true
@@ -16,7 +16,7 @@ final class DeviceBackupCoordinationTests: XCTestCase {
     }
 
     func testBackupRemovalWaitsForActiveScanOrCleanup() {
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         XCTAssertTrue(state.canRemoveDeviceBackups)
 
         state.scanState = .scanning(progress: 0.5, currentCategory: "Trash Bins")
@@ -30,7 +30,7 @@ final class DeviceBackupCoordinationTests: XCTestCase {
     }
 
     func testManualScansDoNotStartDuringBackupRemoval() {
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         state.deviceBackupRemovalInProgress = true
         state.startSmartScan()
         XCTAssertEqual(state.scanState, .idle)
@@ -39,7 +39,7 @@ final class DeviceBackupCoordinationTests: XCTestCase {
     }
 
     func testManualAndScheduledCleanupWaitForBackupRemoval() {
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         let item = CleanableItem(name: "Fixture", path: "/fixtures/backup", size: 4096,
                                  category: .trashBins, isSelected: true, lastModified: nil)
         state.categoryResults[.trashBins] = CategoryResult(category: .trashBins, items: [item], totalSize: item.size)

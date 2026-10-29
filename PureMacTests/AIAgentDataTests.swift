@@ -345,7 +345,7 @@ final class AIAgentDataTests: XCTestCase {
 
     @MainActor
     func testCleanAllAndTotalsIgnoreReviewOnlyResults() {
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         let selected = CleanableItem(
             name: "x",
             path: "/tmp/does-not-matter",
@@ -365,7 +365,7 @@ final class AIAgentDataTests: XCTestCase {
 
     @MainActor
     func testBulkSelectionSkipsRowsBlockedByARunningApp() {
-        let state = AppState(performStartupTasks: false)
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
         let realHome = AIAgentDataSupport.canonicalHomeDirectory(fileManager.homeDirectoryForCurrentUser)
         func row(_ relative: String) -> CleanableItem {
             CleanableItem(
