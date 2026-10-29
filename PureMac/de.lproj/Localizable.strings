@@ -978,10 +978,14 @@
 "Base branch" = "Base branch";
 "origin/HEAD, origin/main, origin/master, main, master" = "origin/HEAD, origin/main, origin/master, main, master";
 "Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged." = "Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged.";
-"Not in Smart Scan" = "Not in Smart Scan";
-"Scanned only after you add them" = "Scanned only after you add them";
+"Optional in Smart Scan" = "Optional in Smart Scan";
+"Off until you add them" = "Off until you add them";
 "Scanning only reads. Removal stays on the category screen." = "Scanning only reads. Removal stays on the category screen.";
 "Add to Smart Scan" = "Add to Smart Scan";
+"In Smart Scan from the next scan" = "In Smart Scan from the next scan";
+"In Smart Scan · nothing found" = "In Smart Scan · nothing found";
+"In Smart Scan · %@ found, listed in the plan" = "In Smart Scan · %@ found, listed in the plan";
+"Remove from Smart Scan" = "Remove from Smart Scan";
 "Include in Smart Scan" = "Include in Smart Scan";
 "Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen." = "Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen.";
 "Delete the merged branch after removing a worktree" = "Delete the merged branch after removing a worktree";
