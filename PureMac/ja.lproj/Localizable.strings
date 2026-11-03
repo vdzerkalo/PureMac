@@ -1120,3 +1120,34 @@
 "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again.";
 "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection.";
 "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working.";
+
+/* Developer cleanup review */
+"No items left to review" = "確認する項目はありません";
+"Scan again to check for new items." = "新しい項目を確認するには、再スキャンしてください。";
+"Finishing cleanup…" = "クリーンアップを完了しています…";
+"Preparing cleanup…" = "クリーンアップを準備しています…";
+"Cleaning: %@" = "クリーンアップ中：%@";
+"%lld of %lld processed" = "%lld / %lld 件を処理済み";
+"Cleanup in progress…" = "クリーンアップを実行中…";
+"Blocked from removal: %@" = "削除できない項目：%@";
+"Repository" = "リポジトリ";
+"Status" = "状態";
+"All repositories" = "すべてのリポジトリ";
+"All statuses" = "すべての状態";
+"All actions" = "すべての操作";
+"Whole worktrees" = "作業ツリー全体";
+"Build folders" = "ビルドフォルダ";
+"Unknown repository" = "不明なリポジトリ";
+"Completed: %lld · Skipped: %lld · Unfinished: %lld" = "完了：%lld · スキップ：%lld · 未完了：%lld";
+"Cleanup finished with issues" = "クリーンアップは一部完了しませんでした";
+"Details" = "詳細";
+"Scan estimate: %@" = "スキャン時の推定：%@";
+"Reported by cleanup: %@" = "クリーンアップの報告値：%@";
+"Free space measurement unavailable." = "空き容量を測定できませんでした。";
+"Change in free space: %@" = "空き容量の変化：%@";
+"Other activity can also change available space." = "ほかの処理によっても空き容量は変わります。";
+"Reveal linking item" = "リンク元を表示";
+"Some worktree sizes could not be refreshed. Scan again to update them." = "一部の作業ツリーのサイズを更新できませんでした。再スキャンしてください。";
+"Completed" = "完了";
+"Skipped" = "スキップ";
+"Unfinished" = "未完了";

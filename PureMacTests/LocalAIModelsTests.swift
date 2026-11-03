@@ -394,6 +394,7 @@ final class LocalAIModelsTests: XCTestCase {
 
     // MARK: - Links into rows
 
+    @MainActor
     func testRowsThatAreLinkTargetsAreBlockedAtScanAndRemovalAndNameTheLink() async throws {
         let root = try makeHub()
         try makeRepo(root, "models--org--name", blobs: [("aaa", 100)])
@@ -409,6 +410,13 @@ final class LocalAIModelsTests: XCTestCase {
         let folder = try XCTUnwrap(scan.items.first { $0.name == "mlx-community" })
         XCTAssertTrue(try XCTUnwrap(repo.detail).contains("mlx-community/name"), "detail names the linking path: \(repo.detail ?? "")")
         XCTAssertFalse(try XCTUnwrap(folder.detail).contains("mlx-community/name"), "links inside a row do not block that row")
+
+        let state = AppState(performStartupTasks: false, settingsDefaults: .isolatedForTests)
+        state.toggleItem(repo)
+        XCTAssertTrue(repo.isSelectionBlocked)
+        XCTAssertFalse(state.isItemSelected(repo))
+        state.toggleItem(folder)
+        XCTAssertTrue(state.isItemSelected(folder), "The row holding the link is still selectable")
 
         let engine = CleaningEngine(homeDirectory: home, localAIModels: service)
         let blocked = await engine.cleanItems([repo]) { _ in }

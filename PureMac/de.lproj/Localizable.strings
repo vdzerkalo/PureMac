@@ -1122,3 +1122,34 @@
 "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again.";
 "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection.";
 "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working.";
+
+/* Developer cleanup review */
+"No items left to review" = "Keine weiteren Elemente zur Prüfung";
+"Scan again to check for new items." = "Erneut nach neuen Elementen suchen.";
+"Finishing cleanup…" = "Bereinigung wird abgeschlossen…";
+"Preparing cleanup…" = "Bereinigung wird vorbereitet…";
+"Cleaning: %@" = "Wird bereinigt: %@";
+"%lld of %lld processed" = "%lld von %lld verarbeitet";
+"Cleanup in progress…" = "Bereinigung läuft…";
+"Blocked from removal: %@" = "Vor dem Löschen geschützt: %@";
+"Repository" = "Repository";
+"Status" = "Status";
+"All repositories" = "Alle Repositorys";
+"All statuses" = "Alle Status";
+"All actions" = "Alle Aktionen";
+"Whole worktrees" = "Ganze Worktrees";
+"Build folders" = "Build-Ordner";
+"Unknown repository" = "Unbekanntes Repository";
+"Completed: %lld · Skipped: %lld · Unfinished: %lld" = "Abgeschlossen: %lld · Übersprungen: %lld · Offen: %lld";
+"Cleanup finished with issues" = "Bereinigung mit Problemen abgeschlossen";
+"Details" = "Details";
+"Scan estimate: %@" = "Schätzung beim Scan: %@";
+"Reported by cleanup: %@" = "Von der Bereinigung gemeldet: %@";
+"Free space measurement unavailable." = "Freier Speicherplatz konnte nicht gemessen werden.";
+"Change in free space: %@" = "Änderung des freien Speicherplatzes: %@";
+"Other activity can also change available space." = "Andere Vorgänge können den freien Speicherplatz ebenfalls ändern.";
+"Reveal linking item" = "Verweis im Finder zeigen";
+"Some worktree sizes could not be refreshed. Scan again to update them." = "Einige Worktree-Größen konnten nicht aktualisiert werden. Erneut scannen.";
+"Completed" = "Abgeschlossen";
+"Skipped" = "Übersprungen";
+"Unfinished" = "Offen";

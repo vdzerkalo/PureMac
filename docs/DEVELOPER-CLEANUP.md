@@ -5,6 +5,7 @@
 ## Contents
 - [Map](#map)
 - [Shared safety model](#shared-safety-model)
+- [Category cleanup results](#category-cleanup-results)
 - [Debugging](#debugging)
 - [Adding a developer category](#adding-a-developer-category)
 - [Related](#related)
@@ -43,6 +44,12 @@ Each rule names the enforcing code and the test that pins it. Category-specific 
 8. **Tests use injected fakes, never the real tool.** `CleaningEngine.init(homeDirectory:dockerBinaryPath:worktreeSettings:devToolEnvironment:localAIModels:isAIAgentOwnerRunning:trashOperation:)` takes a fake docker script path, worktree settings, `DevToolCacheEnvironment` (search directories, process list, timeout), a `LocalAIModels` with a fake `LocalAIModelsContext` (fake `ollama`/`hf` scripts, HTTP closure), an owner-running closure and a Trash closure (`FakeTrash`); `ScanEngine.init(homeDirectory:devToolEnvironment:localAIModels:)` takes the matching ones; `AppState(cleaningEngine:)` takes the engine. Production defaults are unchanged: `.live` environments, real process list, `CleaningEngine.systemTrash`. Fixtures are temp folders under `$TMPDIR`; worktree tests build real throwaway repositories. Tests: `DockerSupportTests` (`makeFakeDockerCLI`), `DevToolCachesTests`, `LocalAIModelsTests`, `AIAgentDataTests.makeEngine`, `GitWorktreeScannerTests.setUpWithError`.
 9. **Never touch `~/.claude*`.** `AIAgentDataSupport.isProtectedAgentLocation` (rows can never be produced or removed there), `GitWorktreeSupport.claudeProjectPaths` (reads only the `projects` keys of `~/.claude.json`), `DevToolCaches.roots` (no root equals, contains or sits inside it), `LocalAIModelsSupport.isPlausibleHubRoot`, worktree removal deletes only the worktree folder. Tests: `AIAgentDataTests.testClaudeCodeDataIsNeverRemovedEvenWhenTheItemIsForged`, `testScanNeverProducesClaudeCodeDataEvenWhenItIsHuge`, `GitWorktreeScannerTests.testRemoveDeletesOnlyTheWorktreeAndLeavesClaudeConfigAlone`, `GitWorktreeSupportTests.testClaudeProjectPathsReadsOnlyProjectKeys`, `DevToolCachesTests.testNoRootEqualsContainsOrSitsInsideProtectedLocations`.
 10. **User data is never preselected and user exclusions apply first.** Scanners set `isSelected: false` (or `selectOnlyByHand`) for models, AI agent data, artifact rows and Docker virtual rows; `CleanupExclusions` are checked at the top of `cleanItems` before any route. Tests: `LocalAIModelsTests.testBulkSelectionPathsNeverSelectLocalAIModelRowsButDeselectAndClickStillWork`, `AIAgentDataTests.testScanListsOnlyAllowlistedShapesAndLeavesEveryRowUnselected`, `DockerSupportTests.testPruneRowsAreActionItems`, `WorktreeScheduledCleanupTests.testArtifactRowsAreNeverPreselectedBulkSelectedOrScheduled`.
+
+## Category cleanup results
+
+Category views show the action being processed and an item count. The last report for each category remains available for the current app session, even after another scan. Its details list completed, skipped and unfinished actions. A partial action can report removed bytes while remaining unfinished. An empty result still counts as scanned.
+
+The report separates the size estimated before removal, bytes reported by the cleanup route, and the measured change in system-volume free space. Reported bytes may include estimates or files moved to the Trash. The measured change includes concurrent disk activity, and Docker or APFS may return space later.
 
 ## Debugging
 

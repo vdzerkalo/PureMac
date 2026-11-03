@@ -1118,3 +1118,34 @@
 "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again.";
 "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection.";
 "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working.";
+
+/* Developer cleanup review */
+"No items left to review" = "没有待检查的项目";
+"Scan again to check for new items." = "再次扫描以查找新项目。";
+"Finishing cleanup…" = "正在完成清理…";
+"Preparing cleanup…" = "正在准备清理…";
+"Cleaning: %@" = "正在清理：%@";
+"%lld of %lld processed" = "已处理 %lld / %lld 项";
+"Cleanup in progress…" = "正在清理…";
+"Blocked from removal: %@" = "无法移除：%@";
+"Repository" = "仓库";
+"Status" = "状态";
+"All repositories" = "所有仓库";
+"All statuses" = "所有状态";
+"All actions" = "所有操作";
+"Whole worktrees" = "整个工作树";
+"Build folders" = "构建文件夹";
+"Unknown repository" = "未知仓库";
+"Completed: %lld · Skipped: %lld · Unfinished: %lld" = "已完成：%lld · 已跳过：%lld · 未完成：%lld";
+"Cleanup finished with issues" = "清理已结束，部分项目存在问题";
+"Details" = "详情";
+"Scan estimate: %@" = "扫描估算：%@";
+"Reported by cleanup: %@" = "清理报告：%@";
+"Free space measurement unavailable." = "无法测量可用空间。";
+"Change in free space: %@" = "可用空间变化：%@";
+"Other activity can also change available space." = "其他活动也可能改变可用空间。";
+"Reveal linking item" = "显示链接来源";
+"Some worktree sizes could not be refreshed. Scan again to update them." = "无法更新部分工作树的大小。请重新扫描。";
+"Completed" = "已完成";
+"Skipped" = "已跳过";
+"Unfinished" = "未完成";

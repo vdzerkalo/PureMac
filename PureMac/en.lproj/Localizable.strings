@@ -1120,3 +1120,34 @@
 "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again.";
 "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection.";
 "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working.";
+
+/* Developer cleanup review */
+"No items left to review" = "No items left to review";
+"Scan again to check for new items." = "Scan again to check for new items.";
+"Finishing cleanup…" = "Finishing cleanup…";
+"Preparing cleanup…" = "Preparing cleanup…";
+"Cleaning: %@" = "Cleaning: %@";
+"%lld of %lld processed" = "%lld of %lld processed";
+"Cleanup in progress…" = "Cleanup in progress…";
+"Blocked from removal: %@" = "Blocked from removal: %@";
+"Repository" = "Repository";
+"Status" = "Status";
+"All repositories" = "All repositories";
+"All statuses" = "All statuses";
+"All actions" = "All actions";
+"Whole worktrees" = "Whole worktrees";
+"Build folders" = "Build folders";
+"Unknown repository" = "Unknown repository";
+"Completed: %lld · Skipped: %lld · Unfinished: %lld" = "Completed: %lld · Skipped: %lld · Unfinished: %lld";
+"Cleanup finished with issues" = "Cleanup finished with issues";
+"Details" = "Details";
+"Scan estimate: %@" = "Scan estimate: %@";
+"Reported by cleanup: %@" = "Reported by cleanup: %@";
+"Free space measurement unavailable." = "Free space measurement unavailable.";
+"Change in free space: %@" = "Change in free space: %@";
+"Other activity can also change available space." = "Other activity can also change available space.";
+"Reveal linking item" = "Reveal linking item";
+"Some worktree sizes could not be refreshed. Scan again to update them." = "Some worktree sizes could not be refreshed. Scan again to update them.";
+"Completed" = "Completed";
+"Skipped" = "Skipped";
+"Unfinished" = "Unfinished";

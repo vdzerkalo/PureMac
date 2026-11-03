@@ -91,6 +91,8 @@ final class AppState: ObservableObject {
     private var scanGeneration = UUID()
     private var cleanupGeneration = UUID()
     @Published var cleanProgress: Double = 0
+    @Published private(set) var categoryCleanupProgress: CategoryCleanupProgress?
+    @Published private(set) var categoryCleanupReports: [CleaningCategory: CategoryCleanupReport] = [:]
     @Published var currentScanCategory: String = ""
     /// Live filesystem path the scan engine is touching, feeding the dashboard's
     /// ticker. Deliberately NOT a `@Published` on AppState — it updates ~10×/sec
@@ -752,7 +754,7 @@ final class AppState: ObservableObject {
     }
 
     func isItemSelected(_ item: CleanableItem) -> Bool {
-        if isBlockedByRunningApp(item) { return false }
+        if item.isSelectionBlocked || isBlockedByRunningApp(item) { return false }
         if item.isSelected {
             return !deselectedItems.contains(item.id)
         }
@@ -762,8 +764,7 @@ final class AppState: ObservableObject {
     func toggleItem(_ item: CleanableItem) {
         // Per-row rules: a blocked row (protected worktree, running app) is
         // never newly selected; clicking a hand-select-only row is allowed.
-        if isBlockedByRunningApp(item) { return }
-        if item.isSelectionBlocked, !isItemSelected(item) { return }
+        if item.isSelectionBlocked || isBlockedByRunningApp(item) { return }
         if isItemSelected(item) {
             if item.isSelected {
                 deselectedItems.insert(item.id)
@@ -1183,14 +1184,32 @@ final class AppState: ObservableObject {
 
         scanState = .cleaning(progress: 0)
         cleanProgress = 0
+        categoryCleanupProgress = CategoryCleanupProgress(category: category, total: selectedItems.count)
 
-        Task {
-            var cleanResult = await cleaningEngine.cleanItems(selectedItems) { [weak self] progress in
+        Task { [self] in
+            let before = await scanEngine.getDiskInfo()
+            var cleanResult = await cleaningEngine.cleanItems(selectedItems, onItem: { [weak self] index, name in
+                Task { @MainActor [weak self] in
+                    guard let self, self.cleanupGeneration == generation,
+                          var activity = self.categoryCleanupProgress, !activity.finalizing,
+                          index >= activity.completed else { return }
+                    activity.completed = index
+                    activity.currentItem = name
+                    self.categoryCleanupProgress = activity
+                }
+            }) { [weak self] progress in
                 Task { @MainActor [weak self] in
                     guard let self, self.cleanupGeneration == generation, case .cleaning = self.scanState else { return }
                     self.cleanProgress = progress
                     self.scanState = .cleaning(progress: progress)
                 }
+            }
+
+            if var activity = categoryCleanupProgress {
+                activity.completed = activity.total
+                activity.currentItem = nil
+                activity.finalizing = true
+                categoryCleanupProgress = activity
             }
 
             if !cleanResult.requiresAdmin.isEmpty {
@@ -1202,26 +1221,51 @@ final class AppState: ObservableObject {
                 cleanResult.protectedPaths.formUnion(admin.protectedPaths)
             }
 
+            await updateCategoryAfterCleanup(category, selected: selectedItems, result: cleanResult)
+            let after = await scanEngine.getDiskInfo()
+            diskInfo = after
+            categoryCleanupReports[category] = CategoryCleanupReport(items: selectedItems, result: cleanResult, before: before, after: after)
+            categoryCleanupProgress = nil
+
             totalFreedSpace = cleanResult.freedSpace
             if cleanResult.itemsCleaned > 0 { lastCleanedDate = Date() }
             lastCleanupNotes = cleanResult.notes
-
-            if let existing = categoryResults[category] {
-                let cleared = existing.items.filter { cleanResult.cleanedPaths.contains($0.path) }
-                for item in cleared {
-                    selectedCleanupItems.remove(item.id)
-                    deselectedItems.remove(item.id)
-                }
-                categoryResults[category] = existing.removingItems(at: cleanResult.cleanedPaths)
-            }
             totalJunkSize = smartScanTotalSize
 
             let survivors = survivingItems(from: selectedItems, result: cleanResult)
             handleCleanOutcome(errors: cleanResult.errors, survivors: survivors)
-
             scanState = cleanResult.itemsCleaned > 0 ? .cleaned : .completed
-            loadDiskInfo()
         }
+    }
+
+    private func updateCategoryAfterCleanup(
+        _ category: CleaningCategory, selected: [CleanableItem], result: CleaningEngine.CleaningResult
+    ) async {
+        guard let existing = categoryResults[category] else { return }
+        let artifactReports = selected.compactMap(\.worktreeArtifacts)
+        let refresh = await cleaningEngine.refreshWorktrees(artifactReports)
+        let removedTrees = selected.compactMap { item in
+            result.cleanedPaths.contains(item.path) ? item.gitWorktree?.path : nil
+        }
+        let affectedTrees = Set(artifactReports.map(\.worktreePath) + removedTrees)
+        var items = existing.items.filter { item in
+            let remove = result.cleanedPaths.contains(item.path)
+                || (item.worktreePath.map { affectedTrees.contains($0) } ?? false)
+            if remove {
+                selectedCleanupItems.remove(item.id)
+                deselectedItems.remove(item.id)
+            }
+            return !remove
+        }
+        items += refresh.items
+        var notes = existing.notes
+        if refresh.incomplete {
+            let note = String(localized: "Some worktree sizes could not be refreshed. Scan again to update them.")
+            if !notes.contains(note) { notes.append(note) }
+        }
+        categoryResults[category] = applyingCleanupExclusions(to: CategoryResult(
+            category: category, items: items, totalSize: items.reduce(0) { $0 + $1.sizeInCategoryTotal }, notes: notes
+        ))
     }
 
     /// Items that neither got cleaned nor were skipped as SIP-protected.

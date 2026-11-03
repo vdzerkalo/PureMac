@@ -4,6 +4,33 @@ import XCTest
 
 @MainActor
 final class AppStateTests: XCTestCase {
+    func testCategoryCleanupRetainsEmptyScanResultAfterLastCacheIsRemoved() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let cache = home.appendingPathComponent(".bun/install/cache")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try Data(count: 4096).write(to: cache.appendingPathComponent("fixture"))
+        let item = CleanableItem(name: "Bun cache", path: cache.resolvingSymlinksInPath().path, size: 4096,
+                                 category: .devToolCaches, isSelected: true, lastModified: nil)
+        let state = AppState(performStartupTasks: false, cleaningEngine: CleaningEngine(homeDirectory: home),
+                             settingsDefaults: .isolatedForTests)
+        state.categoryResults[.devToolCaches] = CategoryResult(category: .devToolCaches, items: [item], totalSize: 4096)
+        state.cleanCategory(.devToolCaches)
+        for _ in 0..<250 where state.scanState.isActive {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(state.scanState, .cleaned)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path))
+        let result = try XCTUnwrap(state.categoryResults[.devToolCaches], "An emptied category is not unscanned")
+        XCTAssertTrue(result.items.isEmpty)
+        XCTAssertEqual(result.totalSize, 0)
+        let report = try XCTUnwrap(state.categoryCleanupReports[.devToolCaches])
+        XCTAssertEqual(report.completed, 1)
+        XCTAssertEqual(report.skipped + report.unfinished, 0)
+        XCTAssertEqual(report.estimatedBytes, item.size)
+        XCTAssertNil(state.categoryCleanupProgress)
+    }
+
     func testScanForAppFilesTracksLocationsWhileResultsArePending() throws {
         var completion: ((Set<URL>) -> Void)?
         let expectedLocations = ["/one", "/two", "/three"]

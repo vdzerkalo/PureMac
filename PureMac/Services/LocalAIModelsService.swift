@@ -223,14 +223,6 @@ struct LocalAIModels: Sendable {
         var hasHubRepos = false
         // Links that point into a row make that row unsafe to remove.
         let links = symlinkIndex()
-        func blockedDetail(_ path: String, default normal: String) -> String {
-            guard let link = Support.linkPointingInto(path, links: links) else { return normal }
-            return String(
-                format: String(localized: "Linked from %@ · cannot be removed"),
-                (link.path as NSString).abbreviatingWithTildeInPath
-            )
-        }
-
         if let root = hubRoot() {
             let names = ((try? fileManager.contentsOfDirectory(atPath: root)) ?? []).sorted()
             let recognised = isRecognisedHub(root: root, names: names)
@@ -255,7 +247,7 @@ struct LocalAIModels: Sendable {
                         category: .localAIModels,
                         isSelected: false,
                         lastModified: inspection.lastUsed,
-                        detail: blockedDetail(path, default: repoDetail(kind: repo.kind, revisions: inspection.revisionCount)),
+                        detail: repoDetail(kind: repo.kind, revisions: inspection.revisionCount),
                         selectOnlyByHand: true
                     ))
                 } else if recognised {
@@ -268,10 +260,7 @@ struct LocalAIModels: Sendable {
                         category: .localAIModels,
                         isSelected: false,
                         lastModified: info.modified,
-                        detail: blockedDetail(
-                            path,
-                            default: String(localized: "Non-standard folder in the Hugging Face cache · review before removing")
-                        ),
+                        detail: String(localized: "Non-standard folder in the Hugging Face cache · review before removing"),
                         selectOnlyByHand: true
                     ))
                 }
@@ -299,13 +288,21 @@ struct LocalAIModels: Sendable {
                     category: .localAIModels,
                     isSelected: false,
                     lastModified: info.modified,
-                    detail: blockedDetail(
-                        path,
-                        default: String(localized: "Model files in Application Support/huggingface · review before removing")
-                    ),
+                    detail: String(localized: "Model files in Application Support/huggingface · review before removing"),
                     selectOnlyByHand: true
                 ))
             }
+        }
+
+        outcome.items = outcome.items.map { item in
+            guard let link = Support.linkPointingInto(item.path, links: links) else { return item }
+            var blocked = item
+            blocked.modelLinkedFrom = link.path
+            blocked.detail = String(
+                format: String(localized: "Linked from %@ · cannot be removed"),
+                (link.path as NSString).abbreviatingWithTildeInPath
+            )
+            return blocked
         }
 
         if sharedRepoCount > 0 {

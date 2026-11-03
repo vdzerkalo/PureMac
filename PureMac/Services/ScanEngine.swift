@@ -1048,32 +1048,7 @@ actor ScanEngine {
         var items: [CleanableItem] = []
         for (index, worktree) in reports.enumerated() {
             if Task.isCancelled { break }
-            var item = CleanableItem(
-                name: worktree.displayName,
-                path: worktree.path,
-                size: worktree.totalBytes,
-                category: .gitWorktrees,
-                isSelected: worktree.verdict.status == .safeToDelete,
-                lastModified: worktree.lastActivity
-            )
-            item.gitWorktree = worktree
-            items.append(item)
-
-            // A worktree that cannot be removed whole still has build
-            // folders git ignores: offer them as their own row, never
-            // preselected, blocked while the worktree is in use.
-            if let artifacts = artifactReports[index] ?? nil {
-                var artifactItem = CleanableItem(
-                    name: String(localized: "Artifacts in \(artifacts.displayName)"),
-                    path: WorktreeArtifactSupport.rowPath(forWorktree: artifacts.worktreePath),
-                    size: artifacts.totalBytes,
-                    category: .gitWorktrees,
-                    isSelected: false,
-                    lastModified: worktree.lastActivity
-                )
-                artifactItem.worktreeArtifacts = artifacts
-                items.append(artifactItem)
-            }
+            items += worktree.cleanupItems(artifacts: artifactReports[index] ?? nil, selectSafeWorktree: true)
         }
         let totalSize = items.reduce(0) { $0 + $1.sizeInCategoryTotal }
         return CategoryResult(category: .gitWorktrees, items: items, totalSize: totalSize)
