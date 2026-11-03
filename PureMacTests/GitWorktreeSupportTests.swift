@@ -1211,6 +1211,40 @@ final class GitWorktreeScannerTests: XCTestCase {
         XCTAssertTrue(try git(["branch", "--list", "artifacts-review"], in: repo).contains("artifacts-review"))
     }
 
+    @MainActor
+    func testCategoryCleanupRefreshesParentAfterPartialArtifactRemoval() async throws {
+        let path = try makeNeedsReview("partial-artifacts")
+        try write(String(repeating: "x", count: 65_536), to: "\(path)/node_modules/fixture.js")
+        try write("keep this unignored file", to: "\(path)/dist/keep.txt")
+        var report = try await inspect(path)
+        let before = GitWorktreeScanner.measure(path: path, artifactDirectories: report.artifactDirectories)
+        report.artifactBytes = before.artifacts
+        report.codeBytes = before.code
+        let parent = item(for: report, size: report.totalBytes)
+        let artifacts = artifactItem(path, folders: ["node_modules", "dist"])
+        let state = AppState(performStartupTasks: false, cleaningEngine: engine(), settingsDefaults: .isolatedForTests)
+        state.categoryResults[.gitWorktrees] = CategoryResult(
+            category: .gitWorktrees, items: [parent, artifacts], totalSize: parent.size
+        )
+        state.toggleItem(artifacts)
+        state.cleanCategory(.gitWorktrees, itemIDs: [artifacts.id])
+        for _ in 0..<500 where state.scanState.isActive {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertFalse(state.scanState.isActive)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(path)/node_modules"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(path)/dist/keep.txt"))
+        let refreshed = try XCTUnwrap(state.categoryResults[.gitWorktrees])
+        XCTAssertEqual(refreshed.items.map(\.path), [path])
+        XCTAssertEqual(refreshed.totalSize, before.code)
+        XCTAssertEqual(refreshed.items.first?.gitWorktree?.artifactBytes, 0)
+        let cleanup = try XCTUnwrap(state.categoryCleanupReports[.gitWorktrees])
+        XCTAssertEqual(cleanup.unfinished, 1)
+        XCTAssertGreaterThan(cleanup.reportedBytes, 0, "Some bytes were removed even though the action was partial")
+        XCTAssertTrue(cleanup.messages.joined().contains("dist"))
+        XCTAssertTrue(state.lastCleanupHadFailures)
+    }
+
     func testTrackedOrUnignoredBuildFoldersAreRefused() async throws {
         let path = try makeNeedsReview("tracked-build")
         // `build/` is ignored by the repository's exclude file but one file in it is tracked.

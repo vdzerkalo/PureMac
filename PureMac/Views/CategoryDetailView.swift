@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct CategoryDetailView: View {
@@ -58,6 +59,7 @@ struct CategoryDetailView: View {
                 .padding(.horizontal, 28)
                 .padding(.bottom, 16)
             }
+            cleanupStatus
             if let result, !result.notes.isEmpty {
                 notesBanner(result.notes)
             }
@@ -67,14 +69,12 @@ struct CategoryDetailView: View {
                 if visibleItems.isEmpty {
                     EmptyStateView("No matching files", systemImage: "line.3.horizontal.decrease.circle", description: "Try another name, size, or date range.", action: { filter = CleanupReviewFilter() }, actionLabel: "Clear filters", tint: Tint.teal)
                 } else {
-                    List(visibleItems) { item in
-                        CleanupFileRow(item: item, blockedBy: blockedOwner(for: item))
-                            .listRowSeparator(.visible)
-                    }
-                    .listStyle(.inset)
-                    .disabled(appState.scanState.isActive)
+                    cleanupList
                 }
                 selectionBar
+            } else if result != nil, appState.categoryCleanupReports[category]?.completed ?? 0 > 0 {
+                EmptyStateView("No items left to review", systemImage: "checkmark.circle",
+                               description: "Scan again to check for new items.", tint: Tint.teal)
             } else if result != nil {
                 EmptyStateView("No files found", systemImage: "checkmark.circle", description: appState.hasFullDiskAccess ? "There are no cleanup items in this category." : "Some protected locations are unavailable. Full Disk Access allows a more complete scan.", tint: Tint.teal)
             } else if !appState.scanState.isActive {
@@ -92,8 +92,80 @@ struct CategoryDetailView: View {
             pendingReview = nil
             refreshRunningOwners()
         }
+        .onChange(of: result?.id) { _ in
+            if filter.worktreeRepository != .any,
+               result?.items.contains(where: filter.worktreeRepository.includes) != true {
+                filter.worktreeRepository = .any
+            }
+        }
         .onAppear { refreshRunningOwners() }
         .onReceive(ownerRefresh) { _ in refreshRunningOwners() }
+    }
+
+    private var cleanupList: some View {
+        List {
+            if category == .gitWorktrees {
+                ForEach(WorktreeRepositoryGroup.make(from: visibleItems)) { group in
+                    Section {
+                        ForEach(group.items, content: cleanupRow)
+                    } header: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(group.name).font(.callout.weight(.semibold))
+                            if let path = group.path {
+                                Text((path as NSString).abbreviatingWithTildeInPath)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .help(path)
+                            }
+                        }
+                        .accessibilityAddTraits(.isHeader)
+                    }
+                }
+            } else {
+                ForEach(visibleItems, content: cleanupRow)
+            }
+        }
+        .listStyle(.inset)
+        .disabled(appState.scanState.isActive)
+    }
+
+    private func cleanupRow(_ item: CleanableItem) -> some View {
+        CleanupFileRow(item: item, blockedBy: blockedOwner(for: item))
+            .listRowSeparator(.visible)
+    }
+
+    @ViewBuilder
+    private var cleanupStatus: some View {
+        if case .cleaning = appState.scanState {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                ProgressView().controlSize(.small)
+                if let activity = appState.categoryCleanupProgress, activity.category == category {
+                    if activity.finalizing {
+                        Text("Finishing cleanup…")
+                    } else if let currentItem = activity.currentItem {
+                        Text("Cleaning: \(currentItem)").lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 8)
+                        Text("\(activity.completed) of \(activity.total) processed").monospacedDigit()
+                    } else {
+                        Text("Preparing cleanup…")
+                    }
+                } else {
+                    Text("Cleanup in progress…")
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .padding(.horizontal, 28)
+            .padding(.bottom, 14)
+        } else if let report = appState.categoryCleanupReports[category] {
+            CategoryCleanupSummary(report: report)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 14)
+        }
     }
 
     private func notesBanner(_ notes: [String]) -> some View {
@@ -130,10 +202,12 @@ struct CategoryDetailView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
-                if category == .gitWorktrees {
-                    ForEach(appState.lastCleanupNotes, id: \.self) { note in
-                        Label(note, systemImage: "info.circle")
-                            .font(.system(size: 12))
+                if category == .localAIModels, let result {
+                    let blocked = result.items.filter(\.isSelectionBlocked)
+                    if !blocked.isEmpty {
+                        let size = ByteCountFormatter.string(fromByteCount: blocked.reduce(0) { $0 + $1.size }, countStyle: .file)
+                        Text("Blocked from removal: \(size)")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -184,6 +258,9 @@ struct CategoryDetailView: View {
                 .frame(maxWidth: 185)
             }
             .controlSize(.small)
+            if category == .gitWorktrees {
+                worktreeFilters
+            }
             HStack {
                 Text("\(visibleItems.count) of \(result?.itemCount ?? 0) items shown")
                     .font(.caption)
@@ -210,6 +287,35 @@ struct CategoryDetailView: View {
         }
         .padding(.horizontal, 28)
         .padding(.bottom, 14)
+    }
+
+    private var worktreeFilters: some View {
+        let repositories = WorktreeRepositoryGroup.make(from: result?.items ?? [])
+        return HStack(spacing: 12) {
+            Picker("Repository", selection: $filter.worktreeRepository) {
+                Text("All repositories").tag(WorktreeRepositoryFilter.any)
+                ForEach(repositories) { group in
+                    let display = group.path.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? group.name
+                    Text(display).tag(group.id)
+                }
+            }
+            .frame(maxWidth: 255)
+            Picker("Status", selection: $filter.worktreeStatus) {
+                Text("All statuses").tag(nil as GitWorktreeSupport.Status?)
+                ForEach(GitWorktreeSupport.Status.allCases, id: \.self) { status in
+                    Text(status.label).tag(Optional(status))
+                }
+            }
+            .frame(maxWidth: 175)
+            Spacer(minLength: 0)
+            Picker("Action", selection: $filter.worktreeAction) {
+                ForEach(WorktreeActionFilter.allCases) { action in
+                    Text(LocalizedStringKey(action.rawValue)).tag(action)
+                }
+            }
+            .frame(maxWidth: 185)
+        }
+        .controlSize(.small)
     }
 
     private var selectionBar: some View {
@@ -464,6 +570,89 @@ struct CategoryDetailView: View {
     }
 }
 
+private struct CategoryCleanupSummary: View {
+    let report: CategoryCleanupReport
+    @State private var showingDetails = false
+
+    private var hasIssues: Bool { report.skipped > 0 || report.unfinished > 0 }
+    private var title: LocalizedStringKey { hasIssues ? "Cleanup finished with issues" : "Cleanup complete" }
+    private var symbol: String { hasIssues ? "exclamationmark.circle" : "checkmark.circle" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(title, systemImage: symbol)
+                    .font(.callout.weight(.semibold))
+                Spacer(minLength: 8)
+                Text(report.finishedAt.formatted(date: .abbreviated, time: .shortened))
+                    .foregroundStyle(.secondary)
+            }
+            Text("Completed: \(report.completed) · Skipped: \(report.skipped) · Unfinished: \(report.unfinished)")
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            Button("Details") { showingDetails = true }
+                .controlSize(.small)
+        }
+        .font(.caption)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+        .sheet(isPresented: $showingDetails) { reportDetails }
+    }
+
+    private var reportDetails: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: symbol).font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Scan estimate: \(formatted(report.estimatedBytes))")
+                Text("Reported by cleanup: \(formatted(report.reportedBytes))")
+                if let delta = report.freeSpaceChange {
+                    let sign = delta < 0 ? "−" : delta > 0 ? "+" : ""
+                    Text("Change in free space: \(sign + formatted(abs(delta)))")
+                    Text("Other activity can also change available space.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Free space measurement unavailable.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .monospacedDigit()
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(report.entries) { entry in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(entry.name).textSelection(.enabled)
+                            Spacer(minLength: 8)
+                            Text(LocalizedStringKey(entry.outcome.rawValue))
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                    if !report.messages.isEmpty { Divider() }
+                    ForEach(Array(report.messages.enumerated()), id: \.offset) { _, message in
+                        Text(message).textSelection(.enabled)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 180)
+            HStack {
+                Spacer()
+                Button("Done") { showingDetails = false }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .font(.callout)
+        .padding(24)
+        .frame(width: 540)
+    }
+
+    private func formatted(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
 private struct CleanupFileRow: View {
     @EnvironmentObject var appState: AppState
     let item: CleanableItem
@@ -492,7 +681,7 @@ private struct CleanupFileRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .help(item.worktreeArtifacts?.worktreePath ?? (item.isActionItem ? secondaryLine : item.path))
+                    .help(item.modelLinkedFrom != nil ? secondaryLine : item.worktreeArtifacts?.worktreePath ?? (item.isActionItem ? secondaryLine : item.path))
                 if let artifacts = item.worktreeArtifacts {
                     Text(artifacts.folders.map {
                         "\($0.relativePath) \(ByteCountFormatter.string(fromByteCount: $0.bytes, countStyle: .file))"
@@ -553,6 +742,14 @@ private struct CleanupFileRow: View {
                     .padding(.vertical, 3)
                     .background(worktree.verdict.status.tint.opacity(0.12), in: Capsule())
                     .help(item.isSelectionBlocked ? String(localized: "PureMac will not remove this worktree.") : worktree.verdict.summary)
+            } else if let link = item.modelLinkedFrom {
+                Text("Blocked")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Tint.red)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Tint.red.opacity(0.12), in: Capsule())
+                    .help(link)
             } else if !item.isSelected {
                 Text("Review")
                     .font(.system(size: 10, weight: .medium))
@@ -590,6 +787,11 @@ private struct CleanupFileRow: View {
         .contextMenu {
             if !item.isActionItem {
                 Button("Reveal in Finder") { reveal() }
+                if let link = item.modelLinkedFrom {
+                    Button("Reveal linking item") {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: link)])
+                    }
+                }
                 Button("Copy path") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(item.path, forType: .string)

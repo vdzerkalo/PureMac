@@ -17,6 +17,11 @@
 
 One row per linked worktree. The main worktree of a repository (first entry of `git worktree list`) and bare repositories are never rows. Every row's verdict comes from git; a folder name never decides anything.
 
+The list groups by repository path, so repositories with the same name stay separate. The Repository, Status and Action filters combine with search, size and age. A build folder row follows its parent when both are shown and uses the worktree's status for filtering. Whether the build folders can be selected is shown separately on the row.
+
+After artifact cleanup, only the affected worktrees are rechecked and measured. The parent, remaining build folders and totals update after full or partial removal. If a tree cannot be rechecked, the app drops its stale size and asks for a rescan.
+
+
 Where repositories come from (`GitWorktreeScanner.scan`):
 
 | Source | Detail |

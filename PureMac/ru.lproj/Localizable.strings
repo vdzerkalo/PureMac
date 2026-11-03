@@ -1120,3 +1120,34 @@
 "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Модели Ollama удаляются через сам Ollama. Файлы, общие с другими моделями, остаются на диске, поэтому освободится меньше места, чем показано. Чтобы снова пользоваться удалённой моделью, её нужно загрузить через pull заново.";
 "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Репозитории Hugging Face и папки моделей удаляются со всеми файлами. Чтобы снова ими пользоваться, их нужно скачать целиком, часто это много гигабайт, а на медленном соединении это могут быть часы.";
 "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Ссылки из-за пределов кэша не обнаруживаются: проект, ссылающийся на удалённую папку, перестанет работать.";
+
+/* Developer cleanup review */
+"No items left to review" = "Больше нет элементов для проверки";
+"Scan again to check for new items." = "Запустите сканирование ещё раз, чтобы найти новые элементы.";
+"Finishing cleanup…" = "Завершение очистки…";
+"Preparing cleanup…" = "Подготовка к очистке…";
+"Cleaning: %@" = "Очистка: %@";
+"%lld of %lld processed" = "Обработано %lld из %lld";
+"Cleanup in progress…" = "Идёт очистка…";
+"Blocked from removal: %@" = "Удаление заблокировано: %@";
+"Repository" = "Репозиторий";
+"Status" = "Статус";
+"All repositories" = "Все репозитории";
+"All statuses" = "Все статусы";
+"All actions" = "Все действия";
+"Whole worktrees" = "Целые рабочие деревья";
+"Build folders" = "Папки сборки";
+"Unknown repository" = "Неизвестный репозиторий";
+"Completed: %lld · Skipped: %lld · Unfinished: %lld" = "Выполнено: %lld · Пропущено: %lld · Не завершено: %lld";
+"Cleanup finished with issues" = "Очистка завершилась с проблемами";
+"Details" = "Подробности";
+"Scan estimate: %@" = "Оценка сканирования: %@";
+"Reported by cleanup: %@" = "По отчёту очистки: %@";
+"Free space measurement unavailable." = "Не удалось измерить свободное место.";
+"Change in free space: %@" = "Изменение свободного места: %@";
+"Other activity can also change available space." = "Другие процессы тоже могут менять объём свободного места.";
+"Reveal linking item" = "Показать ссылку";
+"Some worktree sizes could not be refreshed. Scan again to update them." = "Не удалось обновить размеры некоторых рабочих деревьев. Повторите сканирование.";
+"Completed" = "Выполнено";
+"Skipped" = "Пропущено";
+"Unfinished" = "Не завершено";

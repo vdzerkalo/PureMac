@@ -1120,3 +1120,34 @@
 "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again.";
 "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection.";
 "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working.";
+
+/* Developer cleanup review */
+"No items left to review" = "لا توجد عناصر أخرى للمراجعة";
+"Scan again to check for new items." = "افحص مجددًا للبحث عن عناصر جديدة.";
+"Finishing cleanup…" = "جارٍ إنهاء التنظيف…";
+"Preparing cleanup…" = "جارٍ التحضير للتنظيف…";
+"Cleaning: %@" = "جارٍ التنظيف: %@";
+"%lld of %lld processed" = "تمت معالجة %lld من %lld";
+"Cleanup in progress…" = "التنظيف جارٍ…";
+"Blocked from removal: %@" = "محظور من الإزالة: %@";
+"Repository" = "المستودع";
+"Status" = "الحالة";
+"All repositories" = "كل المستودعات";
+"All statuses" = "كل الحالات";
+"All actions" = "كل الإجراءات";
+"Whole worktrees" = "أشجار العمل كاملة";
+"Build folders" = "مجلدات البناء";
+"Unknown repository" = "مستودع غير معروف";
+"Completed: %lld · Skipped: %lld · Unfinished: %lld" = "اكتمل: %lld · تم تخطيه: %lld · لم يكتمل: %lld";
+"Cleanup finished with issues" = "انتهى التنظيف مع وجود مشكلات";
+"Details" = "التفاصيل";
+"Scan estimate: %@" = "تقدير الفحص: %@";
+"Reported by cleanup: %@" = "المساحة وفق تقرير التنظيف: %@";
+"Free space measurement unavailable." = "تعذر قياس المساحة المتاحة.";
+"Change in free space: %@" = "تغير المساحة المتاحة: %@";
+"Other activity can also change available space." = "قد تؤثر أنشطة أخرى أيضًا في المساحة المتاحة.";
+"Reveal linking item" = "إظهار عنصر الارتباط";
+"Some worktree sizes could not be refreshed. Scan again to update them." = "تعذر تحديث أحجام بعض أشجار العمل. افحص مجددًا لتحديثها.";
+"Completed" = "اكتمل";
+"Skipped" = "تم تخطيه";
+"Unfinished" = "لم يكتمل";

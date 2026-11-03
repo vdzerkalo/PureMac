@@ -429,7 +429,7 @@
 "Checks every cleanup category without deleting files" = "Checks every cleanup category without deleting files";
 "Choose what to keep, then clean everything in one controlled pass." = "Choose what to keep, then clean everything in one controlled pass.";
 "Cleaning safely…" = "Cleaning safely…";
-"Cleanup complete" = "Cleanup complete";
+"Cleanup complete" = "Очищення завершено";
 "Cleanup complete. Your storage summary is refreshing." = "Cleanup complete. Your storage summary is refreshing.";
 "Clear" = "Clear";
 "Complete" = "Complete";
@@ -1120,3 +1120,34 @@
 "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Моделі Ollama видаляються через сам Ollama. Файли, спільні з іншими моделями, залишаються на диску, тож звільниться менше місця, ніж показано. Щоб знову користуватися видаленою моделлю, її треба завантажити через pull ще раз.";
 "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Репозиторії Hugging Face і папки моделей видаляються разом з усіма файлами. Щоб знову користуватися ними, їх треба завантажити повністю, часто багато гігабайтів, а на повільному з’єднанні це можуть бути години.";
 "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Файли, на які посилаються з-поза кешу, не виявляються: проєкт із посиланням на видалену папку перестане працювати.";
+
+/* Developer cleanup review */
+"No items left to review" = "Немає елементів для перегляду";
+"Scan again to check for new items." = "Проскануйте ще раз, щоб знайти нові елементи.";
+"Finishing cleanup…" = "Завершуємо очищення…";
+"Preparing cleanup…" = "Готуємо очищення…";
+"Cleaning: %@" = "Очищуємо: %@";
+"%lld of %lld processed" = "Опрацьовано %lld із %lld";
+"Cleanup in progress…" = "Триває очищення…";
+"Blocked from removal: %@" = "Захищено від видалення: %@";
+"Repository" = "Репозиторій";
+"Status" = "Статус";
+"All repositories" = "Усі репозиторії";
+"All statuses" = "Усі статуси";
+"All actions" = "Усі дії";
+"Whole worktrees" = "Цілі робочі дерева";
+"Build folders" = "Папки збірки";
+"Unknown repository" = "Невідомий репозиторій";
+"Completed: %lld · Skipped: %lld · Unfinished: %lld" = "Виконано: %lld · Пропущено: %lld · Не завершено: %lld";
+"Cleanup finished with issues" = "Очищення завершилося з проблемами";
+"Details" = "Подробиці";
+"Scan estimate: %@" = "Оцінка сканування: %@";
+"Reported by cleanup: %@" = "За звітом очищення: %@";
+"Free space measurement unavailable." = "Не вдалося виміряти вільне місце.";
+"Change in free space: %@" = "Зміна вільного місця: %@";
+"Other activity can also change available space." = "Інші процеси також можуть змінювати обсяг вільного місця.";
+"Reveal linking item" = "Показати посилання";
+"Some worktree sizes could not be refreshed. Scan again to update them." = "Не вдалося оновити розміри деяких робочих дерев. Проскануйте ще раз.";
+"Completed" = "Виконано";
+"Skipped" = "Пропущено";
+"Unfinished" = "Не завершено";

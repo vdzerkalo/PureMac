@@ -84,7 +84,11 @@ actor CleaningEngine {
 
     // MARK: - Public API
 
-    func cleanItems(_ selectedItems: [CleanableItem], progressHandler: @Sendable (Double) -> Void) async -> CleaningResult {
+    func cleanItems(
+        _ selectedItems: [CleanableItem],
+        onItem: (@Sendable (Int, String) -> Void)? = nil,
+        progressHandler: @Sendable (Double) -> Void
+    ) async -> CleaningResult {
         var result = CleaningResult()
         // Docker prune rows run in DockerSupport.PruneAction.cleanOrder, not
         // in the order they were selected.
@@ -93,6 +97,7 @@ actor CleaningEngine {
         let exclusions = CleanupExclusions.paths()
 
         for (index, item) in items.enumerated() {
+            onItem?(index, item.name)
             let progress = Double(index + 1) / Double(total)
             defer { progressHandler(progress) }
             if CleanupExclusions.excludes(item.path, paths: exclusions) {
@@ -837,6 +842,34 @@ actor CleaningEngine {
             }
         }
         return (item.size, true, nil, note)
+    }
+
+    /// Refresh just the trees whose artifact actions were attempted. Partial
+    /// cleanup can change their sizes even when the action returned an error.
+    func refreshWorktrees(_ reports: [WorktreeArtifactsReport]) async -> (items: [CleanableItem], incomplete: Bool) {
+        guard !reports.isEmpty else { return ([], false) }
+        guard let gitPath = GitWorktreeScanner.locateGit() else { return ([], true) }
+        let settings = worktreeSettings()
+        var scanner = GitWorktreeScanner(homeDirectory: homeDirectory.path, gitPath: gitPath)
+        scanner.inactiveDays = settings.inactiveDays
+        scanner.baseBranchOverride = settings.baseBranch
+        var items: [CleanableItem] = []
+        var incomplete = false
+        var seen: Set<String> = []
+        for report in reports where seen.insert(report.worktreePath).inserted {
+            guard GitWorktreeScanner.pathExists(report.worktreePath) else { continue }
+            guard var fresh = await scanner.reinspect(path: report.worktreePath, repository: report.repositoryPath) else {
+                incomplete = true
+                continue
+            }
+            let artifacts = await scanner.artifactReport(for: fresh)
+            let directories = Set(fresh.artifactDirectories).union(artifacts?.folders.map(\.relativePath) ?? [])
+            let sizes = GitWorktreeScanner.measure(path: fresh.path, artifactDirectories: Array(directories))
+            fresh.artifactBytes = sizes.artifacts
+            fresh.codeBytes = sizes.code
+            items += fresh.cleanupItems(artifacts: artifacts, selectSafeWorktree: false)
+        }
+        return (items, incomplete)
     }
 
     /// Deletes the ignored build folders (node_modules, .next, …) of one

@@ -231,7 +231,7 @@ enum GitWorktreeSupport {
         var ignoredFoldersNotFullyChecked = false
     }
 
-    enum Status: String, Equatable {
+    enum Status: String, CaseIterable {
         case safeToDelete
         case needsReview
         case protected

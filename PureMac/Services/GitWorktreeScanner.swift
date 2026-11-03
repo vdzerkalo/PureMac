@@ -27,6 +27,22 @@ struct GitWorktreeReport: Equatable {
         let ref = branch ?? head.map { String($0.prefix(8)) } ?? URL(fileURLWithPath: path).lastPathComponent
         return "\(repo) · \(ref)"
     }
+
+    func cleanupItems(artifacts: WorktreeArtifactsReport?, selectSafeWorktree: Bool) -> [CleanableItem] {
+        var parent = CleanableItem(
+            name: displayName, path: path, size: totalBytes, category: .gitWorktrees,
+            isSelected: selectSafeWorktree && verdict.status == .safeToDelete, lastModified: lastActivity
+        )
+        parent.gitWorktree = self
+        guard let artifacts else { return [parent] }
+        var child = CleanableItem(
+            name: String(localized: "Artifacts in \(artifacts.displayName)"),
+            path: WorktreeArtifactSupport.rowPath(forWorktree: artifacts.worktreePath),
+            size: artifacts.totalBytes, category: .gitWorktrees, isSelected: false, lastModified: lastActivity
+        )
+        child.worktreeArtifacts = artifacts
+        return [parent, child]
+    }
 }
 
 /// Finds git worktrees left behind by AI coding agents and gathers the

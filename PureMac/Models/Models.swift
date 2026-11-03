@@ -239,6 +239,10 @@ struct CleanableItem: Identifiable, Hashable {
     /// click on the row itself selects them: see `isExcludedFromBulkSelection`.
     var selectOnlyByHand: Bool = false
 
+    /// An incoming link detected by the model scan. The removal service still
+    /// checks live links independently when it receives a removal request.
+    var modelLinkedFrom: String? = nil
+
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
@@ -267,7 +271,7 @@ struct CleanableItem: Identifiable, Hashable {
     /// orphans can: their action is `git worktree prune`. Artifact rows of a
     /// worktree in use, locked or active as an agent worktree are blocked too.
     var isSelectionBlocked: Bool {
-        (gitWorktree?.verdict.blocksSelection ?? false) || (worktreeArtifacts?.blocker != nil)
+        (gitWorktree?.verdict.blocksSelection ?? false) || (worktreeArtifacts?.blocker != nil) || modelLinkedFrom != nil
     }
 
     /// Ollama rows are `ollama-model:<name>#<digest>`. `#` cannot occur in a

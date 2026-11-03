@@ -1120,3 +1120,34 @@
 "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again." = "Ollama models are removed through Ollama. Files shared with other models stay on disk, so less space may be freed than listed. Using a removed model again means pulling it again.";
 "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection." = "Hugging Face repos and model folders are deleted with all their files. Using one again means downloading it in full, often many gigabytes, which can take hours on a slow connection.";
 "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working." = "Files linked from outside the cache are not detected: a project that links into a deleted folder stops working.";
+
+/* Developer cleanup review */
+"No items left to review" = "Não há mais itens para revisar";
+"Scan again to check for new items." = "Escaneie novamente para procurar novos itens.";
+"Finishing cleanup…" = "Finalizando a limpeza…";
+"Preparing cleanup…" = "Preparando a limpeza…";
+"Cleaning: %@" = "Limpando: %@";
+"%lld of %lld processed" = "%lld de %lld processados";
+"Cleanup in progress…" = "Limpeza em andamento…";
+"Blocked from removal: %@" = "Remoção bloqueada: %@";
+"Repository" = "Repositório";
+"Status" = "Estado";
+"All repositories" = "Todos os repositórios";
+"All statuses" = "Todos os estados";
+"All actions" = "Todas as ações";
+"Whole worktrees" = "Árvores de trabalho inteiras";
+"Build folders" = "Pastas de compilação";
+"Unknown repository" = "Repositório desconhecido";
+"Completed: %lld · Skipped: %lld · Unfinished: %lld" = "Concluídos: %lld · Ignorados: %lld · Incompletos: %lld";
+"Cleanup finished with issues" = "Limpeza concluída com problemas";
+"Details" = "Detalhes";
+"Scan estimate: %@" = "Estimativa do escaneamento: %@";
+"Reported by cleanup: %@" = "Resultado da limpeza: %@";
+"Free space measurement unavailable." = "Não foi possível medir o espaço livre.";
+"Change in free space: %@" = "Variação do espaço livre: %@";
+"Other activity can also change available space." = "Outras atividades também podem alterar o espaço disponível.";
+"Reveal linking item" = "Mostrar o link";
+"Some worktree sizes could not be refreshed. Scan again to update them." = "Não foi possível atualizar o tamanho de algumas árvores de trabalho. Escaneie novamente.";
+"Completed" = "Concluído";
+"Skipped" = "Ignorado";
+"Unfinished" = "Incompleto";
