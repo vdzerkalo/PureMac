@@ -117,7 +117,13 @@ final class SpaceExplorerViewModel: ObservableObject {
 }
 
 struct SpaceExplorerView: View {
+    private enum DisplayMode: Hashable {
+        case list
+        case treemap
+    }
+
     @StateObject private var model = SpaceExplorerViewModel()
+    @State private var displayMode: DisplayMode = .list
 
     var body: some View {
         VStack(spacing: 14) {
@@ -304,7 +310,39 @@ struct SpaceExplorerView: View {
         }
     }
 
+    @ViewBuilder
     private func resultView(_ result: StorageScanResult) -> some View {
+        if displayMode == .treemap, !result.entries.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                summaryCard(result)
+                resultHeader
+                SpaceTreemapView(
+                    result: result,
+                    onOpen: { model.open($0) },
+                    onReveal: { model.reveal($0) }
+                )
+            }
+        } else {
+            listResultView(result)
+        }
+    }
+
+    private var resultHeader: some View {
+        HStack {
+            SectionHeader("Largest items")
+            Spacer()
+            Picker("Result view", selection: $displayMode) {
+                Text("List").tag(DisplayMode.list)
+                Text("Treemap").tag(DisplayMode.treemap)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityLabel("Result view")
+        }
+    }
+
+    private func listResultView(_ result: StorageScanResult) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
                 summaryCard(result)
@@ -324,7 +362,7 @@ struct SpaceExplorerView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else {
-                    SectionHeader("Largest items")
+                    resultHeader
                     ForEach(result.entries) { entry in
                         StorageEntryRow(
                             entry: entry,

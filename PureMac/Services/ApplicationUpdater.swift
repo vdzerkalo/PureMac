@@ -382,12 +382,16 @@ struct BrewProcessOutput: Sendable {
 
 enum BrewProcessRunner {
     static let maxCapturedBytes = 4 * 1_024 * 1_024
+    /// Window kept by `keepOutputTail` runs: a command such as `docker image
+    /// prune -a` can print far more than the cap while its summary is the last line.
+    static let tailWindowBytes = 1_024 * 1_024
 
     static func run(
         executableURL: URL,
         arguments: [String],
         timeout: TimeInterval,
-        environment: [String: String]? = nil
+        environment: [String: String]? = nil,
+        keepOutputTail: Bool = false
     ) async throws -> BrewProcessOutput {
         let handle = BrewProcessHandle()
         return try await withTaskCancellationHandler {
@@ -397,6 +401,7 @@ enum BrewProcessRunner {
                     arguments: arguments,
                     timeout: timeout,
                     environment: environment,
+                    keepOutputTail: keepOutputTail,
                     continuation: continuation
                 )
                 handle.attach(execution)
@@ -434,10 +439,19 @@ private final class BrewProcessExecution: @unchecked Sendable {
     private let process = Process()
     private let stdoutPipe = Pipe()
     private let stderrPipe = Pipe()
-    private lazy var stdoutReader = BrewPipeReader(maxBytes: BrewProcessRunner.maxCapturedBytes) { [weak self] in
+    /// When set, each pipe keeps only its last `tailWindowBytes` and the
+    /// output limit never kills the process (Docker prune summaries are last).
+    private let keepOutputTail: Bool
+    private lazy var stdoutReader = BrewPipeReader(
+        maxBytes: keepOutputTail ? BrewProcessRunner.tailWindowBytes : BrewProcessRunner.maxCapturedBytes,
+        keepTail: keepOutputTail
+    ) { [weak self] in
         self?.failForOutputLimit()
     }
-    private lazy var stderrReader = BrewPipeReader(maxBytes: BrewProcessRunner.maxCapturedBytes) { [weak self] in
+    private lazy var stderrReader = BrewPipeReader(
+        maxBytes: keepOutputTail ? BrewProcessRunner.tailWindowBytes : BrewProcessRunner.maxCapturedBytes,
+        keepTail: keepOutputTail
+    ) { [weak self] in
         self?.failForOutputLimit()
     }
     private let readers = DispatchGroup()
@@ -457,8 +471,10 @@ private final class BrewProcessExecution: @unchecked Sendable {
         arguments: [String],
         timeout: TimeInterval,
         environment: [String: String]?,
+        keepOutputTail: Bool,
         continuation: CheckedContinuation<BrewProcessOutput, Error>
     ) {
+        self.keepOutputTail = keepOutputTail
         self.timeout = timeout
         self.continuation = continuation
         process.executableURL = executableURL
@@ -641,6 +657,7 @@ private final class BrewProcessExecution: @unchecked Sendable {
 private final class BrewPipeReader: @unchecked Sendable {
     private let lock = NSLock()
     private let maxBytes: Int
+    private let keepTail: Bool
     private let onLimitExceeded: @Sendable () -> Void
     private var storage = Data()
     private var finished = false
@@ -648,8 +665,9 @@ private final class BrewPipeReader: @unchecked Sendable {
     private weak var handle: FileHandle?
     private var completion: (@Sendable () -> Void)?
 
-    init(maxBytes: Int, onLimitExceeded: @escaping @Sendable () -> Void) {
+    init(maxBytes: Int, keepTail: Bool = false, onLimitExceeded: @escaping @Sendable () -> Void) {
         self.maxBytes = maxBytes
+        self.keepTail = keepTail
         self.onLimitExceeded = onLimitExceeded
     }
 
@@ -677,6 +695,13 @@ private final class BrewPipeReader: @unchecked Sendable {
             if chunk.isEmpty {
                 self.lock.unlock()
                 self.stop()
+            } else if self.keepTail {
+                // Keep the newest maxBytes; never report a limit.
+                self.storage.append(chunk)
+                if self.storage.count > self.maxBytes {
+                    self.storage = Data(self.storage.suffix(self.maxBytes))
+                }
+                self.lock.unlock()
             } else {
                 let remaining = self.maxBytes - self.storage.count
                 if remaining > 0 {

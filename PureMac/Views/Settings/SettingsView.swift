@@ -309,6 +309,13 @@ struct CleaningSettingsView: View {
     private static let excludedFoldersKey = "settings.cleaning.largeFileExcludedFolders"
     @State private var excludedFolders: [String] = []
 
+    @AppStorage(GitWorktreeSettings.inactiveDaysKey) private var worktreeInactiveDays: Int = GitWorktreeSupport.defaultInactiveDays
+    @AppStorage(GitWorktreeSettings.baseBranchKey) private var worktreeBaseBranch = ""
+    @AppStorage(GitWorktreeSettings.deleteMergedBranchKey) private var worktreeDeleteMergedBranch = false
+    @AppStorage(GitWorktreeSettings.includeInSmartScanKey) private var worktreeIncludeInSmartScan = false
+    @AppStorage(LocalAIModels.includeInSmartScanKey) private var modelsIncludeInSmartScan = false
+    @State private var worktreeRoots: [String] = []
+
     var body: some View {
         Form {
             Section("File Discovery") {
@@ -378,6 +385,72 @@ struct CleaningSettingsView: View {
                 }
             }
 
+            Section("Git Worktrees") {
+                Toggle("Include in Smart Scan", isOn: $worktreeIncludeInSmartScan)
+                Text("Smart Scan then also lists worktrees. It only reads your repositories and can take a few minutes with many worktrees; scheduled scans skip them, and worktrees are removed only from their own screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Stepper(
+                    String(format: String(localized: "Idle after: %lld days"), Int64(worktreeInactiveDays)),
+                    value: $worktreeInactiveDays,
+                    in: GitWorktreeSettings.inactiveDaysRange
+                )
+                Text("A merged worktree without activity for this long is Safe to delete; a more recent one needs review.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                TextField("Base branch", text: $worktreeBaseBranch, prompt: Text("origin/HEAD, origin/main, origin/master, main, master"))
+                Text("Leave empty to try those in order. A name that does not exist in a repository means nothing there counts as merged.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let problem = GitWorktreeSupport.baseBranchSettingProblem(worktreeBaseBranch) {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                Toggle("Delete the merged branch after removing a worktree", isOn: $worktreeDeleteMergedBranch)
+                Text("Runs git branch -d, never -D, only for Safe to delete worktrees and only if git agrees the branch is merged.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if worktreeRoots.isEmpty {
+                    Text("Besides Claude Code's project list and the Cursor and Codex worktree folders, these folders are searched for repositories, three levels deep.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(worktreeRoots, id: \.self) { folder in
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder")
+                                .foregroundStyle(.secondary)
+                            Text((folder as NSString).abbreviatingWithTildeInPath)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(folder)
+                            Spacer()
+                            Button {
+                                worktreeRoots.removeAll { $0 == folder }
+                                persistWorktreeRoots()
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .help(String(localized: "Remove folder"))
+                        }
+                    }
+                }
+                Button("Add Search Folder…") { addWorktreeRoots() }
+            }
+
+            Section("Local AI Models") {
+                Toggle("Include in Smart Scan", isOn: $modelsIncludeInSmartScan)
+                Text("Smart Scan then also lists Ollama models and Hugging Face downloads. It only reads; scheduled scans skip them, and models are removed only from their own screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Orphan Finder") {
                 HStack {
                     // Read the live count directly (it's a UserDefaults-backed
@@ -401,7 +474,25 @@ struct CleaningSettingsView: View {
         .formStyle(.grouped)
         .onAppear {
             excludedFolders = UserDefaults.standard.stringArray(forKey: Self.excludedFoldersKey) ?? []
+            worktreeRoots = UserDefaults.standard.stringArray(forKey: GitWorktreeSettings.extraRootsKey) ?? []
         }
+    }
+
+    private func persistWorktreeRoots() {
+        UserDefaults.standard.set(worktreeRoots, forKey: GitWorktreeSettings.extraRootsKey)
+    }
+
+    private func addWorktreeRoots() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = String(localized: "Add Search Folder…")
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls where !worktreeRoots.contains(url.path) {
+            worktreeRoots.append(url.path)
+        }
+        persistWorktreeRoots()
     }
 
     private func persistExcludedFolders() {
