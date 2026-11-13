@@ -239,7 +239,7 @@ actor CleaningEngine {
                 if action == .unusedVolumes {
                     pruneOutcome = await removeDockerVolumes(DockerSupport.volumeEntries(forPath: item.path))
                 } else {
-                    pruneOutcome = await pruneDocker(action)
+                    pruneOutcome = await pruneDocker(action, scannedAt: DockerSupport.scanTime(forPath: item.path))
                 }
                 result.freedSpace += pruneOutcome.freed
                 if pruneOutcome.error == nil {
@@ -665,6 +665,31 @@ actor CleaningEngine {
         }
     }
 
+    /// The reason to refuse a Docker removal, or nil when the CLI talks to a
+    /// daemon on this Mac (DockerSupport.daemonLocation). Asked before every
+    /// removal: the context can change between the scan and the clean.
+    private func remoteDockerDaemonRefusal() async -> String? {
+        var contextHost: String?
+        if case .finished(let status, let stdout, _) = await runDocker(
+            DockerSupport.contextHostArguments, label: "docker context inspect", timeout: DockerSupport.contextLookupTimeout
+        ), status == 0 {
+            contextHost = stdout
+        }
+        let location = DockerSupport.daemonLocation(
+            environmentHost: ProcessInfo.processInfo.environment["DOCKER_HOST"], contextHost: contextHost
+        )
+        switch location {
+        case .local:
+            return nil
+        case .remote(let host):
+            Logger.shared.log("Docker removal refused: daemon is \(host)", level: .warning)
+            return "Docker is set to a remote daemon (\(host)) — PureMac only cleans Docker on this Mac"
+        case .unknown:
+            Logger.shared.log("Docker removal refused: daemon address unknown", level: .warning)
+            return "Couldn't confirm that Docker runs on this Mac — nothing was removed"
+        }
+    }
+
     /// Maps a non-zero exit to a row error. The stderr is logged first, so
     /// the friendly "isn't running" text never hides what Docker said.
     private func dockerFailure(status: Int32, stderr: String, label: String) -> String {
@@ -685,12 +710,16 @@ actor CleaningEngine {
     /// host. Returns a friendly error when no CLI is installed or the daemon
     /// is not running — common with OrbStack, which only runs on demand.
     /// Volumes are not pruned: see removeDockerVolumes.
-    func pruneDocker(_ action: DockerSupport.PruneAction) async -> (freed: Int64, error: String?) {
+    /// With `scannedAt`, objects created after the scan are left alone
+    /// (DockerSupport.untilFilter). Refused on a remote daemon.
+    func pruneDocker(_ action: DockerSupport.PruneAction, scannedAt: Date? = nil) async -> (freed: Int64, error: String?) {
         guard action != .unusedVolumes else {
             return (0, "Volumes are removed by name only — scan again")
         }
+        if let refusal = await remoteDockerDaemonRefusal() { return (0, refusal) }
         let label = action.commandLine
-        switch await runDocker(action.arguments, label: label, timeout: DockerSupport.pruneTimeout, keepOutputTail: true) {
+        let arguments = action.arguments + DockerSupport.untilFilter(for: action, scannedAt: scannedAt)
+        switch await runDocker(arguments, label: label, timeout: DockerSupport.pruneTimeout, keepOutputTail: true) {
         case .failed(let message):
             return (0, message)
         case .finished(let status, let stdout, let stderr):
@@ -721,6 +750,7 @@ actor CleaningEngine {
         guard !recorded.isEmpty else {
             return (0, "No unused volumes were recorded for this row — scan again")
         }
+        if let refusal = await remoteDockerDaemonRefusal() { return (0, refusal) }
         let listLabel = "docker volume ls"
         let listing = await runDocker(DockerSupport.unusedVolumeNamesArguments, label: listLabel, timeout: DockerSupport.danglingLookupTimeout)
         let unusedNow: Set<String>

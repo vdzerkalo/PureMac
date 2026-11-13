@@ -138,8 +138,12 @@ enum DockerSupport {
     /// recorded at scan time: `docker-prune:volumes:<name>=<bytes>,…`. Volume
     /// names only contain `[A-Za-z0-9_.-]`, so `:`, `,` and `=` are safe
     /// separators; names that do not match are never encoded.
-    static func actionPath(for action: PruneAction, volumes: [VolumeEntry] = []) -> String {
+    ///
+    /// `scannedAt` adds `@<unix seconds>` after the action name. The prunes
+    /// then skip objects created after the scan (`untilFilter`).
+    static func actionPath(for action: PruneAction, volumes: [VolumeEntry] = [], scannedAt: Date? = nil) -> String {
         var path = actionPathPrefix + action.rawValue
+        if let scannedAt { path += "@\(Int(scannedAt.timeIntervalSince1970))" }
         let valid = volumes.filter { isValidVolumeName($0.name) }
         if action == .unusedVolumes, !valid.isEmpty {
             path += ":" + valid.map { "\($0.name)=\($0.bytes)" }.joined(separator: ",")
@@ -151,7 +155,36 @@ enum DockerSupport {
         guard path.hasPrefix(actionPathPrefix) else { return nil }
         let rest = path.dropFirst(actionPathPrefix.count)
         let raw = rest.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
-        return PruneAction(rawValue: String(raw))
+        let name = raw.split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+        return PruneAction(rawValue: String(name))
+    }
+
+    /// When the row was scanned; nil for a path without `@<unix seconds>`.
+    static func scanTime(forPath path: String) -> Date? {
+        guard path.hasPrefix(actionPathPrefix) else { return nil }
+        let token = path.dropFirst(actionPathPrefix.count)
+            .split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+        let parts = token.split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, let seconds = TimeInterval(parts[1]), seconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    /// `--filter until=…` so a prune leaves what appeared after the scan the
+    /// user reviewed. Containers and images take the scan time itself and
+    /// are matched by creation time: an old image pulled after the scan is
+    /// still older than the scan. The build cache filter takes a duration
+    /// only: entries used within the time since the scan stay. Volumes are
+    /// removed by recorded name and need no filter.
+    static func untilFilter(for action: PruneAction, scannedAt: Date?, now: Date = Date()) -> [String] {
+        guard let scannedAt else { return [] }
+        switch action {
+        case .stoppedContainers, .danglingImages, .unusedImages:
+            return ["--filter", "until=\(Int(scannedAt.timeIntervalSince1970))"]
+        case .buildCache:
+            return ["--filter", "until=\(max(Int(now.timeIntervalSince(scannedAt).rounded(.up)), 1))s"]
+        case .unusedVolumes:
+            return []
+        }
     }
 
     /// The volumes recorded in a volumes row's path; empty for any other
@@ -174,13 +207,19 @@ enum DockerSupport {
     /// none: it must never run as a bare `volume rm`).
     static func arguments(forPath path: String) -> [String]? {
         guard let action = action(forPath: path) else { return nil }
-        guard action == .unusedVolumes else { return action.arguments }
+        guard action == .unusedVolumes else {
+            return action.arguments + untilFilter(for: action, scannedAt: scanTime(forPath: path))
+        }
         let names = volumeEntries(forPath: path).map(\.name)
         return names.isEmpty ? nil : action.arguments + names
     }
 
     static func commandLine(forPath path: String) -> String? {
         guard let action = action(forPath: path) else { return nil }
+        // The build cache duration is only known when the prune runs.
+        if action == .buildCache, scanTime(forPath: path) != nil {
+            return action.commandLine + " --filter until=<time since this scan>"
+        }
         guard let arguments = arguments(forPath: path) else { return action.commandLine }
         return (["docker"] + arguments).joined(separator: " ")
     }
@@ -591,6 +630,39 @@ enum DockerSupport {
             }
         }
         return false
+    }
+
+    // MARK: - Local daemon only
+
+    /// Prints the daemon address of the current context. Needs no daemon.
+    static let contextHostArguments = ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]
+
+    static let contextLookupTimeout: TimeInterval = 10
+
+    enum DaemonLocation: Equatable {
+        case local
+        /// `ssh://`, `tcp://` to another host, or any other address.
+        case remote(String)
+        /// The address could not be read: treated like remote.
+        case unknown
+    }
+
+    /// Where the docker CLI will send its commands. `DOCKER_HOST` overrides
+    /// the context, as it does for the CLI. A unix socket or a `tcp://`
+    /// loopback address counts as this Mac: a prune on a remote daemon
+    /// would erase a server's images and volumes. A socket or port that the
+    /// user forwarded to another machine cannot be told apart.
+    static func daemonLocation(environmentHost: String?, contextHost: String?) -> DaemonLocation {
+        let fromEnvironment = environmentHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let fromContext = contextHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let host = fromEnvironment.isEmpty ? fromContext : fromEnvironment
+        guard !host.isEmpty else { return .unknown }
+        if host.lowercased().hasPrefix("unix://") { return .local }
+        if let url = URLComponents(string: host), url.scheme?.lowercased() == "tcp",
+           let name = url.host?.lowercased(), ["127.0.0.1", "localhost", "::1", "[::1]"].contains(name) {
+            return .local
+        }
+        return .remote(host)
     }
 
     /// A prune of a large build cache can run for minutes; the limit only
