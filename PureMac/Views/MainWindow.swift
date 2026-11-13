@@ -21,10 +21,14 @@ struct MainWindow: View {
 
     private static let advancedCategories: [CleaningCategory] = [
         .aiApps,
+        .aiAgentData,
         .xcodeJunk,
         .brewCache,
         .nodeCache,
-        .dockerCache
+        .devToolCaches,
+        .dockerCache,
+        .gitWorktrees,
+        .localAIModels
     ].filter(CleaningCategory.scannable.contains)
 
     var body: some View {
