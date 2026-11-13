@@ -973,15 +973,40 @@ actor ScanEngine {
         // marks them as actions, so the UI never offers reveal-in-Finder.
         // Works for both Docker Desktop and OrbStack (see
         // DockerSupport.candidateBinaryPaths for where each ships its CLI).
-        if !Task.isCancelled,
-           let dockerBin = DockerSupport.locateBinary(homeDirectory: home),
+        // Only for a daemon on this Mac: with a remote context the same
+        // commands would list, and later erase, a server's objects.
+        var notes: [String] = []
+        let dockerBin = Task.isCancelled ? nil : DockerSupport.locateBinary(homeDirectory: home)
+        var daemonIsLocal = false
+        if let dockerBin {
+            let contextHost = await dockerLookup(
+                dockerBin: dockerBin,
+                arguments: DockerSupport.contextHostArguments,
+                label: "docker context inspect",
+                timeout: DockerSupport.contextLookupTimeout
+            )
+            switch DockerSupport.daemonLocation(
+                environmentHost: ProcessInfo.processInfo.environment["DOCKER_HOST"], contextHost: contextHost
+            ) {
+            case .local:
+                daemonIsLocal = true
+            case .remote(let host):
+                Logger.shared.log("Docker rows skipped: daemon is \(host)", level: .info)
+                notes.append(String(localized: "Docker is set to a remote daemon (\(host)). PureMac only cleans Docker on this Mac, so its images, containers and volumes are not listed."))
+            case .unknown:
+                Logger.shared.log("Docker rows skipped: daemon address unknown", level: .info)
+            }
+        }
+        // Taken before the listing, so nothing listed is newer than it.
+        let scannedAt = Date()
+        if daemonIsLocal, let dockerBin,
            let rows = await dockerDiskUsage(dockerBin: dockerBin) {
             let unused = await dockerUnusedObjects(dockerBin: dockerBin)
             for estimate in DockerSupport.pruneEstimates(rows, dangling: unused.dangling, volumes: unused.volumes) {
                 items.append(CleanableItem(
                     name: dockerPruneItemName(estimate.action, sizeKnown: estimate.sizeKnown),
                     // The volumes row carries the exact volumes it will remove.
-                    path: DockerSupport.actionPath(for: estimate.action, volumes: estimate.volumes),
+                    path: DockerSupport.actionPath(for: estimate.action, volumes: estimate.volumes, scannedAt: scannedAt),
                     size: estimate.bytes,
                     category: .dockerCache,
                     isSelected: false,
@@ -992,15 +1017,14 @@ actor ScanEngine {
 
         let totalSize = items.reduce(0) { $0 + $1.size }
         let dockerRaw = DockerSupport.dockerRawPath(homeDirectory: home)
-        var note: String?
         if let allocated = DockerSupport.allocatedSize(ofFileAt: dockerRaw), allocated > 0 {
             let size = ByteCountFormatter.string(fromByteCount: allocated, countStyle: .file)
             // Wording follows docs.docker.com/desktop/troubleshoot-and-support/faqs/macfaqs/
             // (see docs/DOCKER.md): "a few minutes", and the reclaim image is
             // Docker's own documented fallback, never run by PureMac.
-            note = String(localized: "Docker Desktop's disk image (Docker.raw) uses \(size) on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself.")
+            notes.append(String(localized: "Docker Desktop's disk image (Docker.raw) uses \(size) on disk. Docker says space freed inside it can take a few minutes to return to macOS; if it does not, run `docker run --privileged --pid=host docker/desktop-reclaim-space` yourself."))
         }
-        return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize, notes: note.map { [$0] } ?? [])
+        return CategoryResult(category: .dockerCache, items: items, totalSize: totalSize, notes: notes)
     }
 
     /// One row per linked git worktree found in agent folders and Claude
